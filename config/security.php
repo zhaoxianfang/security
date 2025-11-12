@@ -1,6 +1,6 @@
 <?php
 
-use Config\SecurityConfig;
+use zxf\Security\Config\SecurityConfig;
 
 /**
  * 安全中间件配置文件 - 优化增强版
