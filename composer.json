@@ -1,0 +1,49 @@
+{
+  "name": "zxf/security",
+  "description": "高级安全拦截中间件包 - 提供多层安全防护、速率限制、IP管理、威胁检测等功能",
+  "type": "library",
+  "license": "MIT",
+  "authors": [
+    {
+      "name": "zxf",
+      "email": "security@zxf.com",
+      "homepage": "https://yoc.cn"
+    }
+  ],
+  "require": {
+    "php": "^8.2|^8.3|^8.4"
+  },
+  "require-dev": {
+  },
+  "autoload": {
+    "psr-4": {
+      "zxf\\Security\\": "src/Security/"
+    },
+    "files": [
+      "src/helpers.php"
+    ]
+  },
+  "autoload-dev": {
+    "psr-4": {
+      "zxf\\Security\\Tests\\": "tests/"
+    }
+  },
+  "extra": {
+    "laravel": {
+      "providers": [
+        "zxf\\Security\\Providers\\SecurityServiceProvider"
+      ]
+    }
+  },
+  "config": {
+    "sort-packages": true,
+    "optimize-autoloader": true
+  },
+  "minimum-stability": "stable",
+  "prefer-stable": true,
+  "scripts": {
+    "post-autoload-dump": [
+      "@php -r \"if(file_exists('vendor/autoload.php')) include 'vendor/autoload.php'; if(class_exists('Illuminate\\\\Foundation\\\\Application')) { \\Illuminate\\Foundation\\Application::getInstance(); }\""
+    ]
+  }
+}
