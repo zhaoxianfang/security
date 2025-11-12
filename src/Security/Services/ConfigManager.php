@@ -1,19 +1,19 @@
 <?php
 
-namespace zxf\Security\Services;
+namespace Zxf\Security\Services;
 
 use Illuminate\Support\Facades\App;
-use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Arr;
 
 /**
- * 配置管理服务
+ * 配置管理服务 - 优化增强版
  *
  * 提供灵活的配置获取功能，支持：
  * 1. 静态配置值
  * 2. 闭包/回调函数
  * 3. 类方法调用
  * 4. 缓存优化
+ * 5. 智能类型识别
  */
 class ConfigManager
 {
@@ -21,6 +21,35 @@ class ConfigManager
      * 配置缓存
      */
     protected array $configCache = [];
+
+    /**
+     * 不应解析为可调用对象的配置键名
+     */
+    protected array $nonCallableKeys = [
+        'error_view',
+        'ajax_response_format',
+        'log_level',
+        'enabled',
+        'enable_debug_logging',
+        'enable_performance_logging',
+        'enable_rate_limiting',
+        'enable_ip_whitelist',
+        'enable_ip_blacklist',
+        'enable_file_content_check',
+        'enable_advanced_detection',
+        'enable_fingerprinting',
+        'enable_anomaly_detection',
+        'enable_pattern_cache',
+        'enable_fingerprint_cache',
+        'block_on_exception',
+        'max_file_size',
+        'cache_ttl',
+        'ban_duration',
+        'max_ban_duration',
+        'max_recursion_depth',
+        'batch_size',
+        'dynamic_blacklist_cache_ttl',
+    ];
 
     /**
      * 获取配置值
@@ -35,13 +64,35 @@ class ConfigManager
         // 从配置文件获取
         $value = config("security.{$key}", $default);
 
-        // 处理动态配置
-        $processedValue = $this->processDynamicValue($value);
+        // 处理动态配置（排除不应解析的键）
+        $processedValue = $this->shouldProcessAsCallable($key) ?
+            $this->processDynamicValue($value) :
+            $value;
 
         // 缓存结果
         Arr::set($this->configCache, $key, $processedValue);
 
         return $processedValue;
+    }
+
+    /**
+     * 判断配置键是否应该被处理为可调用对象
+     */
+    protected function shouldProcessAsCallable(string $key): bool
+    {
+        // 检查是否在不应该解析的列表中
+        if (in_array($key, $this->nonCallableKeys)) {
+            return false;
+        }
+
+        // 检查是否为数组配置项的子键
+        foreach ($this->nonCallableKeys as $nonCallableKey) {
+            if (str_starts_with($key, "{$nonCallableKey}.")) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /**
@@ -81,8 +132,14 @@ class ConfigManager
      */
     protected function isCallableString(string $value): bool
     {
-        return str_contains($value, '::') &&
-            preg_match('/^([a-zA-Z_\x80-\xff][a-zA-Z0-9_\x80-\xff]*)(::)([a-zA-Z_\x80-\xff][a-zA-Z0-9_\x80-\xff]*)$/', $value);
+        // 排除视图模板格式 (包含 :: 但不是类方法调用)
+        if (preg_match('/^[a-z0-9_-]+::[a-z0-9_-]+$/i', $value)) {
+            return false;
+        }
+
+        // 检查是否为有效的类方法调用格式
+        return preg_match('/^([a-zA-Z_\x80-\xff][a-zA-Z0-9_\x80-\xff]*)(::)([a-zA-Z_\x80-\xff][a-zA-Z0-9_\x80-\xff]*)$/', $value) &&
+            class_exists(explode('::', $value)[0]);
     }
 
     /**
@@ -151,6 +208,24 @@ class ConfigManager
     }
 
     /**
+     * 添加不应解析为可调用对象的配置键
+     */
+    public function addNonCallableKey(string|array $keys): void
+    {
+        $keys = is_array($keys) ? $keys : [$keys];
+        $this->nonCallableKeys = array_merge($this->nonCallableKeys, $keys);
+        $this->nonCallableKeys = array_unique($this->nonCallableKeys);
+    }
+
+    /**
+     * 获取不应解析为可调用对象的配置键列表
+     */
+    public function getNonCallableKeys(): array
+    {
+        return $this->nonCallableKeys;
+    }
+
+    /**
      * 清除配置缓存
      */
     public function clearCache(): void
@@ -164,5 +239,49 @@ class ConfigManager
     public function reload(): void
     {
         $this->clearCache();
+    }
+
+    /**
+     * 批量设置配置
+     */
+    public function setMany(array $config): void
+    {
+        foreach ($config as $key => $value) {
+            $this->set($key, $value);
+        }
+    }
+
+    /**
+     * 获取配置类型
+     */
+    public function getType(string $key): string
+    {
+        $value = $this->get($key);
+
+        if (is_array($value)) {
+            return 'array';
+        }
+
+        if (is_bool($value)) {
+            return 'boolean';
+        }
+
+        if (is_int($value)) {
+            return 'integer';
+        }
+
+        if (is_float($value)) {
+            return 'float';
+        }
+
+        if (is_string($value)) {
+            return 'string';
+        }
+
+        if (is_callable($value)) {
+            return 'callable';
+        }
+
+        return gettype($value);
     }
 }

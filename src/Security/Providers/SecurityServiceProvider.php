@@ -1,18 +1,19 @@
 <?php
 
-namespace zxf\Security\Providers;
+namespace Zxf\Security\Providers;
 
 use Illuminate\Support\ServiceProvider;
-use zxf\Security\Middleware\SecurityMiddleware;
-use zxf\Security\Services\ConfigManager;
-use zxf\Security\Services\RateLimiterService;
-use zxf\Security\Services\IpManagerService;
-use zxf\Security\Services\ThreatDetectionService;
+use Zxf\Security\Middleware\SecurityMiddleware;
+use Zxf\Security\Services\ConfigManager;
+use Zxf\Security\Services\RateLimiterService;
+use Zxf\Security\Services\IpManagerService;
+use Zxf\Security\Services\ThreatDetectionService;
 
 /**
- * 安全服务提供者
+ * 安全服务提供者 - 优化版
  *
  * 注册安全中间件和相关服务到Laravel容器
+ * 取消发布视图和资源文件，改为路由访问
  */
 class SecurityServiceProvider extends ServiceProvider
 {
@@ -31,22 +32,14 @@ class SecurityServiceProvider extends ServiceProvider
             __DIR__ . '/../../../config/security.php' => config_path('security.php'),
         ], 'security-config');
 
-        // 发布视图文件
-        $this->publishes([
-            __DIR__ . '/../../Resources/views' => resource_path('views/vendor/security'),
-        ], 'security-views');
-
-        // 发布资源文件
-        $this->publishes([
-            __DIR__ . '/../../Resources/css' => public_path('vendor/security/css'),
-            __DIR__ . '/../../Resources/js' => public_path('vendor/security/js'),
-        ], 'security-assets');
-
-        // 加载视图
+        // 加载视图（不发布，直接从包内访问）
         $this->loadViewsFrom(__DIR__ . '/../../Resources/views', 'security');
 
         // 注册中间件
         $this->registerMiddleware();
+
+        // 注册路由
+        $this->registerRoutes();
 
         // 注册命令
         if ($this->app->runningInConsole()) {
@@ -67,8 +60,8 @@ class SecurityServiceProvider extends ServiceProvider
         // 注册服务到容器
         $this->registerServices();
 
-        // 注册门面
-        $this->registerFacades();
+        // 注册路由服务提供者
+        $this->app->register(RouteServiceProvider::class);
     }
 
     /**
@@ -107,14 +100,6 @@ class SecurityServiceProvider extends ServiceProvider
     }
 
     /**
-     * 注册门面
-     */
-    protected function registerFacades(): void
-    {
-        // 可以在这里注册门面，如果需要的话
-    }
-
-    /**
      * 注册中间件
      */
     protected function registerMiddleware(): void
@@ -124,9 +109,17 @@ class SecurityServiceProvider extends ServiceProvider
         // 注册中间件别名
         $router->aliasMiddleware('security', SecurityMiddleware::class);
 
-        // 注册中间件组
-        $router->pushMiddlewareToGroup('web', SecurityMiddleware::class);
-        $router->pushMiddlewareToGroup('api', SecurityMiddleware::class);
+        // 注册中间件组（可选，根据需要启用）
+        // $router->pushMiddlewareToGroup('web', SecurityMiddleware::class);
+        // $router->pushMiddlewareToGroup('api', SecurityMiddleware::class);
+    }
+
+    /**
+     * 注册路由
+     */
+    protected function registerRoutes(): void
+    {
+        // 路由已经在 RouteServiceProvider 中注册
     }
 
     /**

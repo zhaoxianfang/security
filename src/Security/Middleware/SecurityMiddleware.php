@@ -243,6 +243,7 @@ class SecurityMiddleware
     protected function passRequest(Request $request)
     {
         $this->logDebug('安全中间件异常，放行请求');
+        return $request;
         return App::make(Closure::class, ['next' => function ($request) {
             return $request;
         }])->handle($request);
