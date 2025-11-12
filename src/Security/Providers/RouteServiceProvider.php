@@ -1,6 +1,6 @@
 <?php
 
-namespace Zxf\Security\Providers;
+namespace zxf\Security\Providers;
 
 use Illuminate\Support\Facades\Route;
 use Illuminate\Foundation\Support\Providers\RouteServiceProvider as ServiceProvider;
@@ -15,7 +15,7 @@ class RouteServiceProvider extends ServiceProvider
     /**
      * 命名空间
      */
-    protected $namespace = 'Zxf\\Security\\Http\\Controllers';
+    protected $namespace = 'zxf\\Security\\Http\\Controllers';
 
     /**
      * 启动服务

@@ -1,6 +1,6 @@
 <?php
 
-namespace Zxf\Security\Services;
+namespace zxf\Security\Services;
 
 use Illuminate\Support\Facades\App;
 use Illuminate\Support\Arr;

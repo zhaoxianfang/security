@@ -1,13 +1,13 @@
 <?php
 
-namespace Zxf\Security\Providers;
+namespace zxf\Security\Providers;
 
 use Illuminate\Support\ServiceProvider;
-use Zxf\Security\Middleware\SecurityMiddleware;
-use Zxf\Security\Services\ConfigManager;
-use Zxf\Security\Services\RateLimiterService;
-use Zxf\Security\Services\IpManagerService;
-use Zxf\Security\Services\ThreatDetectionService;
+use zxf\Security\Middleware\SecurityMiddleware;
+use zxf\Security\Services\ConfigManager;
+use zxf\Security\Services\RateLimiterService;
+use zxf\Security\Services\IpManagerService;
+use zxf\Security\Services\ThreatDetectionService;
 
 /**
  * 安全服务提供者 - 优化版
