@@ -5,6 +5,7 @@ namespace zxf\Security\Middleware;
 use Closure;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\App;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
@@ -15,7 +16,7 @@ use zxf\Security\Services\ThreatDetectionService;
 use zxf\Security\Exceptions\SecurityException;
 
 /**
- * 高级安全拦截中间件 - 最终优化版
+ * 高级安全拦截中间件
  *
  * 功能特性：
  * 1. 多层安全检测机制，性能优先
@@ -56,7 +57,14 @@ class SecurityMiddleware
         'false_positives' => 0,
         'execution_time' => 0,
         'memory_usage' => 0,
+        'total_requests' => 0,
+        'blocked_requests' => 0,
     ];
+
+    /**
+     * 错误信息列表
+     */
+    protected array $errorList = [];
 
     /**
      * 构造函数 - 依赖注入
@@ -82,6 +90,7 @@ class SecurityMiddleware
     {
         // 初始化性能监控
         $this->startMonitoring();
+        $this->detectionStats['total_requests']++;
 
         try {
             // 1. 检查中间件是否启用
@@ -98,6 +107,7 @@ class SecurityMiddleware
 
             // 3. 黑名单检查
             if ($this->ipManager->isBlacklisted($request)) {
+                $this->detectionStats['blocked_requests']++;
                 $this->logSecurityEvent($request, 'Blacklist', 'IP黑名单拦截');
                 return $this->createBlockResponse($request, 'Blacklist', '您的IP地址已被列入黑名单');
             }
@@ -105,6 +115,7 @@ class SecurityMiddleware
             // 4. 分层安全检测
             $securityCheck = $this->threatDetector->performLayeredSecurityCheck($request);
             if ($securityCheck['blocked']) {
+                $this->detectionStats['blocked_requests']++;
                 $this->logSecurityEvent($request, $securityCheck['type'], $securityCheck['reason']);
                 return $this->createBlockResponse($request, $securityCheck['type'], $securityCheck['message']);
             }
@@ -112,6 +123,7 @@ class SecurityMiddleware
             // 5. 速率限制检查
             $rateLimitCheck = $this->rateLimiter->check($request);
             if ($rateLimitCheck['blocked']) {
+                $this->detectionStats['blocked_requests']++;
                 $this->logSecurityEvent($request, 'RateLimit', '速率限制拦截');
                 return $this->createBlockResponse(
                     $request,
@@ -124,6 +136,7 @@ class SecurityMiddleware
             // 6. 自定义逻辑处理
             $customCheck = $this->handleCustomSecurityLogic($request);
             if ($customCheck['blocked']) {
+                $this->detectionStats['blocked_requests']++;
                 $this->logSecurityEvent($request, 'CustomRule', '自定义规则拦截');
                 return $this->createBlockResponse($request, 'CustomRule', $customCheck['message']);
             }
@@ -134,10 +147,10 @@ class SecurityMiddleware
 
         } catch (SecurityException $e) {
             // 安全相关异常
-            return $this->handleSecurityException($request, $e);
+            return $this->handleSecurityException($request, $e, $next);
         } catch (\Exception $e) {
             // 其他异常
-            return $this->handleGeneralException($request, $e);
+            return $this->handleGeneralException($request, $e, $next);
         } finally {
             // 确保性能统计被记录
             $this->logDetectionStats($request);
@@ -154,6 +167,7 @@ class SecurityMiddleware
         $this->detectionStats['checks_performed'] = 0;
         $this->detectionStats['patterns_matched'] = 0;
         $this->detectionStats['false_positives'] = 0;
+        $this->errorList = [];
     }
 
     /**
@@ -186,7 +200,10 @@ class SecurityMiddleware
                 ];
             }
         } catch (\Exception $e) {
-            Log::error('自定义安全逻辑执行失败: ' . $e->getMessage());
+            Log::error('自定义安全逻辑执行失败: ' . $e->getMessage(), [
+                'custom_handler' => $customHandler,
+                'exception' => $e
+            ]);
         }
 
         return ['blocked' => false];
@@ -195,28 +212,30 @@ class SecurityMiddleware
     /**
      * 处理安全异常
      */
-    protected function handleSecurityException(Request $request, SecurityException $e)
+    protected function handleSecurityException(Request $request, SecurityException $e, Closure $next)
     {
         $this->logSecurityEvent($request, 'SecurityError', $e->getMessage());
 
         if ($this->threatDetector->getConfig('block_on_exception', false)) {
+            $this->detectionStats['blocked_requests']++;
             return $this->createBlockResponse(
                 $request,
                 'SecurityError',
                 '安全系统异常: ' . $e->getMessage(),
-                [],
+                $e->getContext(),
                 503
             );
         }
 
         // 异常时放行请求
-        return $this->passRequest($request);
+        $this->logDebug('安全中间件异常，放行请求: ' . $e->getMessage());
+        return $this->passRequest($request, $next);
     }
 
     /**
      * 处理一般异常
      */
-    protected function handleGeneralException(Request $request, \Exception $e)
+    protected function handleGeneralException(Request $request, \Exception $e, Closure $next)
     {
         Log::error('安全中间件执行异常: ' . $e->getMessage(), [
             'exception' => $e,
@@ -224,6 +243,7 @@ class SecurityMiddleware
         ]);
 
         if ($this->threatDetector->getConfig('block_on_exception', false)) {
+            $this->detectionStats['blocked_requests']++;
             return $this->createBlockResponse(
                 $request,
                 'SystemError',
@@ -234,19 +254,31 @@ class SecurityMiddleware
         }
 
         // 异常时放行请求
-        return $this->passRequest($request);
+        $this->logDebug('安全中间件异常，放行请求: ' . $e->getMessage());
+        return $this->passRequest($request, $next);
     }
 
     /**
      * 放行请求（异常处理）
+     * 修复了原来的错误实现
      */
-    protected function passRequest(Request $request)
+    protected function passRequest(Request $request, Closure $next)
     {
-        $this->logDebug('安全中间件异常，放行请求');
-        return $request;
-        return App::make(Closure::class, ['next' => function ($request) {
-            return $request;
-        }])->handle($request);
+        try {
+            // 直接调用下一个中间件
+            return $next($request);
+        } catch (\Exception $e) {
+            // 如果下一个中间件也异常，返回错误响应
+            Log::error('请求处理链异常: ' . $e->getMessage());
+
+            return response()->json([
+                'code' => 500,
+                'message' => '服务器内部错误',
+                'data' => [
+                    'error' => config('app.debug') ? $e->getMessage() : '服务暂时不可用'
+                ]
+            ], 500);
+        }
     }
 
     /**
@@ -278,7 +310,8 @@ class SecurityMiddleware
      */
     protected function shouldBan(string $type): bool
     {
-        return in_array($type, ['Malicious', 'Anomalous', 'RateLimit', 'Blacklist']);
+        $banTypes = ['Malicious', 'Anomalous', 'RateLimit', 'Blacklist'];
+        return in_array($type, $banTypes);
     }
 
     /**
@@ -301,6 +334,7 @@ class SecurityMiddleware
                     'timestamp' => now()->toISOString(),
                     'context' => $context,
                     'stats' => $this->detectionStats,
+                    'errors' => $this->errorList,
                 ];
 
                 // 异步执行
@@ -311,6 +345,8 @@ class SecurityMiddleware
                 } else {
                     call_user_func($callable, $alertData);
                 }
+
+                $this->logDebug('安全警报已发送: ' . $type);
             }
         } catch (\Exception $e) {
             Log::error('发送安全警报失败: ' . $e->getMessage());
@@ -331,7 +367,7 @@ class SecurityMiddleware
         $responseData = $this->buildResponseData($type, $message, $context);
 
         // API请求返回JSON
-        if ($request->expectsJson() || $request->is('api/*')) {
+        if ($request->expectsJson() || $request->is('api/*') || $request->ajax()) {
             return $this->createJsonResponse($responseData, $statusCode);
         }
 
@@ -351,6 +387,7 @@ class SecurityMiddleware
             'request_id' => Str::uuid()->toString(),
             'timestamp' => now()->toISOString(),
             'context' => $context,
+            'errors' => $this->errorList,
         ];
     }
 
@@ -375,7 +412,7 @@ class SecurityMiddleware
     /**
      * 创建JSON响应
      */
-    protected function createJsonResponse(array $data, int $statusCode)
+    protected function createJsonResponse(array $data, int $statusCode): JsonResponse
     {
         $format = $this->threatDetector->getConfig('ajax_response_format', [
             'code' => 'code',
@@ -383,7 +420,7 @@ class SecurityMiddleware
             'data' => 'data',
         ]);
 
-        $response = [
+        $responseData = [
             $format['code'] => $statusCode,
             $format['message'] => $data['message'],
             $format['data'] => [
@@ -394,13 +431,22 @@ class SecurityMiddleware
             ],
         ];
 
-        return response()->json($response, $statusCode);
+        // 调试模式下包含更多信息
+        if (config('app.debug')) {
+            $responseData[$format['data']]['context'] = $data['context'];
+            $responseData[$format['data']]['errors'] = $data['errors'];
+        }
+
+        return response()->json($responseData, $statusCode)
+            ->header('X-Security-Blocked', 'true')
+            ->header('X-Security-Type', $data['type'])
+            ->header('X-Request-ID', $data['request_id']);
     }
 
     /**
      * 创建HTML响应
      */
-    protected function createHtmlResponse(array $data, int $statusCode)
+    protected function createHtmlResponse(array $data, int $statusCode): Response
     {
         $view = $this->threatDetector->getConfig('error_view', 'security::blocked');
         $viewData = array_merge(
@@ -408,7 +454,10 @@ class SecurityMiddleware
             $this->threatDetector->getConfig('error_view_data', [])
         );
 
-        return response()->view($view, $viewData, $statusCode);
+        return response()->view($view, $viewData, $statusCode)
+            ->header('X-Security-Blocked', 'true')
+            ->header('X-Security-Type', $data['type'])
+            ->header('X-Request-ID', $data['request_id']);
     }
 
     /**
@@ -430,20 +479,44 @@ class SecurityMiddleware
      */
     protected function resolveCallable($handler)
     {
-        if (is_array($handler)) {
-            return [App::make($handler[0]), $handler[1]];
-        }
-
-        if (is_string($handler) && str_contains($handler, '::')) {
+        if (is_callable($handler)) {
             return $handler;
         }
 
-        if (is_string($handler) && str_contains($handler, ',')) {
-            [$class, $method] = explode(',', $handler, 2);
-            return [App::make(trim($class, " \t\n\r\0\x0B'\"")), trim($method, " \t\n\r\0\x0B'\"")];
+        if (is_array($handler) && count($handler) === 2) {
+            $class = $handler[0];
+            $method = $handler[1];
+
+            if (is_string($class) && class_exists($class)) {
+                return [App::make($class), $method];
+            }
+
+            return $handler;
         }
 
-        return $handler;
+        if (is_string($handler)) {
+            // 处理 Class::method 格式
+            if (str_contains($handler, '::')) {
+                [$class, $method] = explode('::', $handler, 2);
+                if (class_exists($class)) {
+                    return [App::make($class), $method];
+                }
+            }
+
+            // 处理 [Class,method] 格式
+            if (preg_match('/^\[(.+),(.+)\]$/', $handler, $matches)) {
+                $class = trim($matches[1]);
+                $method = trim($matches[2]);
+                if (class_exists($class)) {
+                    return [App::make($class), $method];
+                }
+            }
+
+            // 直接返回字符串（可能是函数名）
+            return $handler;
+        }
+
+        throw new \InvalidArgumentException('无法解析的可调用对象: ' . gettype($handler));
     }
 
     /**
@@ -460,10 +533,40 @@ class SecurityMiddleware
             'user_agent' => $this->truncateString($request->userAgent() ?? '', 200),
             'referer' => $request->header('referer'),
             'timestamp' => now()->toISOString(),
+            'stats' => $this->detectionStats,
+            'errors' => $this->errorList,
         ];
 
         $logLevel = $this->threatDetector->getConfig('log_level', 'warning');
-        Log::log($logLevel, "安全拦截: {$type} - {$reason}", $logData);
+
+        switch ($logLevel) {
+            case 'emergency':
+                Log::emergency("安全拦截: {$type} - {$reason}", $logData);
+                break;
+            case 'alert':
+                Log::alert("安全拦截: {$type} - {$reason}", $logData);
+                break;
+            case 'critical':
+                Log::critical("安全拦截: {$type} - {$reason}", $logData);
+                break;
+            case 'error':
+                Log::error("安全拦截: {$type} - {$reason}", $logData);
+                break;
+            case 'warning':
+                Log::warning("安全拦截: {$type} - {$reason}", $logData);
+                break;
+            case 'notice':
+                Log::notice("安全拦截: {$type} - {$reason}", $logData);
+                break;
+            case 'info':
+                Log::info("安全拦截: {$type} - {$reason}", $logData);
+                break;
+            case 'debug':
+                Log::debug("安全拦截: {$type} - {$reason}", $logData);
+                break;
+            default:
+                Log::warning("安全拦截: {$type} - {$reason}", $logData);
+        }
     }
 
     /**
@@ -472,7 +575,7 @@ class SecurityMiddleware
     protected function updateDetectionStats(): void
     {
         $this->detectionStats['execution_time'] = microtime(true) - $this->startTime;
-        $this->detectionStats['memory_usage'] = memory_get_usage(true) - $this->startMemory;
+        $this->detectionStats['memory_usage'] = memory_get_peak_usage(true) - $this->startMemory;
     }
 
     /**
@@ -488,6 +591,9 @@ class SecurityMiddleware
                 'request' => $this->getRequestInfo($request),
             ]);
         }
+
+        // 记录到监控系统
+        $this->recordMetrics();
     }
 
     /**
@@ -501,6 +607,8 @@ class SecurityMiddleware
             'path' => $request->path(),
             'user_agent' => $this->truncateString($request->userAgent() ?? '', 100),
             'content_type' => $request->header('Content-Type'),
+            'query_params' => count($request->query()),
+            'post_params' => count($request->post()),
         ];
     }
 
@@ -527,6 +635,38 @@ class SecurityMiddleware
     }
 
     /**
+     * 记录指标数据
+     */
+    protected function recordMetrics(): void
+    {
+        // 可以集成到监控系统如 Prometheus, DataDog 等
+        $metrics = [
+            'security_checks_total' => $this->detectionStats['checks_performed'],
+            'security_patterns_matched' => $this->detectionStats['patterns_matched'],
+            'security_false_positives' => $this->detectionStats['false_positives'],
+            'security_execution_time' => $this->detectionStats['execution_time'],
+            'security_memory_usage' => $this->detectionStats['memory_usage'],
+            'security_total_requests' => $this->detectionStats['total_requests'],
+            'security_blocked_requests' => $this->detectionStats['blocked_requests'],
+        ];
+
+        // 这里可以添加监控系统集成代码
+        // 例如: $this->metrics->increment('security.requests.total');
+    }
+
+    /**
+     * 添加错误信息
+     */
+    protected function addError(string $message, array $context = []): void
+    {
+        $this->errorList[] = [
+            'message' => $message,
+            'context' => $context,
+            'timestamp' => now()->toISOString(),
+        ];
+    }
+
+    /**
      * 获取安全统计信息
      */
     public function getSecurityStats(): array
@@ -535,6 +675,7 @@ class SecurityMiddleware
             'detection_stats' => $this->detectionStats,
             'blocked_ips_count' => $this->ipManager->getBannedIpsCount(),
             'rate_limits' => $this->rateLimiter->getRateLimitStats(),
+            'recent_errors' => array_slice($this->errorList, -10), // 最近10个错误
         ];
     }
 
@@ -547,6 +688,29 @@ class SecurityMiddleware
         $this->rateLimiter->clearCache();
         $this->threatDetector->clearCache();
 
+        $this->detectionStats = [
+            'checks_performed' => 0,
+            'patterns_matched' => 0,
+            'false_positives' => 0,
+            'execution_time' => 0,
+            'memory_usage' => 0,
+            'total_requests' => 0,
+            'blocked_requests' => 0,
+        ];
+
+        $this->errorList = [];
+
         Log::info('安全中间件缓存已清除');
+    }
+
+    /**
+     * 重新加载配置
+     */
+    public function reloadConfig(array $newConfig = []): void
+    {
+        $this->threatDetector->clearCache();
+        $this->clearCache();
+
+        Log::info('安全中间件配置已重新加载', ['new_config_keys' => array_keys($newConfig)]);
     }
 }

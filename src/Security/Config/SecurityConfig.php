@@ -4,6 +4,7 @@ namespace zxf\Security\Config;
 
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use zxf\Security\Contracts\SecurityConfigInterface;
 
 /**
  * 安全配置管理类
@@ -11,7 +12,7 @@ use Illuminate\Support\Facades\DB;
  * 提供动态配置获取方法，支持从数据库、缓存等多种源获取配置
  * 所有方法都是静态方法，便于在配置文件中调用
  */
-class SecurityConfig
+class SecurityConfig implements SecurityConfigInterface
 {
     /**
      * 获取IP白名单列表

@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="robots" content="noindex, nofollow">
     <title>{{ $title ?? '安全拦截' }} - {{ config('app.name', 'Laravel') }}</title>
-    <link rel="stylesheet" href="{{ url('/vendor/security/css/security.css') }}">
-    <link rel="preload" href="{{ url('/vendor/security/css/security.css') }}" as="style">
+    <link rel="stylesheet" href="{{ url('/zxf/security/css/security.css') }}">
+    <link rel="preload" href="{{ url('/zxf/security/css/security.css') }}" as="style">
     <meta name="description" content="安全拦截页面 - 您的请求被安全系统拦截">
 </head>
 <body class="security-body">
@@ -122,7 +122,7 @@
 </div>
 
 <!-- 加载JavaScript -->
-<script src="{{ url('/vendor/security/js/security.js') }}"></script>
+<script src="{{ url('/zxf/security/js/security.js') }}"></script>
 
 <!-- 内联脚本确保基本功能 -->
 <script>

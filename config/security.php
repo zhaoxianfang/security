@@ -3,13 +3,16 @@
 use zxf\Security\Config\SecurityConfig;
 
 /**
- * 安全中间件配置文件 - 优化增强版
+ * 安全中间件配置文件
  *
  * 配置特性：
  * 1. 支持动态配置源（类方法、闭包、数组等）
  * 2. 环境变量覆盖支持
  * 3. 性能优化参数
  * 4. 完整的类型提示和默认值
+ *
+ * 查看支持callable的用法示例：
+ * @see  /vendor/zxf/security/example/security_example.md 配置示例
  */
 
 return [
@@ -24,6 +27,20 @@ return [
      * 默认值：true
      */
     'enabled' => env('SECURITY_MIDDLEWARE_ENABLED', true),
+
+    /**
+     * 启用安全中间件时的启用方式
+     *
+     * 在生产环境建议配置为全局使用，开发环境可以根据需要配置
+     * 支持：string
+     * 可选值：global:全局使用, single:单个使用(在路由、控制器等地方手动使用security中间件)
+     * 示例：如果配置全局启用(enabled_type)，则所有路由都将默认使用安全中间件，不需要单独引入
+     *      路由分配中间件: Route::middleware(['security'])
+     *      控制器中间件: Route::get('profile', [UserController::class, 'show'])->middleware('security');
+     *      路由排除中间件: Route::withoutMiddleware(['security'])
+     * 默认值：global
+     */
+    'enabled_type' => env('SECURITY_MIDDLEWARE_ENABLED', 'global'),
 
     /**
      * 日志记录级别
@@ -341,7 +358,7 @@ return [
      * 自定义错误页面视图
      *
      * 安全拦截时显示的自定义视图
-     * 支持：string | callable
+     * 支持：string
      * 默认值：'security::blocked'
      */
     'error_view' => 'security::blocked',

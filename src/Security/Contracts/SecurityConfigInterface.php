@@ -15,40 +15,40 @@ interface SecurityConfigInterface
      *
      * @return array
      */
-    public function getWhitelistIps(): array;
+    public static function getWhitelistIps(): array;
 
     /**
      * 获取IP黑名单列表
      *
      * @return array
      */
-    public function getBlacklistIps(): array;
+    public static function getBlacklistIps(): array;
 
     /**
      * 获取恶意请求体检测模式
      *
      * @return array
      */
-    public function getMaliciousBodyPatterns(): array;
+    public static function getMaliciousBodyPatterns(): array;
 
     /**
      * 获取非法URL路径模式
      *
      * @return array
      */
-    public function getIllegalUrlPatterns(): array;
+    public static function getIllegalUrlPatterns(): array;
 
     /**
      * 获取可疑User-Agent模式
      *
      * @return array
      */
-    public function getSuspiciousUserAgents(): array;
+    public static function getSuspiciousUserAgents(): array;
 
     /**
      * 获取禁止上传的文件扩展名
      *
      * @return array
      */
-    public function getDisallowedExtensions(): array;
+    public static function getDisallowedExtensions(): array;
 }

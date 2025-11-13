@@ -6,7 +6,7 @@ use Illuminate\Support\Facades\App;
 use Illuminate\Support\Arr;
 
 /**
- * 配置管理服务 - 优化增强版
+ * 配置管理服务
  *
  * 提供灵活的配置获取功能，支持：
  * 1. 静态配置值
@@ -23,32 +23,11 @@ class ConfigManager
     protected array $configCache = [];
 
     /**
-     * 不应解析为可调用对象的配置键名
+     * 不应该解析为可调用对象的配置键名
      */
-    protected array $nonCallableKeys = [
+    protected array $noCallableKeys = [
+        'enabled_type',
         'error_view',
-        'ajax_response_format',
-        'log_level',
-        'enabled',
-        'enable_debug_logging',
-        'enable_performance_logging',
-        'enable_rate_limiting',
-        'enable_ip_whitelist',
-        'enable_ip_blacklist',
-        'enable_file_content_check',
-        'enable_advanced_detection',
-        'enable_fingerprinting',
-        'enable_anomaly_detection',
-        'enable_pattern_cache',
-        'enable_fingerprint_cache',
-        'block_on_exception',
-        'max_file_size',
-        'cache_ttl',
-        'ban_duration',
-        'max_ban_duration',
-        'max_recursion_depth',
-        'batch_size',
-        'dynamic_blacklist_cache_ttl',
     ];
 
     /**
@@ -80,14 +59,14 @@ class ConfigManager
      */
     protected function shouldProcessAsCallable(string $key): bool
     {
-        // 检查是否在不应该解析的列表中
-        if (in_array($key, $this->nonCallableKeys)) {
+        // 检查是否在 不应该解析的列表中
+        if (in_array($key, $this->noCallableKeys)) {
             return false;
         }
 
         // 检查是否为数组配置项的子键
-        foreach ($this->nonCallableKeys as $nonCallableKey) {
-            if (str_starts_with($key, "{$nonCallableKey}.")) {
+        foreach ($this->noCallableKeys as $callableKey) {
+            if (str_starts_with($key, "{$callableKey}.")) {
                 return false;
             }
         }
@@ -205,24 +184,6 @@ class ConfigManager
         }
 
         return $processed;
-    }
-
-    /**
-     * 添加不应解析为可调用对象的配置键
-     */
-    public function addNonCallableKey(string|array $keys): void
-    {
-        $keys = is_array($keys) ? $keys : [$keys];
-        $this->nonCallableKeys = array_merge($this->nonCallableKeys, $keys);
-        $this->nonCallableKeys = array_unique($this->nonCallableKeys);
-    }
-
-    /**
-     * 获取不应解析为可调用对象的配置键列表
-     */
-    public function getNonCallableKeys(): array
-    {
-        return $this->nonCallableKeys;
     }
 
     /**

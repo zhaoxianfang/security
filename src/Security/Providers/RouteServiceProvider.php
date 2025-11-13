@@ -42,22 +42,22 @@ class RouteServiceProvider extends ServiceProvider
             ->namespace($this->namespace)
             ->group(function () {
                 // CSS 文件路由
-                Route::get('/vendor/security/css/{file}', function ($file) {
+                Route::get('/zxf/security/css/{file}', function ($file) {
                     return $this->serveAsset('css', $file);
                 })->where('file', '.*\.css$');
 
                 // JS 文件路由
-                Route::get('/vendor/security/js/{file}', function ($file) {
+                Route::get('/zxf/security/js/{file}', function ($file) {
                     return $this->serveAsset('js', $file);
                 })->where('file', '.*\.js$');
 
                 // 图片文件路由
-                Route::get('/vendor/security/images/{file}', function ($file) {
+                Route::get('/zxf/security/images/{file}', function ($file) {
                     return $this->serveAsset('images', $file);
                 })->where('file', '.*\.(png|jpg|jpeg|gif|svg|ico)$');
 
                 // 字体文件路由
-                Route::get('/vendor/security/fonts/{file}', function ($file) {
+                Route::get('/zxf/security/fonts/{file}', function ($file) {
                     return $this->serveAsset('fonts', $file);
                 })->where('file', '.*\.(woff|woff2|ttf|eot)$');
             });

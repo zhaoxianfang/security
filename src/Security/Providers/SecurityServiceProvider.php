@@ -8,9 +8,13 @@ use zxf\Security\Services\ConfigManager;
 use zxf\Security\Services\RateLimiterService;
 use zxf\Security\Services\IpManagerService;
 use zxf\Security\Services\ThreatDetectionService;
+use Illuminate\Foundation\Console\AboutCommand;
+use Composer\InstalledVersions;
+use Illuminate\Support\Facades\File;
+use Illuminate\Contracts\Http\Kernel;
 
 /**
- * 安全服务提供者 - 优化版
+ * 安全服务提供者
  *
  * 注册安全中间件和相关服务到Laravel容器
  * 取消发布视图和资源文件，改为路由访问
@@ -45,6 +49,11 @@ class SecurityServiceProvider extends ServiceProvider
         if ($this->app->runningInConsole()) {
             $this->registerCommands();
         }
+
+        // 把 zxf/security 添加到 about 命令中
+        AboutCommand::add('zxf', [
+            'zxf/security' => fn () => InstalledVersions::getPrettyVersion('zxf/security'),
+        ]);
     }
 
     /**
@@ -109,9 +118,39 @@ class SecurityServiceProvider extends ServiceProvider
         // 注册中间件别名
         $router->aliasMiddleware('security', SecurityMiddleware::class);
 
+        // 判断是否发布配置
+        $this->checkConfigPublished();
+
         // 注册中间件组（可选，根据需要启用）
         // $router->pushMiddlewareToGroup('web', SecurityMiddleware::class);
         // $router->pushMiddlewareToGroup('api', SecurityMiddleware::class);
+    }
+
+    // 判断是否发布配置,如果已经发布配置，则检测是否需要全局启用security中间件
+    protected function checkConfigPublished(): void
+    {
+        // 判断配置文件是否已发布
+        $configHasPublished = File::exists(config_path('security.php'));
+        if ($configHasPublished) {
+            // 配置文件已发布，判断是否需要全局启用security中间件
+            $middlewareEnabledType = config('security.enabled_type','global');
+            if ($middlewareEnabledType === 'global') {
+                // 全局启用security中间件
+                $kernel = $this->app->make(Kernel::class);
+                // $kernel->pushMiddleware(SecurityMiddleware::class); // 追加在后面
+                $kernel->prependMiddleware(SecurityMiddleware::class); // 放在最前面
+            }
+        } else {
+            if ($this->app->runningInConsole() ) {
+                // 没有发布配置文件且处于控制台下提示发布配置
+                echo PHP_EOL;
+                echo '=================================================================================='.PHP_EOL;
+                echo ' 提    示 | 检查到您已经安装了 zxf/security 安全中间件包，但是没有发布配置文件'.PHP_EOL;
+                echo ' 发布命令 | php artisan vendor:publish --tag=security-config '.PHP_EOL;
+                echo ' 文档地址 | https://weisifang.com/docs/2 '.PHP_EOL;
+                echo '=================================================================================='.PHP_EOL;
+            }
+        }
     }
 
     /**
