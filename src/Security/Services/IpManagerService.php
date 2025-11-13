@@ -88,13 +88,22 @@ class IpManagerService
         $banData = [
             'type' => $type,
             'ip' => $clientIp,
+            'duration' => $duration,
             'banned_at' => now()->toISOString(),
             'expires_at' => now()->addSeconds($duration)->toISOString(),
             'reason' => $this->getBanReason($type),
         ];
 
         $banKey = $this->getBanCacheKey($clientIp);
-        Cache::put($banKey, $banData, $duration);
+        $banData['ban_key'] = $banKey;
+
+        // 调用封禁IP配置操作
+        $handler = $this->config->get('ban_id_handler', null, $banData);
+        if (is_array($handler)) {
+            app()->call($handler, $banData);
+        }else{
+            Cache::put($banKey, $banData, $duration);
+        }
     }
 
     /**
@@ -127,21 +136,12 @@ class IpManagerService
      */
     protected function checkCustomBlacklist(Request $request, string $ip): bool
     {
-        $handler = $this->config->get('blacklist_handler');
-
-        if (empty($handler)) {
-            return false;
+        $handler = $this->config->get('blacklist_handler', null, [$ip]);
+        if (is_array($handler)) {
+            app()->call($handler, [$ip]);
         }
 
-        try {
-            $callable = $this->resolveCallable($handler);
-            $result = call_user_func($callable, $ip, $request);
-
-            return !empty($result) && $result !== false;
-        } catch (\Exception $e) {
-            \Illuminate\Support\Facades\Log::error('自定义黑名单检查失败: ' . $e->getMessage());
-            return false;
-        }
+        return true;
     }
 
     /**

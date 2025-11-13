@@ -39,10 +39,38 @@ class ThreatDetectionService
     }
 
     /**
+     * 检查是否为资源文件路径
+     */
+    public function isResourcePath(Request $request): bool
+    {
+        $path = $request->path();
+
+        $resourcePatterns = [
+            '/^zxf\/security\/css\/.*$/',
+            '/^zxf\/security\/js\/.*$/',
+            '/^zxf\/security\/images\/.*$/',
+            '/^zxf\/security\/fonts\/.*$/',
+        ];
+
+        foreach ($resourcePatterns as $pattern) {
+            if (preg_match($pattern, $path)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
      * 执行分层安全检测
      */
     public function performLayeredSecurityCheck(Request $request): array
     {
+        // 跳过资源文件的安全检查
+        if ($this->isResourcePath($request)) {
+            return ['blocked' => false];
+        }
+
         // 第一层：超轻量级检查
         $ultraLightChecks = [
             'suspicious_method' => fn() => $this->hasSuspiciousMethod($request),
@@ -546,9 +574,9 @@ class ThreatDetectionService
     /**
      * 获取配置值
      */
-    public function getConfig(string $key, $default = null)
+    public function getConfig(string $key, mixed $default = null, mixed $params = null)
     {
-        return $this->config->get($key, $default);
+        return $this->config->get($key, $default, $params);
     }
 
     /**

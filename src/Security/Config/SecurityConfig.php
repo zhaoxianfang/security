@@ -239,6 +239,18 @@ class SecurityConfig implements SecurityConfigInterface
         ];
     }
 
+
+    /**
+     * 封禁IP 处理
+     *
+     * @param array $banData ban数据
+     * @return void
+     */
+    public static function banIdHandler(array $banData=[]): void
+    {
+        Cache::put($banData['ban_key'], $banData, $banData['duration']);
+    }
+
     /**
      * 检查数据库连接是否可用
      *
@@ -268,4 +280,5 @@ class SecurityConfig implements SecurityConfigInterface
             return false;
         }
     }
+
 }

@@ -32,8 +32,11 @@ class ConfigManager
 
     /**
      * 获取配置值
+     * @param string $key 配置键名
+     * @param mixed $default 默认值
+     * @param mixed $params 闭包回调参数
      */
-    public function get(string $key, $default = null)
+    public function get(string $key, mixed $default = null, mixed $params = null)
     {
         // 检查缓存
         if (Arr::has($this->configCache, $key)) {
@@ -43,9 +46,12 @@ class ConfigManager
         // 从配置文件获取
         $value = config("security.{$key}", $default);
 
+        if($value instanceof \Closure){
+            return call_user_func($value, $params);
+        }
         // 处理动态配置（排除不应解析的键）
         $processedValue = $this->shouldProcessAsCallable($key) ?
-            $this->processDynamicValue($value) :
+            $this->processDynamicValue($value,$params) :
             $value;
 
         // 缓存结果
@@ -77,14 +83,14 @@ class ConfigManager
     /**
      * 处理动态配置值
      */
-    protected function processDynamicValue($value)
+    protected function processDynamicValue($value,mixed $params = null)
     {
         if (is_callable($value)) {
-            return call_user_func($value);
+            return call_user_func($value,$params);
         }
 
         if (is_array($value) && $this->isCallableArray($value)) {
-            return $this->callClassMethod($value);
+            return $this->callClassMethod($value, $params);
         }
 
         if (is_string($value) && $this->isCallableString($value)) {
@@ -124,13 +130,13 @@ class ConfigManager
     /**
      * 调用类方法
      */
-    protected function callClassMethod(array $callable)
+    protected function callClassMethod(array $callable,mixed $params = null)
     {
         [$class, $method] = $callable;
 
         try {
             $instance = App::make($class);
-            return $instance->$method();
+            return $instance->$method($params);
         } catch (\Exception $e) {
             // 记录错误并返回默认值
             \Illuminate\Support\Facades\Log::error("配置方法调用失败: {$class}::{$method} - " . $e->getMessage());

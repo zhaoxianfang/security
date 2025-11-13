@@ -7,7 +7,6 @@ use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\App;
-use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use zxf\Security\Services\RateLimiterService;
@@ -99,6 +98,11 @@ class SecurityMiddleware
                 return $next($request);
             }
 
+            // 跳过资源文件的安全检查
+            if ($this->threatDetector->isResourcePath($request)) {
+                return $next($request);
+            }
+
             // 2. 快速检查：IP白名单和本地请求
             if ($this->ipManager->isWhitelisted($request) || $this->ipManager->isLocalRequest($request)) {
                 $this->logDebug('IP白名单或本地请求，跳过安全检查');
@@ -144,14 +148,17 @@ class SecurityMiddleware
             // 7. 请求正常，继续处理
             $this->logDetectionStats($request);
             return $next($request);
-
         } catch (SecurityException $e) {
             // 安全相关异常
-            return $this->handleSecurityException($request, $e, $next);
+            return $this->handleSecurityException($request, $e);
         } catch (\Exception $e) {
-            // 其他异常
-            return $this->handleGeneralException($request, $e, $next);
-        } finally {
+            config('app.debug') && dd($e);
+            // 其他异常，很可能试图文件异常，改为json 响应
+            return response()->json([
+                'code' => 500,
+                'message' => '处理安全拦截时出现异常！'
+            ], 500, [], JSON_UNESCAPED_UNICODE);
+        }finally {
             // 确保性能统计被记录
             $this->logDetectionStats($request);
         }
@@ -212,7 +219,7 @@ class SecurityMiddleware
     /**
      * 处理安全异常
      */
-    protected function handleSecurityException(Request $request, SecurityException $e, Closure $next)
+    protected function handleSecurityException(Request $request, SecurityException $e)
     {
         $this->logSecurityEvent($request, 'SecurityError', $e->getMessage());
 
@@ -226,16 +233,14 @@ class SecurityMiddleware
                 503
             );
         }
-
-        // 异常时放行请求
-        $this->logDebug('安全中间件异常，放行请求: ' . $e->getMessage());
-        return $this->passRequest($request, $next);
+        $message = config('app.debug') ? $e->getMessage() : '系统进行安全拦截时异常!';
+        return $this->createBlockResponse($request, 'Anomalous', $message,$e->getContext(),500);
     }
 
     /**
      * 处理一般异常
      */
-    protected function handleGeneralException(Request $request, \Exception $e, Closure $next)
+    protected function handleGeneralException(Request $request, \Exception $e)
     {
         Log::error('安全中间件执行异常: ' . $e->getMessage(), [
             'exception' => $e,
@@ -252,10 +257,9 @@ class SecurityMiddleware
                 503
             );
         }
+        $message = config('app.debug') ? $e->getMessage() : '系统进行安全拦截时异常!';
 
-        // 异常时放行请求
-        $this->logDebug('安全中间件异常，放行请求: ' . $e->getMessage());
-        return $this->passRequest($request, $next);
+        return $this->createBlockResponse($request, 'Anomalous', $message,[],500);
     }
 
     /**
@@ -277,7 +281,7 @@ class SecurityMiddleware
                 'data' => [
                     'error' => config('app.debug') ? $e->getMessage() : '服务暂时不可用'
                 ]
-            ], 500);
+            ], 500, [], JSON_UNESCAPED_UNICODE);
         }
     }
 
@@ -320,34 +324,24 @@ class SecurityMiddleware
     protected function sendSecurityAlert(Request $request, string $type, string $message, array $context): void
     {
         try {
-            $alarmHandler = $this->threatDetector->getConfig('alarm_handler');
-            if ($alarmHandler) {
-                $callable = $this->resolveCallable($alarmHandler);
+            $alertData = [
+                'type' => $type,
+                'message' => $message,
+                'ip' => $request->ip(),
+                'url' => $request->fullUrl(),
+                'method' => $request->method(),
+                'user_agent' => $request->userAgent(),
+                'timestamp' => now()->toISOString(),
+                'context' => $context,
+                'stats' => $this->detectionStats,
+                'errors' => $this->errorList,
+            ];
 
-                $alertData = [
-                    'type' => $type,
-                    'message' => $message,
-                    'ip' => $request->ip(),
-                    'url' => $request->fullUrl(),
-                    'method' => $request->method(),
-                    'user_agent' => $request->userAgent(),
-                    'timestamp' => now()->toISOString(),
-                    'context' => $context,
-                    'stats' => $this->detectionStats,
-                    'errors' => $this->errorList,
-                ];
-
-                // 异步执行
-                if (function_exists('dispatch')) {
-                    dispatch(function () use ($callable, $alertData) {
-                        call_user_func($callable, $alertData);
-                    })->onQueue('security-alerts');
-                } else {
-                    call_user_func($callable, $alertData);
-                }
-
-                $this->logDebug('安全警报已发送: ' . $type);
+            $handler = $this->threatDetector->getConfig('alarm_handler', null, $alertData);
+            if (is_array($handler)) {
+                app()->call($handler, $alertData);
             }
+            $this->logDebug('安全警报已发送: ' . $type);
         } catch (\Exception $e) {
             Log::error('发送安全警报失败: ' . $e->getMessage());
         }
@@ -437,7 +431,7 @@ class SecurityMiddleware
             $responseData[$format['data']]['errors'] = $data['errors'];
         }
 
-        return response()->json($responseData, $statusCode)
+        return response()->json($responseData, $statusCode, [], JSON_UNESCAPED_UNICODE)
             ->header('X-Security-Blocked', 'true')
             ->header('X-Security-Type', $data['type'])
             ->header('X-Request-ID', $data['request_id']);

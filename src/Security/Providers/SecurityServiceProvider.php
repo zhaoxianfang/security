@@ -51,7 +51,7 @@ class SecurityServiceProvider extends ServiceProvider
         }
 
         // 把 zxf/security 添加到 about 命令中
-        AboutCommand::add('zxf', [
+        AboutCommand::add('Extend', [
             'zxf/security' => fn () => InstalledVersions::getPrettyVersion('zxf/security'),
         ]);
     }

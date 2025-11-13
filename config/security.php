@@ -141,6 +141,15 @@ return [
      */
     'dynamic_blacklist_cache_ttl' => env('SECURITY_DYNAMIC_BLACKLIST_CACHE_TTL', 300),
 
+    /**
+     * 禁封IP操作
+     *
+     * 禁用某个用户的IP
+     * 支持：array | callable
+     * 默认值：[]
+     */
+    'ban_id_handler'=>[SecurityConfig::class, 'banIdHandler'],
+
     // ==================== HTTP方法配置 ====================
 
     /**
