@@ -103,20 +103,26 @@ class SecurityMiddleware
                 return $next($request);
             }
 
-            // 2. 快速检查：IP白名单和本地请求
-            if ($this->ipManager->isWhitelisted($request) || $this->ipManager->isLocalRequest($request)) {
+            // 2. 检查中间件是否忽略本地环境
+            if ($this->isIgnoreLocal() || $this->ipManager->isLocalRequest($request)) {
+                $this->logDebug('安全中间件已忽略本地环境请求，跳过检查');
+                return $next($request);
+            }
+
+            // 3. 快速检查：IP白名单
+            if ($this->ipManager->isWhitelisted($request)) {
                 $this->logDebug('IP白名单或本地请求，跳过安全检查');
                 return $next($request);
             }
 
-            // 3. 黑名单检查
+            // 4. 黑名单检查
             if ($this->ipManager->isBlacklisted($request)) {
                 $this->detectionStats['blocked_requests']++;
                 $this->logSecurityEvent($request, 'Blacklist', 'IP黑名单拦截');
                 return $this->createBlockResponse($request, 'Blacklist', '您的IP地址已被列入黑名单');
             }
 
-            // 4. 分层安全检测
+            // 5. 分层安全检测
             $securityCheck = $this->threatDetector->performLayeredSecurityCheck($request);
             if ($securityCheck['blocked']) {
                 $this->detectionStats['blocked_requests']++;
@@ -124,7 +130,7 @@ class SecurityMiddleware
                 return $this->createBlockResponse($request, $securityCheck['type'], $securityCheck['message']);
             }
 
-            // 5. 速率限制检查
+            // 6. 速率限制检查
             $rateLimitCheck = $this->rateLimiter->check($request);
             if ($rateLimitCheck['blocked']) {
                 $this->detectionStats['blocked_requests']++;
@@ -137,7 +143,7 @@ class SecurityMiddleware
                 );
             }
 
-            // 6. 自定义逻辑处理
+            // 7. 自定义逻辑处理
             $customCheck = $this->handleCustomSecurityLogic($request);
             if ($customCheck['blocked']) {
                 $this->detectionStats['blocked_requests']++;
@@ -145,7 +151,7 @@ class SecurityMiddleware
                 return $this->createBlockResponse($request, 'CustomRule', $customCheck['message']);
             }
 
-            // 7. 请求正常，继续处理
+            // 8. 请求正常，继续处理
             $this->logDetectionStats($request);
             return $next($request);
         } catch (SecurityException $e) {
@@ -183,6 +189,14 @@ class SecurityMiddleware
     protected function isEnabled(): bool
     {
         return $this->threatDetector->getConfig('enabled', true);
+    }
+
+    /**
+     * 检查中间件是否忽略本地环境
+     */
+    protected function isIgnoreLocal(): bool
+    {
+        return $this->threatDetector->getConfig('ignore_local', false);
     }
 
     /**

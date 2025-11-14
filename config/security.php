@@ -43,6 +43,15 @@ return [
     'enabled_type' => env('SECURITY_MIDDLEWARE_ENABLED', 'global'),
 
     /**
+     * 安全中间件是否忽略本地环境的请求
+     *
+     * 在生产环境建议关闭，开发环境可以根据需要开启
+     * 支持：boolean | callable
+     * 默认值：false
+     */
+    'ignore_local' => env('SECURITY_IGNORE_LOCAL', false),
+
+    /**
      * 日志记录级别
      *
      * 安全事件的日志记录级别

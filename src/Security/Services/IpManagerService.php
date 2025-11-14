@@ -38,7 +38,7 @@ class IpManagerService
         $clientIp = $this->getClientRealIp($request);
         $whitelist = $this->config->get('ip_whitelist', []);
 
-        return in_array($clientIp, $whitelist) || $this->isLocalIp($clientIp);
+        return in_array($clientIp, $whitelist);
     }
 
     /**

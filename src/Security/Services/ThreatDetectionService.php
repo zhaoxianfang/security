@@ -39,26 +39,19 @@ class ThreatDetectionService
     }
 
     /**
-     * 检查是否为资源文件路径
+     * 检查是否为资源文件路径：跳过资源文件的安全检查
      */
     public function isResourcePath(Request $request): bool
     {
         $path = $request->path();
 
-        $resourcePatterns = [
-            '/^zxf\/security\/css\/.*$/',
-            '/^zxf\/security\/js\/.*$/',
-            '/^zxf\/security\/images\/.*$/',
-            '/^zxf\/security\/fonts\/.*$/',
-        ];
-
-        foreach ($resourcePatterns as $pattern) {
-            if (preg_match($pattern, $path)) {
-                return true;
-            }
-        }
-
-        return false;
+        return match(true) {
+            str_starts_with($path, 'zxf/security/css/'),
+            str_starts_with($path, 'zxf/security/js/'),
+            str_starts_with($path, 'zxf/security/images/'),
+            str_starts_with($path, 'zxf/security/fonts/') => true,
+            default => false
+        };
     }
 
     /**
@@ -66,10 +59,6 @@ class ThreatDetectionService
      */
     public function performLayeredSecurityCheck(Request $request): array
     {
-        // 跳过资源文件的安全检查
-        if ($this->isResourcePath($request)) {
-            return ['blocked' => false];
-        }
 
         // 第一层：超轻量级检查
         $ultraLightChecks = [
