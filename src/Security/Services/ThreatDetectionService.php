@@ -44,14 +44,14 @@ class ThreatDetectionService
     public function isResourcePath(Request $request): bool
     {
         $path = $request->path();
-
-        return match(true) {
-            str_starts_with($path, 'zxf/security/css/'),
-            str_starts_with($path, 'zxf/security/js/'),
-            str_starts_with($path, 'zxf/security/images/'),
-            str_starts_with($path, 'zxf/security/fonts/') => true,
-            default => false
-        };
+        // return match(true) {
+        //     str_starts_with($path, 'zxf/security/css/'),
+        //     str_starts_with($path, 'zxf/security/js/'),
+        //     str_starts_with($path, 'zxf/security/images/'),
+        //     str_starts_with($path, 'zxf/security/fonts/') => true,
+        //     default => false
+        // };
+        return str_starts_with($path, 'zxf/');
     }
 
     /**

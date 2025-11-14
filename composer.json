@@ -2,6 +2,7 @@
   "name": "zxf/security",
   "description": "高级安全拦截中间件包 - 提供多层安全防护、速率限制、IP管理、威胁检测等功能",
   "type": "library",
+  "keywords": ["security", "ip", "zxf" ,"laravel"],
   "license": "MIT",
   "authors": [
     {

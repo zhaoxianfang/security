@@ -14,11 +14,6 @@ use Illuminate\Foundation\Support\Providers\RouteServiceProvider as ServiceProvi
 class RouteServiceProvider extends ServiceProvider
 {
     /**
-     * 命名空间
-     */
-    protected $namespace = 'zxf\\Security\\Http\\Controllers';
-
-    /**
      * 启动服务
      */
     public function boot(): void
