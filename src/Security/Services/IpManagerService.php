@@ -4,6 +4,8 @@ namespace zxf\Security\Services;
 
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
+use zxf\Security\Models\SecurityIp;
+use Illuminate\Support\Facades\Log;
 
 /**
  * IP管理服务
@@ -27,18 +29,27 @@ class IpManagerService
     }
 
     /**
+     * 检查中间件是否忽略本地环境
+     */
+    protected function isIgnoreLocal(): bool
+    {
+        return $this->config->get('ignore_local', false);
+    }
+
+    /**
      * 检查IP是否在白名单
      */
     public function isWhitelisted(Request $request): bool
     {
-        if (!$this->config->get('enable_ip_whitelist', true)) {
-            return false;
+        $clientIp = $this->getClientRealIp($request);
+
+        // 首先检查本地IP
+        if ($this->isIgnoreLocal() && $this->isLocalIp($clientIp)) {
+            return true;
         }
 
-        $clientIp = $this->getClientRealIp($request);
-        $whitelist = $this->config->get('ip_whitelist', []);
-
-        return in_array($clientIp, $whitelist);
+        // 检查数据库白名单
+        return SecurityIp::isWhitelisted($clientIp);
     }
 
     /**
@@ -46,26 +57,43 @@ class IpManagerService
      */
     public function isBlacklisted(Request $request): bool
     {
-        if (!$this->config->get('enable_ip_blacklist', true)) {
+        $clientIp = $this->getClientRealIp($request);
+
+        // 本地IP不检查黑名单
+        if ($this->isIgnoreLocal() && $this->isLocalIp($clientIp)) {
             return false;
         }
 
-        $clientIp = $this->getClientRealIp($request);
+        // 检查数据库黑名单
+        return SecurityIp::isBlacklisted($clientIp);
+    }
 
-        // 检查静态黑名单
-        $blacklist = $this->config->get('ip_blacklist', []);
-        if (in_array($clientIp, $blacklist)) {
-            return true;
+    /**
+     * 记录IP访问
+     */
+    public function recordAccess(Request $request, bool $blocked = false, ?string $rule = null): void
+    {
+        try {
+            $clientIp = $this->getClientRealIp($request);
+
+            Log::info("记录IP访问: {$clientIp}, 拦截: " . ($blocked ? '是' : '否') . ", 规则: " . ($rule ?? '无'));
+
+            $result = SecurityIp::recordRequest($clientIp, $blocked, $rule);
+
+            if ($result) {
+                Log::info("IP访问记录成功: {$clientIp}, 记录ID: " . $result->id);
+            } else {
+                Log::error("IP访问记录失败: {$clientIp}");
+            }
+
+        } catch (\Exception $e) {
+            Log::error("记录IP访问异常: " . $e->getMessage(), [
+                'ip' => $clientIp ?? 'unknown',
+                'blocked' => $blocked,
+                'rule' => $rule,
+                'exception' => $e
+            ]);
         }
-
-        // 检查动态黑名单（缓存）
-        $banKey = $this->getBanCacheKey($clientIp);
-        if (Cache::has($banKey)) {
-            return true;
-        }
-
-        // 检查自定义黑名单逻辑
-        return $this->checkCustomBlacklist($request, $clientIp);
     }
 
     /**
@@ -85,25 +113,15 @@ class IpManagerService
         $clientIp = $this->getClientRealIp($request);
         $duration = $this->getBanDuration($type);
 
-        $banData = [
-            'type' => $type,
-            'ip' => $clientIp,
-            'duration' => $duration,
-            'banned_at' => now()->toISOString(),
-            'expires_at' => now()->addSeconds($duration)->toISOString(),
-            'reason' => $this->getBanReason($type),
-        ];
+        // 添加到数据库黑名单
+        SecurityIp::addToBlacklist(
+            $clientIp,
+            "自动封禁: {$type}",
+            now()->addSeconds($duration),
+            true // 自动检测
+        );
 
-        $banKey = $this->getBanCacheKey($clientIp);
-        $banData['ban_key'] = $banKey;
-
-        // 调用封禁IP配置操作
-        $handler = $this->config->get('ban_id_handler', null, $banData);
-        if (is_array($handler)) {
-            app()->call($handler, $banData);
-        }else{
-            Cache::put($banKey, $banData, $duration);
-        }
+        \Illuminate\Support\Facades\Log::warning("IP封禁: {$clientIp} 类型: {$type} 时长: {$duration}秒");
     }
 
     /**
@@ -208,12 +226,27 @@ class IpManagerService
     }
 
     /**
+     * 获取IP统计信息
+     */
+    public function getIpStats(string $ip): array
+    {
+        return SecurityIp::getIpStats($ip);
+    }
+
+    /**
+     * 获取高威胁IP列表
+     */
+    public function getHighThreatIps(int $limit = 100): array
+    {
+        return SecurityIp::getHighThreatIps($limit)->toArray();
+    }
+
+    /**
      * 获取被封禁的IP数量
      */
     public function getBannedIpsCount(): int
     {
-        // 这里需要根据实际存储实现
-        return 0;
+        return SecurityIp::activeBlacklistCount();
     }
 
     /**
@@ -221,6 +254,7 @@ class IpManagerService
      */
     public function clearCache(): void
     {
-        // 实现IP相关缓存清理
+        // 清除IP相关缓存
+        Cache::flush();
     }
 }

@@ -7,6 +7,7 @@ use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\App;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use zxf\Security\Services\RateLimiterService;
@@ -104,7 +105,7 @@ class SecurityMiddleware
             }
 
             // 2. 检查中间件是否忽略本地环境
-            if ($this->isIgnoreLocal() || $this->ipManager->isLocalRequest($request)) {
+            if ($this->isIgnoreLocal() && $this->ipManager->isLocalRequest($request)) {
                 $this->logDebug('安全中间件已忽略本地环境请求，跳过检查');
                 return $next($request);
             }
@@ -117,8 +118,9 @@ class SecurityMiddleware
 
             // 4. 黑名单检查
             if ($this->ipManager->isBlacklisted($request)) {
-                $this->detectionStats['blocked_requests']++;
                 $this->logSecurityEvent($request, 'Blacklist', 'IP黑名单拦截');
+                // 记录IP访问（被拦截）
+                $this->ipManager->recordAccess($request, true, 'blacklist');
                 return $this->createBlockResponse($request, 'Blacklist', '您的IP地址已被列入黑名单');
             }
 
@@ -127,6 +129,8 @@ class SecurityMiddleware
             if ($securityCheck['blocked']) {
                 $this->detectionStats['blocked_requests']++;
                 $this->logSecurityEvent($request, $securityCheck['type'], $securityCheck['reason']);
+                // 记录IP访问（被拦截）并传递触发规则
+                $this->ipManager->recordAccess($request, true, $securityCheck['type']);
                 return $this->createBlockResponse($request, $securityCheck['type'], $securityCheck['message']);
             }
 
@@ -135,6 +139,8 @@ class SecurityMiddleware
             if ($rateLimitCheck['blocked']) {
                 $this->detectionStats['blocked_requests']++;
                 $this->logSecurityEvent($request, 'RateLimit', '速率限制拦截');
+                // 记录IP访问（被拦截）
+                $this->ipManager->recordAccess($request, true, 'rate_limit');
                 return $this->createBlockResponse(
                     $request,
                     'RateLimit',
@@ -148,10 +154,13 @@ class SecurityMiddleware
             if ($customCheck['blocked']) {
                 $this->detectionStats['blocked_requests']++;
                 $this->logSecurityEvent($request, 'CustomRule', '自定义规则拦截');
+                // 记录IP访问（被拦截）
+                $this->ipManager->recordAccess($request, true, 'custom_rule');
                 return $this->createBlockResponse($request, 'CustomRule', $customCheck['message']);
             }
 
-            // 8. 请求正常，继续处理
+            // 8. 请求正常，继续处理 - 记录成功访问
+            $this->ipManager->recordAccess($request, false, null);
             $this->logDetectionStats($request);
             return $next($request);
         } catch (SecurityException $e) {

@@ -14,79 +14,6 @@ use zxf\Security\Contracts\SecurityConfigInterface;
  */
 class SecurityConfig implements SecurityConfigInterface
 {
-    /**
-     * 获取IP白名单列表
-     *
-     * 支持从多种源获取白名单IP：
-     * 1. 环境变量
-     * 2. 数据库
-     * 3. 配置文件
-     * 4. 缓存
-     *
-     * @return array IP白名单数组
-     */
-    public static function getWhitelistIps(): array
-    {
-        // 首先检查环境变量
-        $envIps = env('SECURITY_IP_WHITELIST', '');
-        if (!empty($envIps)) {
-            return array_filter(explode(',', $envIps));
-        }
-
-        // 尝试从数据库获取（如果表存在）
-        try {
-            if (self::hasDatabaseConnection() && self::hasTable('security_whitelist_ips')) {
-                return Cache::remember('security:whitelist_ips', 300, function () {
-                    return DB::table('security_whitelist_ips')
-                        ->where('is_active', true)
-                        ->pluck('ip_address')
-                        ->toArray();
-                });
-            }
-        } catch (\Exception $e) {
-            // 数据库操作失败，使用默认值
-        }
-
-        // 返回默认值
-        return ['127.0.0.1', '::1', 'localhost'];
-    }
-
-    /**
-     * 获取IP黑名单列表
-     *
-     * 支持从多种源获取黑名单IP：
-     * 1. 环境变量
-     * 2. 数据库
-     * 3. 配置文件
-     * 4. 缓存
-     *
-     * @return array IP黑名单数组
-     */
-    public static function getBlacklistIps(): array
-    {
-        // 首先检查环境变量
-        $envIps = env('SECURITY_IP_BLACKLIST', '');
-        if (!empty($envIps)) {
-            return array_filter(explode(',', $envIps));
-        }
-
-        // 尝试从数据库获取（如果表存在）
-        try {
-            if (self::hasDatabaseConnection() && self::hasTable('security_blacklist_ips')) {
-                return Cache::remember('security:blacklist_ips', 300, function () {
-                    return DB::table('security_blacklist_ips')
-                        ->where('is_active', true)
-                        ->pluck('ip_address')
-                        ->toArray();
-                });
-            }
-        } catch (\Exception $e) {
-            // 数据库操作失败，使用默认值
-        }
-
-        // 返回默认值
-        return [];
-    }
 
     /**
      * 获取恶意请求体检测模式
@@ -120,7 +47,8 @@ class SecurityConfig implements SecurityConfigInterface
             // 表达式注入
             '/(?:\\$\\{.*\\}|\\(\\{.*\\}\\)|\\{\\{.*\\}\\})/',
 
-            // 新的威胁模式可以在这里添加
+            // 文件操作
+            '/\b(file_get_contents|fopen|fwrite)\s*\(/i',
         ];
     }
 
@@ -132,6 +60,9 @@ class SecurityConfig implements SecurityConfigInterface
     public static function getIllegalUrlPatterns(): array
     {
         return [
+            // 匹配所有点(.)开头的文件或文件夹
+            '~/(\.+[^/]*)(?=/|$)~',
+
             // 隐藏文件和目录（排除 .well-known）
             '~/(?:\\.(?!well-known)[^/]*)(?=/|$)~i',
 
@@ -140,7 +71,7 @@ class SecurityConfig implements SecurityConfigInterface
             '/(?:composer|package)(?:\\.(?:json|lock))?$/i',
 
             // 源代码和脚本文件
-            '/\\.(?:php|phtml|jsp|asp|aspx|pl|py|rb|sh)(?:\\.\\w+)?$/i',
+            '/\\.(?:php|phtml|jsp|asp|aspx|pl|py|rb|sh|cgi|cfm|bash|c|cpp|java|cfm|yaml|yml|log)(?:\\.\\w+)?$/i',
 
             // 数据库和备份文件
             '/\\.(?:sql|db|mdb|accdb|sqlite|bak|old|backup)$/i',
@@ -148,8 +79,11 @@ class SecurityConfig implements SecurityConfigInterface
             // 日志和临时文件
             '/\\.(?:log|trace|debug|temp|tmp)$/i',
 
+            // 系统文件
+            '/^(readme|license|changelog)\.(md|txt)$/i',
+
             // 敏感目录路径
-            '/(?:^|\\/)(?:config|setup|install|backup|logs?|temp|node_modules|\\.git)(?:$|\\/)/i',
+            '/(backup|node_modules|temp|vendor|phpmyadmin|\\.git)/i', // 敏感目录
         ];
     }
 
@@ -207,9 +141,10 @@ class SecurityConfig implements SecurityConfigInterface
             'php', 'phtml', 'php3', 'php4', 'php5', 'php7', 'phar',
             'jsp', 'jspx', 'asp', 'aspx', 'pl', 'py', 'rb', 'sh', 'bash',
             'js', 'html', 'htm', 'xhtml',
+            'sh', 'bash', 'csh', 'ksh', 'zsh', 'cgi',
 
             // 配置文件
-            'env', 'config', 'ini', 'conf', 'cfg', 'properties',
+            'env', 'config', 'ini', 'conf', 'cfg', 'properties', 'yml', 'yaml',
 
             // 数据库文件
             'sql', 'db', 'mdb', 'accdb', 'sqlite',
@@ -237,48 +172,6 @@ class SecurityConfig implements SecurityConfigInterface
             'application/x-msdownload',
             'application/x-dosexec',
         ];
-    }
-
-
-    /**
-     * 封禁IP 处理
-     *
-     * @param array $banData ban数据
-     * @return void
-     */
-    public static function banIdHandler(array $banData=[]): void
-    {
-        Cache::put($banData['ban_key'], $banData, $banData['duration']);
-    }
-
-    /**
-     * 检查数据库连接是否可用
-     *
-     * @return bool 是否可用
-     */
-    private static function hasDatabaseConnection(): bool
-    {
-        try {
-            DB::connection()->getPdo();
-            return true;
-        } catch (\Exception $e) {
-            return false;
-        }
-    }
-
-    /**
-     * 检查表是否存在
-     *
-     * @param string $tableName 表名
-     * @return bool 是否存在
-     */
-    private static function hasTable(string $tableName): bool
-    {
-        try {
-            return DB::getSchemaBuilder()->hasTable($tableName);
-        } catch (\Exception $e) {
-            return false;
-        }
     }
 
 }

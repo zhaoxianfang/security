@@ -10,19 +10,6 @@ namespace zxf\Security\Contracts;
  */
 interface SecurityConfigInterface
 {
-    /**
-     * 获取IP白名单列表
-     *
-     * @return array
-     */
-    public static function getWhitelistIps(): array;
-
-    /**
-     * 获取IP黑名单列表
-     *
-     * @return array
-     */
-    public static function getBlacklistIps(): array;
 
     /**
      * 获取恶意请求体检测模式

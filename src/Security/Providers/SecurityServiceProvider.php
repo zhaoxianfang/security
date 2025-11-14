@@ -8,6 +8,8 @@ use zxf\Security\Services\ConfigManager;
 use zxf\Security\Services\RateLimiterService;
 use zxf\Security\Services\IpManagerService;
 use zxf\Security\Services\ThreatDetectionService;
+use zxf\Security\Console\Commands\SecurityInstallCommand;
+use zxf\Security\Console\Commands\SecurityCleanupCommand;
 use Illuminate\Foundation\Console\AboutCommand;
 use Composer\InstalledVersions;
 use Illuminate\Support\Facades\File;
@@ -35,6 +37,11 @@ class SecurityServiceProvider extends ServiceProvider
         $this->publishes([
             __DIR__ . '/../../../config/security.php' => config_path('security.php'),
         ], 'security-config');
+
+        // 发布数据库迁移
+        $this->publishes([
+            __DIR__ . '/../../Database/Migrations' => database_path('migrations'),
+        ], 'security-migrations');
 
         // 加载视图（不发布，直接从包内访问）
         $this->loadViewsFrom(__DIR__ . '/../../Resources/views', 'security');
@@ -146,7 +153,9 @@ class SecurityServiceProvider extends ServiceProvider
                 echo PHP_EOL;
                 echo '=================================================================================='.PHP_EOL;
                 echo ' 提    示 | 检查到您已经安装了 zxf/security 安全中间件包，但是没有发布配置文件'.PHP_EOL;
-                echo ' 发布命令 | php artisan vendor:publish --tag=security-config '.PHP_EOL;
+                echo ' 安装发布 | php artisan security:install'.PHP_EOL;
+                echo ' 发布配置 | php artisan vendor:publish --tag=security-config'.PHP_EOL;
+                echo ' 发布迁移 | php artisan vendor:publish --tag=security-migrations'.PHP_EOL;
                 echo ' 文档地址 | https://weisifang.com/docs/2 '.PHP_EOL;
                 echo '=================================================================================='.PHP_EOL;
             }
@@ -167,7 +176,8 @@ class SecurityServiceProvider extends ServiceProvider
     protected function registerCommands(): void
     {
         $this->commands([
-            // 可以在这里注册Artisan命令
+            SecurityInstallCommand::class,  // 一键安装命令
+            SecurityCleanupCommand::class,  // 清理命令
         ]);
     }
 

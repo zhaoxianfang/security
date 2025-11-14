@@ -35,3 +35,25 @@
 ```bash
 composer require zxf/security
 ```
+ ## 🚀 使用方法
+
+### 发布
+```bash
+
+# 一键安装（推荐）
+php artisan security:install
+# 等同于
+php artisan vendor:publish --provider="zxf\Security\Providers\SecurityServiceProvider"
+
+# 强制安装（覆盖现有文件）
+php artisan security:install --force
+
+# 安装但不运行迁移
+php artisan security:install --no-migrate
+
+# 仅发布配置文件
+php artisan vendor:publish --tag=security-config
+
+# 仅发布数据迁移
+php artisan vendor:publish --tag=security-migrations
+```

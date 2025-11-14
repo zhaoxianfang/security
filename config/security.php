@@ -95,69 +95,134 @@ return [
      *
      * 定义不同时间窗口的最大请求数
      * 支持：array | callable
-     * 默认值：['minute' => 60, 'hour' => 1000, 'day' => 10000]
+     * 默认值：['minute' => 300, 'hour' => 10000, 'day' => 100000]
      */
     'rate_limits' => [
-        'minute' => env('SECURITY_MAX_REQUESTS_PER_MINUTE', 60),
-        'hour' => env('SECURITY_MAX_REQUESTS_PER_HOUR', 1000),
-        'day' => env('SECURITY_MAX_REQUESTS_PER_DAY', 10000),
+        'minute' => env('SECURITY_MAX_REQUESTS_PER_MINUTE', 300),
+        'hour' => env('SECURITY_MAX_REQUESTS_PER_HOUR', 10000),
+        'day' => env('SECURITY_MAX_REQUESTS_PER_DAY', 100000),
     ],
 
-    // ==================== IP管理配置 ====================
+    // ==================== IP自动检测配置 ====================
 
     /**
-     * 是否启用IP白名单
+     * IP自动检测配置
      *
-     * 启用后白名单中的IP将跳过所有安全检查
-     * 支持：boolean | callable
-     * 默认值：true
+     * 支持自动检测可疑IP并转为黑名单
+     * 类型：array
      */
-    'enable_ip_whitelist' => env('SECURITY_IP_WHITELIST_ENABLED', true),
+    'ip_auto_detection' => [
+        /**
+         * 是否启用自动检测
+         *
+         * 启用后系统会自动检测可疑IP并处理
+         * 类型：boolean
+         * 默认值：true
+         */
+        'enabled' => env('SECURITY_IP_AUTO_DETECTION', true),
+
+        /**
+         * 黑名单转换阈值
+         *
+         * 威胁评分达到此值时自动转为黑名单
+         * 类型：float
+         * 范围：0-100
+         * 默认值：80.0
+         */
+        'blacklist_threshold' => env('SECURITY_BLACKLIST_THRESHOLD', 80.0),
+
+        /**
+         * 可疑IP转换阈值
+         *
+         * 威胁评分达到此值时转为可疑IP
+         * 类型：float
+         * 范围：0-100
+         * 默认值：50.0
+         */
+        'suspicious_threshold' => env('SECURITY_SUSPICIOUS_THRESHOLD', 50.0),
+
+        /**
+         * 最大触发规则次数
+         *
+         * 触发规则达到此次数时自动转为黑名单
+         * 类型：integer
+         * 默认值：5
+         */
+        'max_triggers' => env('SECURITY_MAX_TRIGGERS', 5),
+
+        /**
+         * 每次拦截时增加威胁评分
+         *
+         * 被拦截时增加的威胁评分
+         * 类型：integer
+         * 默认值：5
+         */
+        'add_threat_score' => env('SECURITY_ADD_THREAT_SCORE', 10.00),
+
+        /**
+         * 每次成功请求时轻微降低威胁评分
+         *
+         * 拦截后又成功请求时轻微降低威胁评分
+         * 类型：integer
+         * 默认值：2
+         */
+        'reduce_threat_score' => env('SECURITY_REDUCE_THREAT_SCORE', 1.00),
+
+        /**
+         * 自动清理过期记录
+         *
+         * 是否自动清理过期的IP记录
+         * 类型：boolean
+         * 默认值：true
+         */
+        'auto_cleanup' => env('SECURITY_AUTO_CLEANUP', true),
+
+        /**
+         * 清理间隔（小时）
+         *
+         * 自动清理任务的执行间隔
+         * 类型：integer
+         * 默认值：24
+         */
+        'cleanup_interval' => env('SECURITY_CLEANUP_INTERVAL', 24),
+    ],
+
+    // ==================== IP数据库配置 ====================
 
     /**
-     * IP白名单列表
+     * IP数据库配置
      *
-     * 允许跳过安全检查的IP地址列表
-     * 支持：array | callable | string (类方法)
-     * 默认值：['127.0.0.1', '::1', 'localhost']
+     * 配置IP管理的数据库相关设置
+     * 类型：array
      */
-    'ip_whitelist' => [SecurityConfig::class, 'getWhitelistIps'],
+    'ip_database' => [
+        /**
+         * 缓存时间（秒）
+         *
+         * IP检查结果的缓存时间
+         * 类型：integer
+         * 默认值：300
+         */
+        'cache_ttl' => env('SECURITY_IP_CACHE_TTL', 300),
 
-    /**
-     * 是否启用IP黑名单
-     *
-     * 启用后黑名单中的IP将被直接拒绝访问
-     * 支持：boolean | callable
-     * 默认值：true
-     */
-    'enable_ip_blacklist' => env('SECURITY_IP_BLACKLIST_ENABLED', true),
+        /**
+         * 批量操作大小
+         *
+         * 批量处理IP记录时的大小
+         * 类型：integer
+         * 默认值：1000
+         */
+        'batch_size' => env('SECURITY_IP_BATCH_SIZE', 1000),
 
-    /**
-     * IP黑名单列表
-     *
-     * 直接拒绝访问的IP地址列表
-     * 支持：array | callable | string (类方法)
-     * 默认值：[]
-     */
-    'ip_blacklist' => [SecurityConfig::class, 'getBlacklistIps'],
-
-    /**
-     * 动态IP黑名单缓存时间（秒）
-     *
-     * 从数据库或其他动态源获取的黑名单缓存时间
-     * 支持：integer | callable
-     * 默认值：300
-     */
-    'dynamic_blacklist_cache_ttl' => env('SECURITY_DYNAMIC_BLACKLIST_CACHE_TTL', 300),
-
-    /**
-     * 禁封IP操作
-     *
-     * 禁用某个用户的IP
-     * 支持：array | callable
-     * 默认值：[]
-     */
-    'ban_id_handler'=>[SecurityConfig::class, 'banIdHandler'],
+        /**
+         * 统计更新间隔（分钟）
+         *
+         * 更新统计信息的时间间隔
+         * 类型：integer
+         * 默认值：60
+         */
+        'stats_update_interval' => env('SECURITY_STATS_UPDATE_INTERVAL', 60),
+    ],
 
     // ==================== HTTP方法配置 ====================
 
