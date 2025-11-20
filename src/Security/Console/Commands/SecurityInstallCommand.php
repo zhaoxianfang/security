@@ -27,7 +27,7 @@ class SecurityInstallCommand extends Command
     /**
      * 命令描述
      */
-    protected $description = '一键安装安全包 - 发布配置、迁移文件并运行迁移';
+    protected $description = '一键安装安全包:发布配置、迁移文件并运行迁移';
 
     /**
      * 执行命令

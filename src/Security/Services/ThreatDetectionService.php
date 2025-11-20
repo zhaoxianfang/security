@@ -51,7 +51,24 @@ class ThreatDetectionService
         //     str_starts_with($path, 'zxf/security/fonts/') => true,
         //     default => false
         // };
-        return str_starts_with($path, 'zxf/');
+        return str_starts_with($path, 'zxf/') || $this->isStaticFile($path);
+    }
+
+    // 检查是否为静态文件
+    private function isStaticFile($path): bool
+    {
+        $staticExtensions = [
+            'css', 'js', 'png', 'jpg', 'jpeg', 'gif', 'svg', 'ico',
+            'woff', 'woff2', 'ttf', 'eot', 'pdf', 'txt', 'xml', 'json',
+            'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'odt', 'ods', 'odp',
+            'mp3', 'mp4', 'mpeg', 'mpg', 'm4a', 'm4v', 'wmv', 'avi', 'mov',
+            'flv', 'webm', 'ogg', 'ogv', '3gp', '3g2', 'mkv', 'wav', 'aac',
+            'm4b', 'm4p', 'm4r', 'm4a', 'm4b', 'm4e',
+        ];
+
+        $extension = pathinfo($path, PATHINFO_EXTENSION);
+
+        return in_array(strtolower($extension), $staticExtensions);
     }
 
     /**

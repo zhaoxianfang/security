@@ -25,7 +25,7 @@ class SecurityCleanupCommand extends Command
     /**
      * 命令描述
      */
-    protected $description = '清理安全相关的过期数据和缓存';
+    protected $description = '安全包：清理安全相关的过期数据和缓存';
 
     /**
      * 执行命令
