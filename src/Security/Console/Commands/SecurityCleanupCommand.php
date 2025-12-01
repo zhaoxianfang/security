@@ -2,6 +2,7 @@
 
 namespace zxf\Security\Console\Commands;
 
+use Exception;
 use Illuminate\Console\Command;
 use zxf\Security\Models\SecurityIp;
 
@@ -70,7 +71,7 @@ class SecurityCleanupCommand extends Command
 
             return self::SUCCESS;
 
-        } catch (\Exception $e) {
+        } catch (Exception $e) {
             $this->error('清理过程中发生错误: ' . $e->getMessage());
             return self::FAILURE;
         }

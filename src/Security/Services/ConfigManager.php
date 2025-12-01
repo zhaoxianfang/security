@@ -2,6 +2,8 @@
 
 namespace zxf\Security\Services;
 
+use Closure;
+use Exception;
 use Illuminate\Support\Facades\App;
 use Illuminate\Support\Arr;
 
@@ -46,7 +48,7 @@ class ConfigManager
         // 从配置文件获取
         $value = config("security.{$key}", $default);
 
-        if($value instanceof \Closure){
+        if($value instanceof Closure){
             return call_user_func($value, $params);
         }
         // 处理动态配置（排除不应解析的键）
@@ -137,7 +139,7 @@ class ConfigManager
         try {
             $instance = App::make($class);
             return $instance->$method($params);
-        } catch (\Exception $e) {
+        } catch (Exception $e) {
             // 记录错误并返回默认值
             \Illuminate\Support\Facades\Log::error("配置方法调用失败: {$class}::{$method} - " . $e->getMessage());
             return null;
@@ -154,7 +156,7 @@ class ConfigManager
         try {
             $instance = App::make($class);
             return $instance->$method();
-        } catch (\Exception $e) {
+        } catch (Exception $e) {
             \Illuminate\Support\Facades\Log::error("配置方法调用失败: {$callable} - " . $e->getMessage());
             return null;
         }

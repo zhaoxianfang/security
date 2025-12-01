@@ -2,6 +2,7 @@
 
 namespace zxf\Security\Console\Commands;
 
+use Exception;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\File;
@@ -56,7 +57,7 @@ class SecurityInstallCommand extends Command
 
             return self::SUCCESS;
 
-        } catch (\Exception $e) {
+        } catch (Exception $e) {
             $this->error('安装过程中发生错误: ' . $e->getMessage());
             $this->error('错误详情: ' . $e->getFile() . ':' . $e->getLine());
             return self::FAILURE;
@@ -165,7 +166,7 @@ class SecurityInstallCommand extends Command
                 $this->warn('  步骤 3/3: 没有需要运行的迁移');
             }
 
-        } catch (\Exception $e) {
+        } catch (Exception $e) {
             $this->error('  ❌ 数据库迁移失败: ' . $e->getMessage());
             throw $e;
         }

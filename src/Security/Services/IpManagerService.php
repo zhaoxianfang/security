@@ -2,10 +2,11 @@
 
 namespace zxf\Security\Services;
 
+use Exception;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
-use zxf\Security\Models\SecurityIp;
 use Illuminate\Support\Facades\Log;
+use zxf\Security\Models\SecurityIp;
 
 /**
  * IP管理服务
@@ -86,7 +87,7 @@ class IpManagerService
                 Log::error("IP访问记录失败: {$clientIp}");
             }
 
-        } catch (\Exception $e) {
+        } catch (Exception $e) {
             Log::error("记录IP访问异常: " . $e->getMessage(), [
                 'ip' => $clientIp ?? 'unknown',
                 'blocked' => $blocked,

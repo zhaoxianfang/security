@@ -1,5 +1,8 @@
 # Laravel Security Middleware - Laravel 安全拦截中间件
 
+
+![](https://img.shields.io/packagist/dt/zxf/security) ![](https://img.shields.io/github/stars/zhaoxianfang/util.svg) ![](https://img.shields.io/github/forks/zhaoxianfang/util.svg) ![](https://img.shields.io/github/tag/zhaoxianfang/util.svg) ![](https://img.shields.io/github/release/zhaoxianfang/util.svg) ![](https://img.shields.io/github/issues/zhaoxianfang/util.svg)
+
 高级安全拦截中间件包，为Laravel应用提供全面的安全防护。
 
 ## 🚀 主要优化特性

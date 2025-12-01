@@ -2,6 +2,8 @@
 
 namespace zxf\Security\Models;
 
+use DateTimeInterface;
+use Exception;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\Cache;
@@ -247,7 +249,7 @@ class SecurityIp extends Model
 
             return $ipRecord;
 
-        } catch (\Exception $e) {
+        } catch (Exception $e) {
             DB::rollBack();
             Log::error('记录IP访问失败: ' . $e->getMessage(), [
                 'ip' => $ip,
@@ -339,10 +341,10 @@ class SecurityIp extends Model
      *
      * @param string $ip IP地址或IP段
      * @param string $reason 添加原因
-     * @param \DateTimeInterface|null $expiresAt 过期时间
+     * @param DateTimeInterface|null $expiresAt 过期时间
      * @return self
      */
-    public static function addToWhitelist(string $ip, string $reason = '', ?\DateTimeInterface $expiresAt = null): self
+    public static function addToWhitelist(string $ip, string $reason = '', ?DateTimeInterface $expiresAt = null): self
     {
         return self::addIp($ip, self::TYPE_WHITELIST, $reason, $expiresAt, false);
     }
@@ -352,11 +354,11 @@ class SecurityIp extends Model
      *
      * @param string $ip IP地址或IP段
      * @param string $reason 添加原因
-     * @param \DateTimeInterface|null $expiresAt 过期时间
+     * @param DateTimeInterface|null $expiresAt 过期时间
      * @param bool $autoDetected 是否自动检测
      * @return self
      */
-    public static function addToBlacklist(string $ip, string $reason = '', ?\DateTimeInterface $expiresAt = null, bool $autoDetected = false): self
+    public static function addToBlacklist(string $ip, string $reason = '', ?DateTimeInterface $expiresAt = null, bool $autoDetected = false): self
     {
         return self::addIp($ip, self::TYPE_BLACKLIST, $reason, $expiresAt, $autoDetected);
     }
@@ -367,11 +369,11 @@ class SecurityIp extends Model
      * @param string $ip IP地址或IP段
      * @param string $type IP类型
      * @param string $reason 添加原因
-     * @param \DateTimeInterface|null $expiresAt 过期时间
+     * @param DateTimeInterface|null $expiresAt 过期时间
      * @param bool $autoDetected 是否自动检测
      * @return self
      */
-    protected static function addIp(string $ip, string $type, string $reason = '', ?\DateTimeInterface $expiresAt = null, bool $autoDetected = false): self
+    protected static function addIp(string $ip, string $type, string $reason = '', ?DateTimeInterface $expiresAt = null, bool $autoDetected = false): self
     {
         $isRange = str_contains($ip, '/');
 
@@ -507,6 +509,7 @@ class SecurityIp extends Model
     /**
      * 范围查询：获取活跃的黑名单IP数量
      *
+     * @param Builder $query
      * @return int
      */
     public function scopeActiveBlacklistCount(Builder $query): int

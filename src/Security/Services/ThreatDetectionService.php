@@ -2,6 +2,7 @@
 
 namespace zxf\Security\Services;
 
+use Exception;
 use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Log;
@@ -392,7 +393,7 @@ class ThreatDetectionService
                     return false;
                 }
             }
-        } catch (\Exception $e) {
+        } catch (Exception $e) {
             Log::warning("文件内容检查失败: " . $e->getMessage());
         }
 
@@ -465,9 +466,7 @@ class ThreatDetectionService
         $content = preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/', '', $content);
 
         // 标准化空格
-        $content = preg_replace('/\s+/', ' ', $content);
-
-        return $content;
+        return preg_replace('/\s+/', ' ', $content);
     }
 
     /**

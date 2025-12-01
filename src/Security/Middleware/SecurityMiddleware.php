@@ -3,6 +3,7 @@
 namespace zxf\Security\Middleware;
 
 use Closure;
+use Exception;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Http\JsonResponse;
@@ -10,6 +11,7 @@ use Illuminate\Support\Facades\App;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
+use InvalidArgumentException;
 use zxf\Security\Services\RateLimiterService;
 use zxf\Security\Services\IpManagerService;
 use zxf\Security\Services\ThreatDetectionService;
@@ -163,11 +165,10 @@ class SecurityMiddleware
             $this->ipManager->recordAccess($request, false, null);
             $this->logDetectionStats($request);
             return $next($request);
-        } catch (SecurityException $e) {
+        } catch (Exception $e) {
             // 安全相关异常
             return $this->handleSecurityException($request, $e);
-        } catch (\Exception $e) {
-            config('app.debug') && dd($e);
+        } catch (Exception $e) {
             // 其他异常，很可能试图文件异常，改为json 响应
             return response()->json([
                 'code' => 500,
@@ -229,7 +230,7 @@ class SecurityMiddleware
                     'message' => $result['message'] ?? '自定义安全规则拦截'
                 ];
             }
-        } catch (\Exception $e) {
+        } catch (Exception $e) {
             Log::error('自定义安全逻辑执行失败: ' . $e->getMessage(), [
                 'custom_handler' => $customHandler,
                 'exception' => $e
@@ -263,7 +264,7 @@ class SecurityMiddleware
     /**
      * 处理一般异常
      */
-    protected function handleGeneralException(Request $request, \Exception $e)
+    protected function handleGeneralException(Request $request, Exception $e)
     {
         Log::error('安全中间件执行异常: ' . $e->getMessage(), [
             'exception' => $e,
@@ -294,7 +295,7 @@ class SecurityMiddleware
         try {
             // 直接调用下一个中间件
             return $next($request);
-        } catch (\Exception $e) {
+        } catch (Exception $e) {
             // 如果下一个中间件也异常，返回错误响应
             Log::error('请求处理链异常: ' . $e->getMessage());
 
@@ -365,7 +366,7 @@ class SecurityMiddleware
                 app()->call($handler, $alertData);
             }
             $this->logDebug('安全警报已发送: ' . $type);
-        } catch (\Exception $e) {
+        } catch (Exception $e) {
             Log::error('发送安全警报失败: ' . $e->getMessage());
         }
     }
@@ -533,7 +534,7 @@ class SecurityMiddleware
             return $handler;
         }
 
-        throw new \InvalidArgumentException('无法解析的可调用对象: ' . gettype($handler));
+        throw new InvalidArgumentException('无法解析的可调用对象: ' . gettype($handler));
     }
 
     /**
