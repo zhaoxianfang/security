@@ -169,7 +169,7 @@ class SecurityMiddleware
             // 安全相关异常
             return $this->handleSecurityException($request, $e);
         } catch (Exception $e) {
-            // 其他异常，很可能试图文件异常，改为json 响应
+            // 其他异常，很可能是 视图图文件异常，改为json 响应
             return response()->json([
                 'code' => 500,
                 'message' => '处理安全拦截时出现异常！'

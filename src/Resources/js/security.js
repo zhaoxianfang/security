@@ -25,7 +25,7 @@ function createParticles() {
 function formatTimestamp() {
     const timestamp = "2025-11-13T01:13:39.108728Z";
     const date = new Date(timestamp);
-    const formatted = date.toLocaleString('zh-CN', {
+    document.getElementById('formattedTimestamp').textContent = date.toLocaleString('zh-CN', {
         year: 'numeric',
         month: '2-digit',
         day: '2-digit',
@@ -34,8 +34,6 @@ function formatTimestamp() {
         second: '2-digit',
         timeZone: 'Asia/Shanghai'
     });
-
-    document.getElementById('formattedTimestamp').textContent = formatted;
 }
 
 // 盾牌交互效果
