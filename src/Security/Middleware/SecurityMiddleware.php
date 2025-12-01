@@ -557,10 +557,8 @@ class SecurityMiddleware
         ];
 
         // 记录相关日志
-        if (security_config('enable_debug_logging',false)) {
-             $logLevel = $this->threatDetector->getConfig('log_level', 'warning');
-             Log::$logLevel("安全拦截: {$type} - {$reason}", $logData);
-        }
+         $logLevel = $this->threatDetector->getConfig('log_level', 'warning');
+         Log::$logLevel("安全拦截: {$type} - {$reason}", $logData);
     }
 
     /**
@@ -694,7 +692,7 @@ class SecurityMiddleware
 
         $this->errorList = [];
 
-        Log::info('安全中间件缓存已清除');
+        security_config('enable_debug_logging',false) && Log::info('安全中间件缓存已清除');
     }
 
     /**
@@ -705,6 +703,6 @@ class SecurityMiddleware
         $this->threatDetector->clearCache();
         $this->clearCache();
 
-        Log::info('安全中间件配置已重新加载', ['new_config_keys' => array_keys($newConfig)]);
+        security_config('enable_debug_logging',false) && Log::info('安全中间件配置已重新加载', ['new_config_keys' => array_keys($newConfig)]);
     }
 }

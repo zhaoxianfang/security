@@ -297,7 +297,7 @@ class SecurityIp extends Model
      */
     public function checkAndUpdateType(): void
     {
-        $config = config('security.ip_auto_detection', []);
+        $config = security_config('ip_auto_detection', []);
 
         // 设置默认阈值
         $thresholds = [
@@ -307,7 +307,7 @@ class SecurityIp extends Model
 
         $maxTriggers = $config['max_triggers'] ?? 5; // 最大触发次数
 
-        Log::info("检查IP类型转换: 当前威胁评分={$this->threat_score}, 触发次数={$this->trigger_count}");
+        security_config('enable_debug_logging',false) && Log::info("检查IP类型转换: 当前威胁评分={$this->threat_score}, 触发次数={$this->trigger_count}");
 
         $originalType = $this->type;
 
@@ -317,7 +317,7 @@ class SecurityIp extends Model
                 $this->type = self::TYPE_BLACKLIST;
                 $this->reason = '自动检测: 威胁评分过高或触发规则过多';
                 $this->auto_detected = true;
-                Log::info("IP自动转为黑名单: {$this->ip_address}, 威胁评分: {$this->threat_score}");
+                security_config('enable_debug_logging',false) && Log::info("IP自动转为黑名单: {$this->ip_address}, 威胁评分: {$this->threat_score}");
             }
         } elseif ($this->threat_score >= $thresholds['suspicious']) {
             // 转为可疑IP
@@ -325,12 +325,12 @@ class SecurityIp extends Model
                 $this->type = self::TYPE_SUSPICIOUS;
                 $this->reason = '自动检测: 威胁评分较高';
                 $this->auto_detected = true;
-                Log::info("IP自动转为可疑: {$this->ip_address}, 威胁评分: {$this->threat_score}");
+                security_config('enable_debug_logging',false) && Log::info("IP自动转为可疑: {$this->ip_address}, 威胁评分: {$this->threat_score}");
             }
         }
 
         if ($originalType !== $this->type) {
-            Log::info("IP类型已变更: {$originalType} -> {$this->type}");
+            security_config('enable_debug_logging',false) &&Log::info("IP类型已变更: {$originalType} -> {$this->type}");
         }
     }
 

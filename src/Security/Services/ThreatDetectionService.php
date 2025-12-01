@@ -140,7 +140,7 @@ class ThreatDetectionService
         $allowedMethods = $this->config->get('allowed_methods', ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS', 'HEAD']);
 
         if (!in_array($method, $allowedMethods)) {
-            Log::warning("可疑HTTP方法: {$method}");
+            security_config('enable_debug_logging',false) && Log::warning("可疑HTTP方法: {$method}");
             return true;
         }
 
@@ -178,7 +178,7 @@ class ThreatDetectionService
         $suspiciousPatterns = $this->config->get('suspicious_user_agents', []);
         foreach ($suspiciousPatterns as $pattern) {
             if (preg_match($pattern, $userAgent)) {
-                Log::warning("可疑User-Agent: " . Str::limit($userAgent, 100));
+                security_config('enable_debug_logging',false) && Log::warning("可疑User-Agent: " . Str::limit($userAgent, 100));
                 return true;
             }
         }
@@ -197,7 +197,7 @@ class ThreatDetectionService
             if ($request->headers->has($header)) {
                 $value = $request->header($header);
                 if (str_contains($value, ',')) {
-                    Log::warning("可疑HTTP头: {$header} = {$value}");
+                    security_config('enable_debug_logging',false) && Log::warning("可疑HTTP头: {$header} = {$value}");
                     return true;
                 }
             }
@@ -235,7 +235,7 @@ class ThreatDetectionService
 
         foreach ($patterns as $pattern) {
             if (preg_match($pattern, $url)) {
-                Log::warning("非法URL访问: " . Str::limit($url, 200));
+                security_config('enable_debug_logging',false) && Log::warning("非法URL访问: " . Str::limit($url, 200));
                 return false;
             }
         }
@@ -274,14 +274,14 @@ class ThreatDetectionService
 
         // 检查参数数量
         if (count($parameters) > $thresholds['max_parameters']) {
-            Log::warning("参数数量异常: " . count($parameters));
+            security_config('enable_debug_logging',false) && Log::warning("参数数量异常: " . count($parameters));
             return true;
         }
 
         // 检查参数名和值
         foreach ($parameters as $key => $value) {
             if (strlen($key) > $thresholds['max_parameter_length']) {
-                Log::warning("参数名长度异常: {$key}");
+                security_config('enable_debug_logging',false) && Log::warning("参数名长度异常: {$key}");
                 return true;
             }
 
@@ -289,7 +289,7 @@ class ThreatDetectionService
             $suspiciousNames = ['cmd', 'exec', 'system', 'eval', 'php', 'script'];
             foreach ($suspiciousNames as $suspicious) {
                 if (stripos($key, $suspicious) !== false) {
-                    Log::warning("可疑参数名: {$key}");
+                    security_config('enable_debug_logging',false) && Log::warning("可疑参数名: {$key}");
                     return true;
                 }
             }
@@ -339,7 +339,7 @@ class ThreatDetectionService
         $disallowed = $this->config->get('disallowed_extensions', []);
 
         if (in_array($extension, $disallowed)) {
-            Log::warning("危险文件扩展名: {$extension} - " . $file->getClientOriginalName());
+            security_config('enable_debug_logging',false) && Log::warning("危险文件扩展名: {$extension} - " . $file->getClientOriginalName());
             return false;
         }
 
@@ -355,7 +355,7 @@ class ThreatDetectionService
         $fileSize = $file->getSize();
 
         if ($fileSize > $maxSize) {
-            Log::warning("文件大小超限: {$fileSize} - " . $file->getClientOriginalName());
+            security_config('enable_debug_logging',false) && Log::warning("文件大小超限: {$fileSize} - " . $file->getClientOriginalName());
             return false;
         }
 
@@ -371,7 +371,7 @@ class ThreatDetectionService
         $disallowed = $this->config->get('disallowed_mime_types', []);
 
         if (in_array($mimeType, $disallowed)) {
-            Log::warning("危险MIME类型: {$mimeType} - " . $file->getClientOriginalName());
+            security_config('enable_debug_logging',false) && Log::warning("危险MIME类型: {$mimeType} - " . $file->getClientOriginalName());
             return false;
         }
 
@@ -389,12 +389,12 @@ class ThreatDetectionService
 
             foreach ($patterns as $pattern) {
                 if (preg_match($pattern, $content)) {
-                    Log::warning("文件内容包含恶意代码: " . $file->getClientOriginalName());
+                    security_config('enable_debug_logging',false) && Log::warning("文件内容包含恶意代码: " . $file->getClientOriginalName());
                     return false;
                 }
             }
         } catch (Exception $e) {
-            Log::warning("文件内容检查失败: " . $e->getMessage());
+            security_config('enable_debug_logging',false) && Log::warning("文件内容检查失败: " . $e->getMessage());
         }
 
         return true;
@@ -443,7 +443,7 @@ class ThreatDetectionService
         foreach ($patterns as $pattern) {
             if (preg_match($pattern, $processedValue)) {
                 if (!$this->isFalsePositive($key, $processedValue, $pattern)) {
-                    Log::warning("恶意请求内容 - 参数: {$key}, 模式: {$pattern}");
+                    security_config('enable_debug_logging',false) && Log::warning("恶意请求内容 - 参数: {$key}, 模式: {$pattern}");
                     return true;
                 }
             }
@@ -534,7 +534,7 @@ class ThreatDetectionService
                 if (@preg_match($pattern, '') !== false) {
                     $compiled[] = $pattern;
                 } else {
-                    Log::warning("无效的正则表达式: {$pattern}");
+                    security_config('enable_debug_logging',false) && Log::warning("无效的正则表达式: {$pattern}");
                 }
             }
 
