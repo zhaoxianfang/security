@@ -20,6 +20,11 @@ use Illuminate\Support\Arr;
 class ConfigManager
 {
     /**
+     * @var object 对象实例
+     */
+    protected static $instance;
+
+    /**
      * 配置缓存
      */
     protected array $configCache = [];
@@ -31,6 +36,15 @@ class ConfigManager
         'enabled_type',
         'error_view',
     ];
+
+    // 获取单例实例
+    public static function instance($refresh = false)
+    {
+        if (! isset(self::$instance) || is_null(self::$instance) || empty(self::$instance) || $refresh) {
+            self::$instance = new static;
+        }
+        return self::$instance;
+    }
 
     /**
      * 获取配置值

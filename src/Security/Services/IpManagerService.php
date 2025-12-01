@@ -72,21 +72,12 @@ class IpManagerService
     /**
      * 记录IP访问
      */
-    public function recordAccess(Request $request, bool $blocked = false, ?string $rule = null): void
+    public function recordAccess(Request $request, bool $blocked = false, ?string $rule = null)
     {
         try {
             $clientIp = $this->getClientRealIp($request);
-
-            Log::info("记录IP访问: {$clientIp}, 拦截: " . ($blocked ? '是' : '否') . ", 规则: " . ($rule ?? '无'));
-
-            $result = SecurityIp::recordRequest($clientIp, $blocked, $rule);
-
-            if ($result) {
-                Log::info("IP访问记录成功: {$clientIp}, 记录ID: " . $result->id);
-            } else {
-                Log::error("IP访问记录失败: {$clientIp}");
-            }
-
+            security_config('enable_debug_logging',false) && Log::info("记录IP访问: {$clientIp}, 拦截: " . ($blocked ? '是' : '否') . ", 规则: " . ($rule ?? '无'));
+            return SecurityIp::recordRequest($clientIp, $blocked, $rule);
         } catch (Exception $e) {
             Log::error("记录IP访问异常: " . $e->getMessage(), [
                 'ip' => $clientIp ?? 'unknown',
@@ -122,7 +113,7 @@ class IpManagerService
             true // 自动检测
         );
 
-        \Illuminate\Support\Facades\Log::warning("IP封禁: {$clientIp} 类型: {$type} 时长: {$duration}秒");
+        security_config('enable_debug_logging',false) && Log::warning("IP封禁: {$clientIp} 类型: {$type} 时长: {$duration}秒");
     }
 
     /**

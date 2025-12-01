@@ -120,9 +120,9 @@ class SecurityMiddleware
 
             // 4. 黑名单检查
             if ($this->ipManager->isBlacklisted($request)) {
-                $this->logSecurityEvent($request, 'Blacklist', 'IP黑名单拦截');
                 // 记录IP访问（被拦截）
-                $this->ipManager->recordAccess($request, true, 'blacklist');
+                $ipRecord = $this->ipManager->recordAccess($request, true, 'blacklist');
+                $this->logSecurityEvent($request, 'Blacklist', 'IP黑名单拦截', $ipRecord);
                 return $this->createBlockResponse($request, 'Blacklist', '您的IP地址已被列入黑名单');
             }
 
@@ -130,9 +130,9 @@ class SecurityMiddleware
             $securityCheck = $this->threatDetector->performLayeredSecurityCheck($request);
             if ($securityCheck['blocked']) {
                 $this->detectionStats['blocked_requests']++;
-                $this->logSecurityEvent($request, $securityCheck['type'], $securityCheck['reason']);
                 // 记录IP访问（被拦截）并传递触发规则
-                $this->ipManager->recordAccess($request, true, $securityCheck['type']);
+                $ipRecord = $this->ipManager->recordAccess($request, true, $securityCheck['type']);
+                $this->logSecurityEvent($request, $securityCheck['type'], $securityCheck['reason'], $ipRecord);
                 return $this->createBlockResponse($request, $securityCheck['type'], $securityCheck['message']);
             }
 
@@ -140,9 +140,9 @@ class SecurityMiddleware
             $rateLimitCheck = $this->rateLimiter->check($request);
             if ($rateLimitCheck['blocked']) {
                 $this->detectionStats['blocked_requests']++;
-                $this->logSecurityEvent($request, 'RateLimit', '速率限制拦截');
                 // 记录IP访问（被拦截）
-                $this->ipManager->recordAccess($request, true, 'rate_limit');
+                $ipRecord = $this->ipManager->recordAccess($request, true, 'rate_limit');
+                $this->logSecurityEvent($request, 'RateLimit', '速率限制拦截', $ipRecord);
                 return $this->createBlockResponse(
                     $request,
                     'RateLimit',
@@ -155,14 +155,14 @@ class SecurityMiddleware
             $customCheck = $this->handleCustomSecurityLogic($request);
             if ($customCheck['blocked']) {
                 $this->detectionStats['blocked_requests']++;
-                $this->logSecurityEvent($request, 'CustomRule', '自定义规则拦截');
                 // 记录IP访问（被拦截）
-                $this->ipManager->recordAccess($request, true, 'custom_rule');
+                $ipRecord = $this->ipManager->recordAccess($request, true, 'custom_rule');
+                $this->logSecurityEvent($request, 'CustomRule', '自定义规则拦截', $ipRecord);
                 return $this->createBlockResponse($request, 'CustomRule', $customCheck['message']);
             }
 
             // 8. 请求正常，继续处理 - 记录成功访问
-            $this->ipManager->recordAccess($request, false, null);
+            $ipRecord = $this->ipManager->recordAccess($request, false, null);
             $this->logDetectionStats($request);
             return $next($request);
         } catch (Exception $e) {
@@ -540,14 +540,15 @@ class SecurityMiddleware
     /**
      * 记录安全事件
      */
-    protected function logSecurityEvent(Request $request, string $type, string $reason): void
+    protected function logSecurityEvent(Request $request, string $type, string $reason, mixed $ipRecord= [] ): void
     {
         $logData = [
             'type' => $type,
+            'security_id' => !empty($ipRecord) && $ipRecord['id'] ? $ipRecord['id'] : null, // 记录拦截的 ID
             'reason' => $reason,
             'ip' => $request->ip(),
             'method' => $request->method(),
-            'path' => $request->path(),
+            'url' => $request->fullUrl(),
             'user_agent' => $this->truncateString($request->userAgent() ?? '', 200),
             'referer' => $request->header('referer'),
             'timestamp' => now()->toISOString(),
@@ -555,35 +556,10 @@ class SecurityMiddleware
             'errors' => $this->errorList,
         ];
 
-        $logLevel = $this->threatDetector->getConfig('log_level', 'warning');
-
-        switch ($logLevel) {
-            case 'emergency':
-                Log::emergency("安全拦截: {$type} - {$reason}", $logData);
-                break;
-            case 'alert':
-                Log::alert("安全拦截: {$type} - {$reason}", $logData);
-                break;
-            case 'critical':
-                Log::critical("安全拦截: {$type} - {$reason}", $logData);
-                break;
-            case 'error':
-                Log::error("安全拦截: {$type} - {$reason}", $logData);
-                break;
-            case 'warning':
-                Log::warning("安全拦截: {$type} - {$reason}", $logData);
-                break;
-            case 'notice':
-                Log::notice("安全拦截: {$type} - {$reason}", $logData);
-                break;
-            case 'info':
-                Log::info("安全拦截: {$type} - {$reason}", $logData);
-                break;
-            case 'debug':
-                Log::debug("安全拦截: {$type} - {$reason}", $logData);
-                break;
-            default:
-                Log::warning("安全拦截: {$type} - {$reason}", $logData);
+        // 记录相关日志
+        if (security_config('enable_debug_logging',false)) {
+             $logLevel = $this->threatDetector->getConfig('log_level', 'warning');
+             Log::$logLevel("安全拦截: {$type} - {$reason}", $logData);
         }
     }
 
@@ -603,7 +579,7 @@ class SecurityMiddleware
     {
         $this->updateDetectionStats();
 
-        if ($this->threatDetector->getConfig('enable_performance_logging', false)) {
+        if (security_config('enable_performance_logging', false)) {
             Log::debug('安全检测性能统计', [
                 'stats' => $this->detectionStats,
                 'request' => $this->getRequestInfo($request),
@@ -647,7 +623,7 @@ class SecurityMiddleware
      */
     protected function logDebug(string $message, array $context = []): void
     {
-        if ($this->threatDetector->getConfig('enable_debug_logging', false)) {
+        if (security_config('enable_debug_logging',false)) {
             Log::debug($message, $context);
         }
     }

@@ -165,7 +165,7 @@ class SecurityIp extends Model
      */
     public static function recordRequest(string $ip, bool $blocked = false, ?string $rule = null): ?self
     {
-        Log::info("开始记录IP请求: {$ip}, 拦截: " . ($blocked ? '是' : '否') . ", 规则: " . ($rule ?? '无'));
+        security_config('enable_debug_logging',false) && Log::info("开始记录IP请求: {$ip}, 拦截: " . ($blocked ? '是' : '否') . ", 规则: " . ($rule ?? '无'));
 
         try {
             DB::beginTransaction();
@@ -184,7 +184,7 @@ class SecurityIp extends Model
                 ]
             );
 
-            Log::info("找到或创建IP记录: ID={$ipRecord->id}, IP={$ipRecord->ip_address}");
+            security_config('enable_debug_logging',false) && Log::info("找到或创建IP记录: ID={$ipRecord->id}, IP={$ipRecord->ip_address}");
 
             // 更新统计信息
             $ipRecord->request_count++;
@@ -195,7 +195,7 @@ class SecurityIp extends Model
                 // 拦截时增加威胁评分
                 $add_threat_score = config('security.add_threat_score', 10);
                 $ipRecord->threat_score = min(100, $ipRecord->threat_score + $add_threat_score);
-                Log::info("IP拦截记录: 威胁评分增加至 {$ipRecord->threat_score}");
+                security_config('enable_debug_logging',false) && Log::info("IP拦截记录: 威胁评分增加至 {$ipRecord->threat_score}");
             } else {
                 $ipRecord->success_count++;
                 // 成功请求时轻微降低威胁评分
@@ -218,21 +218,21 @@ class SecurityIp extends Model
                     $triggerRules[] = $rule;
                     $ipRecord->trigger_rules = array_slice($triggerRules, 0, 10); // 最多保存10条规则
                 }
-                Log::info("记录触发规则: {$rule}, 总触发次数: {$ipRecord->trigger_count}");
+                security_config('enable_debug_logging',false) && Log::info("记录触发规则: {$rule}, 总触发次数: {$ipRecord->trigger_count}");
 
                 // 自动检测和状态转换
                 $ipRecord->auto_detected = true;
                 $ipRecord->checkAndUpdateType();
-                Log::info("自动检测后IP类型: {$ipRecord->type}");
+                security_config('enable_debug_logging',false) && Log::info("自动检测后IP类型: {$ipRecord->type}");
             }
 
             // 保存记录
             $saved = $ipRecord->save();
 
             if ($saved) {
-                Log::info("IP记录保存成功: ID={$ipRecord->id}");
+                security_config('enable_debug_logging',false) && Log::info("IP记录保存成功: ID={$ipRecord->id}");
             } else {
-                Log::error("IP记录保存失败: ID={$ipRecord->id}");
+                security_config('enable_debug_logging',false) && Log::error("IP记录保存失败: ID={$ipRecord->id}");
             }
 
             // 更新统计表（异步处理，避免阻塞）
@@ -245,7 +245,7 @@ class SecurityIp extends Model
             // 清除相关缓存
             self::clearIpCache($ip);
 
-            Log::info("IP请求记录完成: {$ip}");
+            security_config('enable_debug_logging',false) && Log::info("IP请求记录完成: {$ip}");
 
             return $ipRecord;
 
@@ -276,8 +276,6 @@ class SecurityIp extends Model
             self::updateDailyStats();
         }
     }
-
-
 
     /**
      * 获取最近时间窗口内的请求次数

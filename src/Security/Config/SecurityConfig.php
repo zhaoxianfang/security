@@ -30,7 +30,7 @@ class SecurityConfig implements SecurityConfigInterface
     /**
      * 配置版本信息 - 便于版本管理和升级
      */
-    protected const CONFIG_VERSION = '4.0.0';
+    protected const CONFIG_VERSION = '1.0.0';
     protected const CONFIG_LEVEL = 'commercial_industrial_plus';
 
     /**
