@@ -2,7 +2,12 @@
 
 namespace zxf\Security\Providers;
 
+use Exception;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\ServiceProvider;
+use Illuminate\Support\Facades\File;
+use Illuminate\Contracts\Http\Kernel;
+use Illuminate\Foundation\Console\AboutCommand;
 use zxf\Security\Middleware\SecurityMiddleware;
 use zxf\Security\Services\ConfigManager;
 use zxf\Security\Services\RateLimiterService;
@@ -10,16 +15,15 @@ use zxf\Security\Services\IpManagerService;
 use zxf\Security\Services\ThreatDetectionService;
 use zxf\Security\Console\Commands\SecurityInstallCommand;
 use zxf\Security\Console\Commands\SecurityCleanupCommand;
-use Illuminate\Foundation\Console\AboutCommand;
+use zxf\Security\Console\Commands\SecurityStatsCommand;
 use Composer\InstalledVersions;
-use Illuminate\Support\Facades\File;
-use Illuminate\Contracts\Http\Kernel;
+
 
 /**
- * 安全服务提供者
+ * 安全服务提供者 - 优化增强版
  *
  * 注册安全中间件和相关服务到Laravel容器
- * 取消发布视图和资源文件，改为路由访问
+ * 提供完整的配置发布和路由注册功能
  */
 class SecurityServiceProvider extends ServiceProvider
 {
@@ -34,17 +38,13 @@ class SecurityServiceProvider extends ServiceProvider
     public function boot(): void
     {
         // 发布配置文件
-        $this->publishes([
-            __DIR__ . '/../../../config/security.php' => config_path('security.php'),
-        ], 'security-config');
+        $this->publishConfig();
 
         // 发布数据库迁移
-        $this->publishes([
-            __DIR__ . '/../../Database/Migrations' => database_path('migrations'),
-        ], 'security-migrations');
+        $this->publishMigrations();
 
-        // 加载视图（不发布，直接从包内访问）
-        $this->loadViewsFrom(__DIR__ . '/../../Resources/views', 'security');
+        // 加载视图
+        $this->loadViews();
 
         // 注册中间件
         $this->registerMiddleware();
@@ -53,14 +53,10 @@ class SecurityServiceProvider extends ServiceProvider
         $this->registerRoutes();
 
         // 注册命令
-        if ($this->app->runningInConsole()) {
-            $this->registerCommands();
-        }
+        $this->registerCommands();
 
-        // 把 zxf/security 添加到 about 命令中
-        AboutCommand::add('Extend', [
-            'zxf/security' => fn () => InstalledVersions::getPrettyVersion('zxf/security'),
-        ]);
+        // 注册about命令信息
+        $this->registerAboutCommand();
     }
 
     /**
@@ -69,9 +65,7 @@ class SecurityServiceProvider extends ServiceProvider
     public function register(): void
     {
         // 合并配置文件
-        $this->mergeConfigFrom(
-            __DIR__ . '/../../../config/security.php', 'security'
-        );
+        $this->mergeConfig();
 
         // 注册服务到容器
         $this->registerServices();
@@ -81,38 +75,31 @@ class SecurityServiceProvider extends ServiceProvider
     }
 
     /**
-     * 注册服务到容器
+     * 发布配置文件
      */
-    protected function registerServices(): void
+    protected function publishConfig(): void
     {
-        // 配置管理器
-        $this->app->singleton(ConfigManager::class, function ($app) {
-            return new ConfigManager();
-        });
+        $this->publishes([
+            __DIR__ . '/../../../config/security.php' => config_path('security.php'),
+        ], ['security-config', 'security']);
+    }
 
-        // IP管理服务
-        $this->app->singleton(IpManagerService::class, function ($app) {
-            return new IpManagerService($app->make(ConfigManager::class));
-        });
+    /**
+     * 发布数据库迁移
+     */
+    protected function publishMigrations(): void
+    {
+        $this->publishes([
+            __DIR__ . '/../../Database/Migrations' => database_path('migrations'),
+        ], ['security-migrations', 'security']);
+    }
 
-        // 速率限制服务
-        $this->app->singleton(RateLimiterService::class, function ($app) {
-            return new RateLimiterService($app->make(ConfigManager::class));
-        });
-
-        // 威胁检测服务
-        $this->app->singleton(ThreatDetectionService::class, function ($app) {
-            return new ThreatDetectionService($app->make(ConfigManager::class));
-        });
-
-        // 安全中间件
-        $this->app->singleton(SecurityMiddleware::class, function ($app) {
-            return new SecurityMiddleware(
-                $app->make(RateLimiterService::class),
-                $app->make(IpManagerService::class),
-                $app->make(ThreatDetectionService::class)
-            );
-        });
+    /**
+     * 加载视图
+     */
+    protected function loadViews(): void
+    {
+        $this->loadViewsFrom(__DIR__ . '/../../Resources/views', 'security');
     }
 
     /**
@@ -125,40 +112,69 @@ class SecurityServiceProvider extends ServiceProvider
         // 注册中间件别名
         $router->aliasMiddleware('security', SecurityMiddleware::class);
 
-        // 判断是否发布配置
-        $this->checkConfigPublished();
-
-        // 注册中间件组（可选，根据需要启用）
-        // $router->pushMiddlewareToGroup('web', SecurityMiddleware::class);
-        // $router->pushMiddlewareToGroup('api', SecurityMiddleware::class);
+        // 自动注册全局中间件（如果配置启用）
+        $this->registerGlobalMiddleware();
     }
 
-    // 判断是否发布配置,如果已经发布配置，则检测是否需要全局启用security中间件
-    protected function checkConfigPublished(): void
+    /**
+     * 注册全局中间件
+     */
+    protected function registerGlobalMiddleware(): void
     {
-        // 判断配置文件是否已发布
-        $configHasPublished = File::exists(config_path('security.php'));
-        if ($configHasPublished) {
-            // 配置文件已发布，判断是否需要全局启用security中间件
-            $middlewareEnabledType = config('security.enabled_type','global');
-            if ($middlewareEnabledType === 'global') {
-                // 全局启用security中间件
-                $kernel = $this->app->make(Kernel::class);
-                // $kernel->pushMiddleware(SecurityMiddleware::class); // 追加在后面
-                $kernel->prependMiddleware(SecurityMiddleware::class); // 放在最前面
+        // 检查配置是否已发布
+        $configPath = config_path('security.php');
+        $configExists = File::exists($configPath);
+
+        if (!$configExists) {
+            // 配置文件未发布，提示用户
+            $this->showInstallPrompt();
+            return;
+        }
+
+        // 检查是否启用全局中间件
+        $enabled = config('security.enabled', true);
+        $enabledType = config('security.enabled_type', 'global');
+
+        // global：全局启用安全中间件
+        if ($enabled && $enabledType === 'global') {
+            $kernel = $this->app->make(Kernel::class);
+
+            // 将安全中间件添加到全局中间件栈的最前面
+            $kernel->prependMiddleware(SecurityMiddleware::class);
+
+            if (config('security.enable_debug_logging', false)) {
+                Log::debug('安全中间件已全局注册');
             }
-        } else {
-            if ($this->app->runningInConsole() ) {
-                // 没有发布配置文件且处于控制台下提示发布配置
-                echo PHP_EOL;
-                echo '=================================================================================='.PHP_EOL;
-                echo ' 提    示 | 检查到您已经安装了 zxf/security 安全中间件包，但是没有发布配置文件'.PHP_EOL;
-                echo ' 安装发布 | php artisan security:install'.PHP_EOL;
-                echo ' 发布配置 | php artisan vendor:publish --tag=security-config'.PHP_EOL;
-                echo ' 发布迁移 | php artisan vendor:publish --tag=security-migrations'.PHP_EOL;
-                echo ' 文档地址 | https://weisifang.com/docs/2 '.PHP_EOL;
-                echo '=================================================================================='.PHP_EOL;
-            }
+        }
+    }
+
+    /**
+     * 显示安装提示
+     */
+    protected function showInstallPrompt(): void
+    {
+        if ($this->app->runningInConsole()) {
+            $this->commands([
+                SecurityInstallCommand::class,
+            ]);
+
+            $this->info(PHP_EOL . '==================================================================================');
+            $this->info(' 提    示 | 检测到您已经安装了 zxf/security 安全中间件包，但是没有发布配置文件');
+            $this->info(' 安装发布 | php artisan security:install');
+            $this->info(' 发布配置 | php artisan vendor:publish --tag=security-config');
+            $this->info(' 发布迁移 | php artisan vendor:publish --tag=security-migrations');
+            $this->info(' 文档地址 | https://weisifang.com/docs/2');
+            $this->info('==================================================================================' . PHP_EOL);
+        }
+    }
+
+    /**
+     * 输出信息（控制台）
+     */
+    protected function info(string $message): void
+    {
+        if ($this->app->runningInConsole()) {
+            echo $message . PHP_EOL;
         }
     }
 
@@ -168,6 +184,7 @@ class SecurityServiceProvider extends ServiceProvider
     protected function registerRoutes(): void
     {
         // 路由已经在 RouteServiceProvider 中注册
+        // 这里可以添加额外的路由注册逻辑
     }
 
     /**
@@ -175,10 +192,86 @@ class SecurityServiceProvider extends ServiceProvider
      */
     protected function registerCommands(): void
     {
-        $this->commands([
-            SecurityInstallCommand::class,  // 一键安装命令
-            SecurityCleanupCommand::class,  // 清理命令
+        if ($this->app->runningInConsole()) {
+            $this->commands([
+                SecurityInstallCommand::class,   // 一键安装命令
+                SecurityCleanupCommand::class,   // 清理命令
+                SecurityStatsCommand::class,     // 统计命令（需要创建）
+            ]);
+        }
+    }
+
+    /**
+     * 注册about命令信息
+     */
+    protected function registerAboutCommand(): void
+    {
+        AboutCommand::add('Security Package', [
+            'zxf/security' => function () {
+                try {
+                    return InstalledVersions::getPrettyVersion('zxf/security') ?? 'unknown';
+                } catch (Exception $e) {
+                    return 'unknown';
+                }
+            },
+            'Enabled' => function () {
+                return config('security.enabled', true) ? 'Yes' : 'No';
+            },
+            'Middleware Type' => function () {
+                return config('security.enabled_type', 'global');
+            },
+            'Rate Limiting' => function () {
+                return config('security.enable_rate_limiting', true) ? 'Enabled' : 'Disabled';
+            },
+            'IP Auto Detection' => function () {
+                return config('security.ip_auto_detection.enabled', true) ? 'Enabled' : 'Disabled';
+            },
         ]);
+    }
+
+    /**
+     * 合并配置文件
+     */
+    protected function mergeConfig(): void
+    {
+        $this->mergeConfigFrom(
+            __DIR__ . '/../../../config/security.php', 'security'
+        );
+    }
+
+    /**
+     * 注册服务到容器
+     */
+    protected function registerServices(): void
+    {
+        // 配置管理器（单例）
+        $this->app->singleton(ConfigManager::class, function ($app) {
+            return new ConfigManager();
+        });
+
+        // IP管理服务（单例）
+        $this->app->singleton(IpManagerService::class, function ($app) {
+            return new IpManagerService($app->make(ConfigManager::class));
+        });
+
+        // 速率限制服务（单例）
+        $this->app->singleton(RateLimiterService::class, function ($app) {
+            return new RateLimiterService($app->make(ConfigManager::class));
+        });
+
+        // 威胁检测服务（单例）
+        $this->app->singleton(ThreatDetectionService::class, function ($app) {
+            return new ThreatDetectionService($app->make(ConfigManager::class));
+        });
+
+        // 安全中间件（单例）
+        $this->app->singleton(SecurityMiddleware::class, function ($app) {
+            return new SecurityMiddleware(
+                $app->make(RateLimiterService::class),
+                $app->make(IpManagerService::class),
+                $app->make(ThreatDetectionService::class)
+            );
+        });
     }
 
     /**

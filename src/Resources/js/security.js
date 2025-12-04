@@ -84,11 +84,11 @@ function syntaxHighlight(json) {
 // 初始化 JSON 上下文数据
 function initJsonContext() {
     const jsonElement = document.getElementById('jsonContext');
-    jsonElement.innerHTML = syntaxHighlight(jsonElement.innerHTML);
+    jsonElement && (jsonElement.innerHTML = syntaxHighlight(jsonElement.innerHTML));
 }
 function initJsonErrors() {
     const jsonElement = document.getElementById('jsonErrors');
-    jsonElement.innerHTML = syntaxHighlight(jsonElement.innerHTML);
+    jsonElement && (jsonElement.innerHTML = syntaxHighlight(jsonElement.innerHTML));
 }
 
 // 页面加载完成后初始化

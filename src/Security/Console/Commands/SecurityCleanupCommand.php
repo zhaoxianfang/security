@@ -4,6 +4,7 @@ namespace zxf\Security\Console\Commands;
 
 use Exception;
 use Illuminate\Console\Command;
+use Illuminate\Support\Facades\Cache;
 use zxf\Security\Models\SecurityIp;
 
 /**
@@ -112,7 +113,7 @@ class SecurityCleanupCommand extends Command
         $this->info('🧼 清理缓存数据...');
 
         // 清理安全相关的缓存
-        \Illuminate\Support\Facades\Cache::flush();
+        Cache::flush();
         $this->info('  ✅ 已清理所有安全缓存');
     }
 

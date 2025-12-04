@@ -2,10 +2,11 @@
 
 namespace zxf\Security\Config;
 
+use Exception;
 use zxf\Security\Contracts\SecurityConfigInterface;
 
 /**
- * 商业级安全配置管理类 - 工业标准最终完整版
+ * 安全配置管理类
  *
  * 核心特性：
  * 1. 高性能合并正则表达式，减少匹配次数，提升检测速度
@@ -30,7 +31,7 @@ class SecurityConfig implements SecurityConfigInterface
     /**
      * 配置版本信息 - 便于版本管理和升级
      */
-    protected const CONFIG_VERSION = '1.0.0';
+    protected const CONFIG_VERSION = '2.0.0';
     protected const CONFIG_LEVEL = 'commercial_industrial_plus';
 
     /**
@@ -48,7 +49,10 @@ class SecurityConfig implements SecurityConfigInterface
             self::getCriticalThreatPatterns(),     // 关键威胁检测 - 最高优先级
             self::getCommonAttackPatterns(),       // 常见攻击检测 - 高性能
             self::getAdvancedThreatPatterns(),     // 高级威胁检测 - 全面覆盖
-            self::getEmergingThreatPatterns()      // 新兴威胁检测 - 前瞻防护
+            self::getEmergingThreatPatterns(),     // 新兴威胁检测 - 前瞻防护
+            self::getSQLInjectionPatterns(),       // SQL注入专项检测
+            self::getXSSAttackPatterns(),          // XSS攻击专项检测
+            self::getCommandInjectionPatterns()    // 命令注入专项检测
         );
     }
 
@@ -63,31 +67,165 @@ class SecurityConfig implements SecurityConfigInterface
         return [
             /**
              * 合并的关键XSS和脚本注入检测
-             * 覆盖：脚本标签、JavaScript/VBScript协议、数据URI、事件处理器
-             * 性能优化：使用非捕获组，避免不必要的回溯
+             * 优化：使用原子组和否定预查减少回溯
              */
-            '/(?:<script\b[^>]*>.*?<\/script>|javascript:\s*[^"\'{}<>]*|vbscript:\s*[^"\'{}<>]*|data:\s*(?:text|application)\/(?:javascript|ecmascript)|\bon\w+\s*=\s*["\']?[^"\'>]*(?:alert|prompt|confirm)\s*\([^)]*\))/is',
+            '/(?>(?:<script\b[^>]*>.*?<\/script>|javascript:\s*[^"\'\s{}<>]*|vbscript:\s*[^"\'\s{}<>]*|data:\s*(?:text|application)\/(?:javascript|ecmascript)|\bon\w+\s*=\s*["\']?[^"\'>]*(?:alert|prompt|confirm)\s*\([^)]*\)))/is',
 
             /**
              * 合并的关键SQL注入检测
-             * 覆盖：联合查询、数据操作语句、存储过程、SQL注释、编码绕过
-             * 性能优化：使用单词边界和精确匹配，减少误报
+             * 优化：使用精确匹配和单词边界
              */
-            '/\b(?:union\s+select|select\s+[\w*]+\s+from|insert\s+into|update\s+\w+\s+set|drop\s+(?:table|database|view|procedure)|delete\s+from|truncate\s+table|exec\s*\(|xp_cmdshell|sp_|--\s+|\/\*.*?\*\/|0x[0-9a-f]+|char\s*\(\s*\d+(?:\s*,\s*\d+)*\s*\))/is',
+            '/\b(?>union\s+select|select\s+[\w*]+\s+from|insert\s+into|update\s+\w+\s+set|drop\s+(?>table|database|view|procedure)|delete\s+from|truncate\s+table|exec\s*\(|xp_cmdshell|sp_|--\s+|\/\*[^*]*\*+(?:[^*\/][^*]*\*+)*\/|0x[0-9a-f]+|char\s*\(\s*\d+(?:\s*,\s*\d+)*\s*\))/is',
 
             /**
              * 合并的关键命令注入检测
-             * 覆盖：系统命令函数、反引号执行、管道符号、重定向、命令分隔
-             * 性能优化：精确匹配系统函数，避免通用模式
+             * 优化：精确匹配系统函数和特殊字符
              */
-            '/\b(?:system|exec|shell_exec|passthru|proc_open|popen|pcntl_exec)\s*\([^)]*\)|`[^`]*`|\|\s*\w+|\&\s*\w+|;\s*\w+|\$\s*\([^)]*\)/i',
+            '/\b(?>system|exec|shell_exec|passthru|proc_open|popen|pcntl_exec)\s*\([^)]*\)|`[^`]*`|\|\s*\w+|\&\s*\w+|;\s*\w+|\$\s*\([^)]*\)|\.\.\/\.\.\//i',
 
             /**
              * 合并的关键路径遍历和文件包含检测
-             * 覆盖：目录遍历、敏感文件访问、本地/远程文件包含、协议包装器
-             * 性能优化：精确匹配敏感路径和协议
+             * 优化：减少分组，提高匹配速度
              */
-            '/(?:\.\.\/|\.\.\\\\|\/etc\/(?:passwd|shadow|hosts)|\/winnt\/system32|\/windows\/system32|\b(?:include|require)(?:_once)?\s*\(?\s*[\'\"][^\"\']*\.(?:php|phtml|inc)|\b(?:include|require)(?:_once)?\s*\(?\s*[\'\"](?:https?|ftp|phar):\/\/|php:\/\/(?:input|filter|glob|data|expect))/i',
+            '/(?>\.\.\/|\.\.\\\\|\/etc\/(?>passwd|shadow|hosts)|\/winnt\/system32|\/windows\/system32|\b(?:include|require)(?:_once)?\s*\(?\s*[\'"][^"\']*\.(?:php|phtml|inc)|\b(?:include|require)(?:_once)?\s*\(?\s*[\'"](?>https?|ftp|phar):\/\/|php:\/\/(?>input|filter|glob|data|expect))/i',
+        ];
+    }
+
+    /**
+     * SQL注入专项检测模式
+     *
+     * 针对SQL注入攻击的深度检测模式
+     * 覆盖各种SQL注入技术和绕过方法
+     */
+    public static function getSQLInjectionPatterns(): array
+    {
+        return [
+            // 基础SQL关键字检测
+            '/\b(?>select|insert|update|delete|drop|truncate|create|alter|grant|revoke|exec|execute|call|declare|fetch|open|close)\b\s*\(/i',
+
+            // SQL注释和编码绕过检测
+            '/(?>(?:--|\#)[^\n\r]*|(?:\/\*[\s\S]*?\*\/)|;.*?(?:--|\#))/i',
+
+            // SQL函数和存储过程检测
+            '/\b(?>xp_cmdshell|sp_|fn_|dbcc|waitfor|shutdown|kill|backup|restore|load_file|outfile|dumpfile)\b/i',
+
+            // 联合查询检测
+            '/union\s+all\s+select|union\s+select\s+null/i',
+
+            // 盲注和延时注入检测
+            '/\b(?>sleep|benchmark|waitfor|pg_sleep)\s*\(/i',
+
+            // 条件语句检测
+            '/\b(?>case\s+when|if\s*\(|else|then|end)\b/i',
+
+            // 错误注入检测
+            '/\b(?>extractvalue|updatexml|floor|exp|pow)\s*\(/i',
+
+            // 堆叠查询检测
+            '/;\s*(?>select|insert|update|delete|drop|create|alter)\b/i',
+
+            // 十六进制和字符编码检测
+            '/0x[0-9a-f]+|char\s*\(\s*\d+(?:\s*,\s*\d+)*\s*\)|concat\s*\(/i',
+
+            // 内联注释检测 (MySQL特定)
+            '/\/\*![0-9]{5}.*?\*\//i',
+
+            // 宽字节注入检测
+            '/%[a-f0-9]{2}%[a-f0-9]{2}|\xbf\x27|\xdf\x27|\xef\xbc\x87/i',
+        ];
+    }
+
+    /**
+     * XSS攻击专项检测模式
+     *
+     * 针对XSS攻击的深度检测模式
+     * 覆盖各种XSS攻击技术和绕过方法
+     */
+    public static function getXSSAttackPatterns(): array
+    {
+        return [
+            // 脚本标签检测
+            '/<(?>script|iframe|frame|embed|object|applet|meta|link|style|svg|math|base)\b[^>]*>/i',
+
+            // 事件处理器检测
+            '/\bon(?>load|error|click|mouse|key|focus|blur|change|submit)\s*=\s*["\'][^"\']*["\']/i',
+
+            // JavaScript协议检测
+            '/(?>javascript|vbscript|data|jar):\s*[^"\'\s]*/i',
+
+            // 编码绕过检测
+            '/&#(?>x[0-9a-f]+|\d+);|\\[xu][0-9a-f]{2,4}|%[0-9a-f]{2}/i',
+
+            // 属性注入检测
+            '/<(?>img|input|button|a|div|span|p|td|th)\b[^>]*\s(?>src|href|style|class|id)\s*=\s*["\'][^"\']*["\']/i',
+
+            // CSS表达式检测
+            '/expression\s*\(|@import|@charset|@namespace|url\s*\(/i',
+
+            // HTML5新特性XSS检测
+            '/<(?>video|audio|source|track|canvas)\b[^>]*>|autofocus|onpointer|ontouch/i',
+
+            // 模板注入检测
+            '/\$\{.*?\}|{{.*?}}|\{%.*?%\}|\[\[.*?\]\]|<\%.*?\%>/s',
+
+            // DOM型XSS检测
+            '/document\.(?>write|writeln|createElement)|innerHTML|outerHTML|eval\s*\(/i',
+
+            // 反射型XSS检测
+            '/<(?>img|div|span|p)\b[^>]*>\s*<\/(?>img|div|span|p)>/i',
+
+            // 存储型XSS检测
+            '/<(?>textarea|input|select)\b[^>]*>.*?<\/(?>textarea|input|select)>/is',
+
+            // 基于CSS的XSS检测
+            '/style\s*=\s*["\'][^"\']*(?>expression|javascript|url\s*\([^)]*\))[^"\']*["\']/i',
+        ];
+    }
+
+    /**
+     * 命令注入专项检测模式
+     *
+     * 针对命令注入攻击的深度检测模式
+     * 覆盖各种命令注入技术和绕过方法
+     */
+    public static function getCommandInjectionPatterns(): array
+    {
+        return [
+            // 系统命令函数检测
+            '/\b(?>system|exec|shell_exec|passthru|proc_open|popen|pcntl_exec|dl|assert|eval|create_function)\s*\(/i',
+
+            // 反引号命令执行检测
+            '/`[^`]*`|\$\([^)]*\)|\${\s*[^}]*\s*}/',
+
+            // 管道和重定向检测
+            '/\|\s*\w+|\&\s*\w+|\>\s*\w+|\<\s*\w+|\|\|/',
+
+            // 命令分隔符检测
+            '/;\s*\w+|&&|\|\||%0a|%0d|%3b|%26%26|%7c%7c/',
+
+            // 环境变量检测
+            '/\$[A-Z_][A-Z0-9_]*|\%[A-Z_][A-Z0-9_]*\%/i',
+
+            // 路径遍历检测
+            '/(?>\.\.\/){2,}|\.\.\\\{2,}|\/~|\/\.\./',
+
+            // 敏感文件访问检测
+            '/\b(?>\/etc\/passwd|\/etc\/shadow|\/etc\/hosts|\/proc\/self\/|\/sys\/kernel\/|\.ssh\/|\.bash_history)\b/',
+
+            // 网络相关命令检测
+            '/\b(?>wget|curl|nc|netcat|telnet|ftp|ssh|scp|rsync|ping|traceroute|nmap|dig)\b\s+/i',
+
+            // 进程管理命令检测
+            '/\b(?>ps|kill|pkill|killall|top|htop|nice|renice|nohup)\b\s+/i',
+
+            // 文件系统命令检测
+            '/\b(?>rm|mv|cp|chmod|chown|chgrp|ln|find|grep|sed|awk|cat|more|less|head|tail)\b\s+-/i',
+
+            // 权限提升检测
+            '/\b(?>sudo|su|doas|pkexec)\b\s+/i',
+
+            // 编码命令检测
+            '/base64\s+-d|base64\s+--decode|xxd\s+-r|openssl\s+enc\s+-d/',
         ];
     }
 
@@ -102,31 +240,27 @@ class SecurityConfig implements SecurityConfigInterface
         return [
             /**
              * 合并的代码执行和反序列化检测
-             * 覆盖：PHP标签、危险函数、反序列化、编码函数、变量操作
-             * 性能优化：分组匹配相关函数，减少匹配次数
+             * 优化：使用原子组避免回溯
              */
-            '/(?:<\?php|<\?=|\b(?:eval|assert|create_function|unserialize|str_rot13|base64_decode|gzinflate|gzuncompress)\s*\(|\$_(?:GET|POST|REQUEST|COOKIE|SERVER)\s*\[[^]]+\]|O:\d+:"[^"]*":\d+:|__(?:destruct|wakeup|toString|invoke|call|callStatic|get|set)\b)/i',
+            '/(?>(?:<\?php|<\?=|\b(?:eval|assert|create_function|unserialize|str_rot13|base64_decode|gzinflate|gzuncompress)\s*\(|\$_(?:GET|POST|REQUEST|COOKIE|SERVER)\s*\[[^]]+\]|O:\d+:"[^"]*":\d+:|__(?>destruct|wakeup|toString|invoke|call|callStatic|get|set)\b))/i',
 
             /**
              * 合并的表达式和模板注入检测
-             * 覆盖：各种模板语法、表达式语言、脚本注入
-             * 性能优化：使用通用模式匹配多种模板语法
+             * 优化：使用非贪婪匹配
              */
-            '/(?:\$\{.*?\}|\({.*?}\)|\{\{.*?\}\}|@\w+\(.*?\)|\{%.*?%\}|\[\[.*?\]\]|<\%.*?\%>)/s',
+            '/(?>\$\{.*?\}|\({.*?}\)|\{\{.*?\}\}|@\w+\(.*?\)|\{%.*?%\}|\[\[.*?\]\]|<\%.*?\%>)/s',
 
             /**
              * 合并的NoSQL注入和API滥用检测
-             * 覆盖：MongoDB操作符、数组操作、GraphQL注入、REST参数污染
-             * 性能优化：精确匹配数据库操作符
+             * 优化：精确匹配操作符
              */
-            '/"\$(?:where|eq|ne|gt|gte|lt|lte|in|nin|or|and|not|exists|regex|text|where|push|pull|pop|addToSet|pullAll)"/',
+            '/"\$(?>where|eq|ne|gt|gte|lt|lte|in|nin|or|and|not|exists|regex|text|where|push|pull|pop|addToSet|pullAll)"/',
 
             /**
              * 合并的文件上传绕过检测
-             * 覆盖：双扩展名、空字节注入、大小写混淆、特殊文件名
-             * 性能优化：精确匹配绕过技术特征
+             * 优化：减少分组数量
              */
-            '/(?:\.(php|phtml|jsp|asp|asa|cer)\.(txt|jpg|png|gif)$|\\x00|\.(PhP|pHp|Phtml|JSp|aSp|AsA|CeR)$|\.(php[0-9]|phtml[0-9])$)/i',
+            '/(?:\.(?>php|phtml|jsp|asp|asa|cer)\.(?>txt|jpg|png|gif)$|\\x00|\.(?>PhP|pHp|Phtml|JSp|aSp|AsA|CeR)$|\.(?>php[0-9]|phtml[0-9])$)/i',
         ];
     }
 
@@ -141,38 +275,28 @@ class SecurityConfig implements SecurityConfigInterface
         return [
             /**
              * XXE和XML外部实体攻击检测
-             * 覆盖：外部实体声明、DOCTYPE外部引用、参数实体、XML注入
-             * 安全优化：全面覆盖各类XXE攻击向量
              */
-            '/(?:<!ENTITY\s+\w+\s+SYSTEM\s+["\']|<!DOCTYPE[^>[]*SYSTEM\s*["\']|<!ENTITY\s+%\s+\w+|<?xml[^>]*encoding\s*=\s*["\']?[^"\'<>]*\?>\s*<!ENTITY)/i',
+            '/(?:<!ENTITY\s+\w+\s+SYSTEM\s+["\']|<!DOCTYPE[^>[]*SYSTEM\s*["\']|<!ENTITY\s+%\s+\w+|<?xml[^>]*encoding\s*=\s*["\']?[^"\'<>]*\?>\s*<!ENTITY|\]\]>)/i',
 
             /**
              * Web Shell和恶意代码特征检测
-             * 覆盖：一句话木马、编码后门、文件管理器、远程控制特征
-             * 安全优化：基于真实Web Shell样本特征
              */
-            '/(?:@\$_=\$_[_];@\$_\(\$_[__]\);|\beval\(\s*base64_decode|\bgzinflate\(\s*base64_decode|\b(?:FileManager|r57|c99|w4ck1ng|b374k|webadmin)\.(?:php|txt)\b|\b(?:phpspy|afe|wso|reGeorg)\.(?:php|jsp|aspx)\b)/i',
+            '/(?:@\$_=\$_[_];@\$_\(\$_[__]\);|\beval\(\s*base64_decode|\bgzinflate\(\s*base64_decode|\b(?>FileManager|r57|c99|w4ck1ng|b374k|webadmin)\.(?>php|txt)\b|\b(?>phpspy|afe|wso|reGeorg)\.(?>php|jsp|aspx)\b|<\?php\s+\$[a-z]\s*=\s*["\'][^"\']*["\']\s*;\s*eval)/i',
 
             /**
              * 云服务密钥和敏感信息泄露检测
-             * 覆盖：AWS密钥、Google API密钥、SSH私钥、数据库凭证
-             * 安全优化：基于真实密钥格式和模式
              */
-            '/(?:AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z\\-_]{35}|sk-[a-zA-Z0-9]{48}|-----BEGIN (?:RSA|DSA|EC|OPENSSH) PRIVATE KEY-----|(?:host|port|user|password)\s*=\s*[^\s]+)/',
+            '/(?:AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z\\-_]{35}|sk-[a-zA-Z0-9]{48}|(?:-----BEGIN\s+(?:RSA|DSA|EC|OPENSSH)\s+PRIVATE\s+KEY-----)|(?:host|port|user|password|database|dbname)\s*=\s*[^\s]+|aws_access_key_id|aws_secret_access_key)/',
 
             /**
              * 加密货币和金融信息检测
-             * 覆盖：比特币地址、以太坊地址、钱包文件特征
-             * 安全优化：精确匹配加密货币地址格式
              */
-            '/(?:[13][a-km-zA-HJ-NP-Z1-9]{25,34}|0x[a-fA-F0-9]{40}|bc1[a-z0-9]{39,59}|L[1-9A-HJ-NP-Za-km-z]{26,33})/',
+            '/(?:[13][a-km-zA-HJ-NP-Z1-9]{25,34}|0x[a-fA-F0-9]{40}|bc1[a-z0-9]{39,59}|L[1-9A-HJ-NP-Za-km-z]{26,33}|X-Forwarded-For:\s*[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3},?\s*)+/i',
 
             /**
              * 服务端请求伪造(SSRF)检测
-             * 覆盖：内网地址、本地回环、元数据服务、协议滥用
-             * 安全优化：覆盖各类SSRF攻击目标
              */
-            '/(?:127\.0\.0\.1|localhost|192\.168\.|10\.|172\.(?:1[6-9]|2[0-9]|3[0-1])\.|169\.254\.|0\.0\.0\.0|metadata\.google\.internal|169\.254\.169\.254)/i',
+            '/(?:127\.0\.0\.1|localhost|192\.168\.|10\.|172\.(?:1[6-9]|2[0-9]|3[0-1])\.|169\.254\.|0\.0\.0\.0|metadata\.google\.internal|169\.254\.169\.254|\[::1\]|\[::\]|local\.localhost)/i',
         ];
     }
 
@@ -187,36 +311,38 @@ class SecurityConfig implements SecurityConfigInterface
         return [
             /**
              * 依赖混淆和供应链攻击检测
-             * 覆盖：恶意包名、依赖劫持、包混淆特征
-             * 前瞻性：针对软件供应链攻击的防护
              */
-            '/(?:node_modules\/[^\/]+\/(?:bin|lib)\/|vendor\/[^\/]+\/(?:src|lib)\/|import\s+[^;]*(?:malicious|backdoor|trojan)|require\s*\(\s*[^)]*(?:evil|hack))/i',
+            '/(?:node_modules\/[^\/]+\/(?>bin|lib)\/|vendor\/[^\/]+\/(?>src|lib)\/|import\s+[^;]*(?:malicious|backdoor|trojan|hack|exploit)|require\s*\(\s*[^)]*(?:evil|hack|bypass|inject)|\bpackage\.json\b.*\bscripts\b.*\b(?:preinstall|postinstall|install)\b)/is',
 
             /**
              * API安全滥用检测
-             * 覆盖：GraphQL查询滥用、REST参数污染、API密钥泄露
-             * 前瞻性：针对现代API攻击的防护
              */
-            '/(?:query\s*\{[^}]*__typename[^}]*\}|mutation\s*\{[^}]*delete|api_key\s*=\s*[^\s&]+|apikey\s*=\s*[^\s&]+)/i',
+            '/(?:query\s*\{[^}]*__typename[^}]*\}|mutation\s*\{[^}]*delete|api_key\s*=\s*[^\s&]+|apikey\s*=\s*[^\s&]+|Authorization:\s*(?:Bearer|Basic)\s+[^\s]+|\$\.ajax\(.*url:\s*["\'][^"\']+["\'])/i',
 
             /**
              * 容器和安全隔离逃逸检测
-             * 覆盖：容器逃逸、命名空间突破、资源滥用
-             * 前瞻性：针对云原生环境攻击的防护
              */
-            '/(?:\/proc\/self\/|\/sys\/kernel\/|cgroup|docker\.sock|kubelet|namespace|privileged|capabilities)/i',
+            '/(?:\/proc\/self\/|\/sys\/kernel\/|cgroup|docker\.sock|kubelet|namespace|privileged|capabilities|--privileged|--cap-add|--security-opt|--device|--volume)/i',
 
             /**
              * 机器学习模型投毒检测
-             * 覆盖：模型文件篡改、训练数据污染、后门植入
-             * 前瞻性：针对AI系统安全的防护
              */
-            '/(?:\.(?:pkl|pth|h5|model|joblib)\.(?:php|exe|bat)$|model_state_dict|training_data)/i',
+            '/(?:\.(?>pkl|pth|h5|model|joblib|onnx)\.(?>php|exe|bat|sh)$|model_state_dict|training_data|dataset\.(?>csv|json|parquet)|\btrain\.py\b.*\bimport\b.*\btorch\b|\bfrom\b.*\btensorflow\b.*\bimport\b)/i',
+
+            /**
+             * 零信任和微服务攻击检测
+             */
+            '/(?:service-mesh|istio|linkerd|envoy|consul|etcd|zookeeper|\/healthz|\/readyz|\/metrics|\/debug|\/pprof)/i',
+
+            /**
+             * 区块链和Web3攻击检测
+             */
+            '/(?:web3\.eth|ethereum|smart\s+contract|solidity|\.sol$|metamask|walletconnect|infura|alchemy|\/api\/v3\/|\/rpc\/)/i',
         ];
     }
 
     /**
-     * 获取工业级URL路径检测模式 - 最终优化版
+     * 获取工业级URL路径检测模式
      *
      * 针对目录遍历、敏感文件泄露、配置信息暴露等攻击的全面防护
      * 采用精确匹配和高性能正则，在保持低误报率的同时提供全面保护
@@ -228,61 +354,59 @@ class SecurityConfig implements SecurityConfigInterface
         return [
             /**
              * 隐藏文件和目录检测
-             * 排除合法的 .well-known 目录（用于SSL验证等）
-             * 性能优化：使用正向否定预查，避免误伤合法目录
              */
-            '~/(?:\.(?!well-known)[^/]*|\.{2,})(?=/|$)~i',
+            '~/(?:\.(?!well-known/|git/)[^/]*|\.{2,})(?=/|$)~i',
 
             /**
              * 配置文件和敏感数据文件检测
-             * 覆盖：环境配置、应用配置、版本控制、服务器配置
-             * 安全优化：全面覆盖各类敏感配置文件
              */
-            '/\.(?:env|config|settings|configuration|secret|key|credential|token)(?:\.[\w]+)?$/i',
-            '/\.(?:gitignore|gitattributes|htaccess|htpasswd|nginx\.conf|apache2?\.conf)(?:\.[\w]+)?$/i',
-            '/(?:composer|package|yarn|pip|gemfile)(?:\.(?:json|lock|yml|yaml))?$/i',
+            '/\.(?>env|config|settings|configuration|secret|key|credential|token|auth|cert|pem|crt)(?>\.[\w]+)?$/i',
+            '/\.(?>gitignore|gitattributes|htaccess|htpasswd|nginx\.conf|apache2?\.conf|httpd\.conf|\.conf)(?>\.[\w]+)?$/i',
+            '/(?>composer|package|yarn|pip|gemfile|pom|gradle|build|makefile)(?:\.(?>json|lock|yml|yaml|xml|properties))?$/i',
 
             /**
              * 源代码和脚本文件泄露检测
-             * 覆盖：服务器端脚本、客户端脚本、编译文件、配置文件
-             * 安全优化：全面覆盖各类可执行和配置文件
              */
-            '/\.(?:php[3457s]?|phtml|phar|inc)(?:\.[\w]+)?$/i',
-            '/\.(?:jspx?|asp|aspx?|asmx|ascx|cer)(?:\.[\w]+)?$/i',
-            '/\.(?:pl|py|rb|rhtml|sh|bash|cgi|fcgi)(?:\.[\w]+)?$/i',
-            '/\.(?:java|class|jar|war|ear)(?:\.[\w]+)?$/i',
-            '/\.(?:js|html?|xhtml|xml|json)(?:\.[\w]+)?$/i',
+            '/\.(?>php[3457s]?|phtml|phar|inc|phps)(?>\.[\w]+)?$/i',
+            '/\.(?>jspx?|asp|aspx?|asmx|ascx|cer|asa|ashx)(?>\.[\w]+)?$/i',
+            '/\.(?>pl|py|rb|rhtml|sh|bash|cgi|fcgi|wsgi)(?>\.[\w]+)?$/i',
+            '/\.(?>java|class|jar|war|ear|jspf)(?>\.[\w]+)?$/i',
+            '/\.(?>js|html?|xhtml|xml|json|yml|yaml)(?>\.[\w]+)?$/i',
+            '/\.(?>ts|jsx|tsx|vue|svelte|elm)(?>\.[\w]+)?$/i',
+            '/\.(?>c|cpp|h|hpp|go|rs|swift|kt|kts)(?>\.[\w]+)?$/i',
 
             /**
              * 数据库文件和备份文件检测
-             * 覆盖：数据库文件、备份文件、转储文件、日志文件
-             * 安全优化：防止数据库信息和日志泄露
              */
-            '/\.(?:sql|db|mdb|accdb|sqlite|dbf|mdf|ldf|frm)(?:\.[\w]+)?$/i',
-            '/\.(?:bak|old|backup|temp|tmp|swp|swo)(?:\.[\w]+)?$/i',
-            '/\.(?:log|trace|debug|error|access|audit)(?:\.[\w]+)?$/i',
+            '/\.(?>sql|db|mdb|accdb|sqlite|dbf|mdf|ldf|frm|ibd|myd|myi|ndb)(?>\.[\w]+)?$/i',
+            '/\.(?>bak|old|backup|temp|tmp|swp|swo|swn)(?>\.[\w]+)?$/i',
+            '/\.(?>log|trace|debug|error|access|audit|out|err)(?>\.[\w]+)?$/i',
 
             /**
              * 敏感目录路径检测
-             * 覆盖：备份目录、临时目录、版本控制、管理界面、依赖目录
-             * 安全优化：防止目录遍历和信息泄露
              */
-            '/(?:^|\/)(?:backup|temp|tmp|cache|session)(?:\/|$)/i',
-            '/(?:^|\/)(?:node_modules|vendor|bower_components)(?:\/|$)/i',
-            '/(?:^|\/)(?:\.git|\.svn|\.hg|\.DS_Store)(?:\/|$)/i',
-            '/(?:^|\/)(?:administrator|phpmyadmin|wp-admin)(?:\/|$)/i',
+            '/(?:^|\/)(?>backup|temp|tmp|cache|session|logs|data|uploads|downloads)(?:\/|$)/i',
+            '/(?:^|\/)(?>node_modules|vendor|bower_components|dist|build|target|out|bin)(?:\/|$)/i',
+            '/(?:^|\/)(?>\.git|\.svn|\.hg|\.DS_Store|Thumbs\.db|desktop\.ini)(?:\/|$)/i',
+            '/(?:^|\/)(?>administrator|phpmyadmin|wp-admin|admin|dashboard|console|manager)(?:\/|$)/i',
+            '/(?:^|\/)(?>api|graphql|rest|soap|xmlrpc|jsonrpc)(?:\/|$)/i',
 
             /**
              * 系统文档和许可证文件检测
-             * 覆盖：说明文档、许可证文件、变更日志、贡献指南
-             * 安全优化：防止系统信息泄露
              */
-            '/(?:readme|license|changelog|contributing|todo|faq)\.(?:md|txt|rst|html?)$/i',
+            '/(?:readme|license|changelog|contributing|todo|faq|history|changes|release_notes)\.(?>md|txt|rst|html?|pdf)$/i',
+
+            /**
+             * 开发工具和调试文件检测
+             */
+            '/(?:webpack\.config|babel\.config|tsconfig|eslint|prettier|jest\.config)\.(?>js|ts|json)$/i',
+            '/(?:\.env\.|\.dockerignore|docker-compose|Dockerfile|\.travis|\.circleci)/i',
+            '/(?:\.vscode|\.idea|\.editorconfig|\.prettierrc|\.eslintrc)/i',
         ];
     }
 
     /**
-     * 获取商业级可疑User-Agent检测模式 - 增强优化版
+     * 获取商业级可疑User-Agent检测模式
      *
      * 智能识别安全扫描工具、恶意软件、自动化攻击工具、僵尸网络等
      * 基于真实威胁情报和攻击工具特征，确保高检测率和低误报率
@@ -294,45 +418,50 @@ class SecurityConfig implements SecurityConfigInterface
         return [
             /**
              * 安全扫描和渗透测试工具检测
-             * 覆盖：主流漏洞扫描器、渗透测试框架、安全评估工具
-             * 安全优化：基于真实工具特征，持续更新
              */
-            '/\b(?:sqlmap|nikto|metasploit|nessus|wpscan|acunetix|burp|dirbuster|nmap|netsparker|openvas|qualys|rapid7|tenable|greenbone)\b/i',
+            '/\b(?>sqlmap|nikto|metasploit|nessus|wpscan|acunetix|burp|dirbuster|nmap|netsparker|openvas|qualys|rapid7|tenable|greenbone|openbugbounty)\b/i',
 
             /**
              * 恶意软件和攻击框架检测
-             * 覆盖：渗透测试框架、后门工具、Web Shell管理工具
-             * 安全优化：覆盖已知恶意软件家族
              */
-            '/\b(?:beef|setoolkit|empire|cobaltstrike|armitage|canvas|havij|zap|arachni|w3af|skipfish|wapiti)\b/i',
+            '/\b(?>beef|setoolkit|empire|cobaltstrike|armitage|canvas|havij|zap|arachni|w3af|skipfish|wapiti|gobuster|ffuf|nuclei)\b/i',
 
             /**
              * DDoS工具和僵尸网络检测
-             * 覆盖：压力测试工具、DDoS僵尸网络、网络扫描工具
-             * 安全优化：识别自动化攻击工具
              */
-            '/\b(?:slowloris|r-u-dead-yet|loic|hoic|goldeneye|mirai|bashlite|gafgyt|qbot|nebula)\b/i',
+            '/\b(?>slowloris|r-u-dead-yet|loic|hoic|goldeneye|mirai|bashlite|gafgyt|qbot|nebula|hulk|pybuster|ddosim|tor|hammer)\b/i',
 
             /**
              * 自动化攻击和扫描工具检测
-             * 覆盖：网络扫描、目录爆破、漏洞扫描、信息收集工具
-             * 安全优化：识别自动化攻击行为
              */
-            '/\b(?:masscan|zmap|zmeu|blackwidow|satori|xenotix|zgrab|nuclei|ffuf|gobuster|dirb)\b/i',
+            '/\b(?>masscan|zmap|zmeu|blackwidow|satori|xenotix|zgrab|dirb|wfuzz|amass|sublist3r|theharvester|shodan|censys)\b/i',
 
             /**
              * 可疑模式和匿名工具检测
-             * 覆盖：随机字符串、虚假标识、匿名代理、爬虫滥用
-             * 安全优化：基于行为特征的检测
              */
-            '/^[A-Z0-9]{16,}$|^(?:null|undefined|test|fake|unknown)$/i',
-            '/\b(?:tor|vpn|proxy|anonymizer)\s*(?:bot|crawler|spider)/i',
-            '/\b(?:scan|spider|crawl|bot)\b.*\b(?:unknown|generic|self)\b/i',
+            '/^(?>[A-Z0-9]{16,}|null|undefined|test|fake|unknown|mozilla|curl|wget|python|java|go-http)$/i',
+            '/\b(?>tor|vpn|proxy|anonymizer|anonymous|ghost|hidden)\s*(?>bot|crawler|spider|scanner|checker)/i',
+            '/\b(?>scan|spider|crawl|bot|check|monitor|test)\b.*\b(?>unknown|generic|self|custom|private)/i',
+
+            /**
+             * 浏览器自动化工具检测
+             */
+            '/\b(?>phantomjs|selenium|puppeteer|playwright|chromium|headless|automation|webdriver)\b/i',
+
+            /**
+             * 数据采集和爬虫工具检测
+             */
+            '/\b(?>scrapy|beautifulsoup|lxml|requests|httpx|aiohttp|okhttp|axios|fetch|got|superagent)\b.*\b(?>bot|crawler)/i',
+
+            /**
+             * 漏洞利用框架检测
+             */
+            '/\b(?>exploit|vulnerability|payload|shellcode|reverse|bind|meterpreter|msfconsole|msfvenom)\b/i',
         ];
     }
 
     /**
-     * 获取工业级白名单User-Agent模式 - 扩展优化版
+     * 获取工业级白名单User-Agent模式
      *
      * 包含主流搜索引擎、社交媒体、监控工具、合法API客户端、内容聚合器等
      * 基于真实业务流量分析，确保正常业务不受影响，同时提供全面保护
@@ -343,25 +472,34 @@ class SecurityConfig implements SecurityConfigInterface
     {
         return [
             // 主流搜索引擎爬虫 - 确保SEO不受影响
-            '/googlebot|bingbot|slurp|duckduckbot|baiduspider|yandexbot|sogou|exabot|facebot/i',
+            '/googlebot|bingbot|slurp|duckduckbot|baiduspider|yandexbot|sogou|exabot|facebot|applebot/i',
 
             // 社交媒体和服务商爬虫 - 确保社交分享功能正常
-            '/facebookexternalhit|twitterbot|linkedinbot|pinterest|applebot|msnbot|whatsapp|telegrambot/i',
+            '/facebookexternalhit|twitterbot|linkedinbot|pinterest|whatsapp|telegrambot|discordbot|slackbot/i',
 
             // SEO和分析工具 - 确保网站分析数据准确
-            '/ahrefsbot|semrushbot|mj12bot|moz\.com|seznambot|petalbot/i',
+            '/ahrefsbot|semrushbot|mj12bot|moz\.com|seznambot|petalbot|dotbot|gigabot|ccbot/i',
 
             // 监控和服务状态检查工具 - 确保系统监控正常
-            '/uptimerobot|pingdom|newrelic|datadog|statuscake|site24x7|monitis/i',
+            '/uptimerobot|pingdom|newrelic|datadog|statuscake|site24x7|monitis|updown|freshping/i',
 
             // 合法API客户端和开发工具 - 确保API服务正常
-            '/(?:curl|wget|python-requests|go-http-client|java|http-client|okhttp)\/[0-9]/i',
+            '/(?>curl|wget|python-requests|go-http-client|java|http-client|okhttp|axios|fetch)\/[0-9\.]+/i',
 
             // 内容聚合和订阅工具 - 确保内容分发正常
-            '/feedburner|feedvalidator|rss(?:bandit|owl)|feedparser|bloglines/i',
+            '/feedburner|feedvalidator|rss(?>bandit|owl)|feedparser|bloglines|feedly|inoreader/i',
 
             // 浏览器和移动设备 - 确保正常用户访问
-            '/mozilla|chrome|safari|edge|opera|firefox|webkit|trident|android|iphone|ipad/i',
+            '/mozilla|chrome|safari|edge|opera|firefox|webkit|trident|gecko|presto|blink/i',
+            '/android|iphone|ipad|ipod|windows\s+phone|blackberry|symbian|kindle|playbook/i',
+
+            // 邮件客户端和办公软件
+            '/outlook|thunderbird|mail|apple\s+mail|microsoft\s+outlook|lotus\s+notes|eudora/i',
+            '/msoffice|microsoft\s+office|libreoffice|openoffice|pages|numbers|keynote/i',
+
+            // 媒体播放器和下载工具
+            '/itunes|quicktime|vlc|windows\s+media\s+player|realplayer|winamp|spotify/i',
+            '/utorrent|bittorrent|transmission|deluge|qbittorrent|vuze|frostwire/i',
         ];
     }
 
@@ -379,25 +517,33 @@ class SecurityConfig implements SecurityConfigInterface
             // ==================== 可执行文件 ====================
             'exe', 'bat', 'cmd', 'com', 'msi', 'dll', 'so', 'bin', 'app', 'apk',
             'scr', 'pif', 'jar', 'war', 'deb', 'rpm', 'run', 'out', 'elf',
+            'sys', 'drv', 'vxd', 'ocx', 'cpl', 'mui', 'acm', 'ax', 'efi',
 
             // ==================== 服务器端脚本 ====================
             'php', 'phtml', 'php3', 'php4', 'php5', 'php7', 'phar', 'phps',
             'jsp', 'jspx', 'asp', 'aspx', 'asmx', 'ascx', 'cer', 'asa',
             'pl', 'py', 'rb', 'rhtml', 'sh', 'bash', 'csh', 'ksh', 'zsh', 'cgi', 'fcgi',
+            'cgi', 'fcgi', 'wsgi', 'asm', 'shtml', 'stm', 'shtm',
 
             // ==================== 客户端脚本 ====================
             'js', 'html', 'htm', 'xhtml', 'svg', 'xss', 'xsl', 'xslt',
+            'swf', 'fla', 'swt', 'air', 'applescript', 'vbs', 'vbe',
 
             // ==================== 配置和数据库文件 ====================
             'env', 'config', 'ini', 'conf', 'cfg', 'properties', 'prefs',
             'sql', 'db', 'mdb', 'accdb', 'sqlite', 'dbf', 'mdf', 'ldf', 'frm',
+            'myd', 'myi', 'ndb', 'ibd', 'dmp', 'dump', 'backup', 'bak',
 
             // ==================== 办公文档宏 ====================
             'docm', 'dotm', 'xlsm', 'xltm', 'pptm', 'potm', 'ppam', 'sldm',
+            'xlam', 'xltm', 'xlsb', 'ppsm', 'ppam', 'sldm', 'thmx',
 
             // ==================== 其他危险文件类型 ====================
             'swf', 'reg', 'vbs', 'wsf', 'ps1', 'psm1', 'msh', 'lnk', 'hta', 'cpl',
             'msp', 'scr', 'pif', 'gadget', 'application', 'command', 'crontab',
+            'sh', 'bash', 'zsh', 'ksh', 'csh', 'tcsh', 'fish', 'awk', 'sed',
+            'pl', 'pm', 't', 'pod', 'rb', 'rake', 'gemspec', 'py', 'pyc', 'pyo',
+            'r', 'R', 's', 'S', 'm', 'M', 'mat', 'oct', 'jl',
         ];
     }
 
@@ -420,6 +566,9 @@ class SecurityConfig implements SecurityConfigInterface
             'application/x-mach-binary',
             'application/java-archive',
             'application/vnd.android.package-archive',
+            'application/x-apple-diskimage',
+            'application/x-iso9660-image',
+            'application/x-shockwave-flash',
 
             // ==================== 脚本文件类型 ====================
             'application/x-php',
@@ -436,6 +585,8 @@ class SecurityConfig implements SecurityConfigInterface
             'text/x-python',
             'text/x-ruby',
             'text/x-shellscript',
+            'application/x-msdos-program',
+            'application/x-shellscript',
 
             // ==================== 宏文档类型 ====================
             'application/vnd.ms-word.document.macroEnabled.12',
@@ -454,6 +605,72 @@ class SecurityConfig implements SecurityConfigInterface
             'text/html-application',
             'application/hta',
             'application/x-cpl',
+            'application/x-ms-application',
+            'application/x-ms-manifest',
+            'application/prg',
+            'application/x-msdos-program',
+            'application/x-msdownload',
+        ];
+    }
+
+    /**
+     * 验证配置完整性
+     *
+     * @return bool 配置是否完整有效
+     */
+    public static function validate(): bool
+    {
+        try {
+            // 验证所有正则表达式
+            $patterns = array_merge(
+                self::getMaliciousBodyPatterns(),
+                self::getIllegalUrlPatterns(),
+                self::getSuspiciousUserAgents(),
+                self::getWhitelistUserAgents()
+            );
+
+            foreach ($patterns as $pattern) {
+                if (@preg_match($pattern, '') === false) {
+                    return false;
+                }
+            }
+
+            return true;
+        } catch (Exception $e) {
+            return false;
+        }
+    }
+
+    /**
+     * 获取所有配置方法（用于验证完整性）
+     *
+     * @return array 所有公共静态方法
+     */
+    public static function getAllMethods(): array
+    {
+        return [
+            'getMaliciousBodyPatterns',
+            'getIllegalUrlPatterns',
+            'getSuspiciousUserAgents',
+            'getWhitelistUserAgents',
+            'getDisallowedExtensions',
+            'getDisallowedMimeTypes',
+        ];
+    }
+
+    /**
+     * 获取配置版本信息
+     *
+     * @return array 版本信息
+     */
+    public static function getVersionInfo(): array
+    {
+        return [
+            'version' => self::CONFIG_VERSION,
+            'level' => self::CONFIG_LEVEL,
+            'patterns_count' => count(self::getMaliciousBodyPatterns()),
+            'url_patterns_count' => count(self::getIllegalUrlPatterns()),
+            'user_agent_patterns_count' => count(self::getSuspiciousUserAgents()),
         ];
     }
 }

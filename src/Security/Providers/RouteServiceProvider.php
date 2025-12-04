@@ -115,7 +115,6 @@ class RouteServiceProvider extends ServiceProvider
             return response('', 304, $headers);
         }
 
-        return response()
-            ->file($path, $headers);
+        return response()->file($path, $headers);
     }
 }

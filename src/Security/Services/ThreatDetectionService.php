@@ -7,9 +7,10 @@ use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
+use zxf\Security\Config\SecurityConfig;
 
 /**
- * 威胁检测服务
+ * 威胁检测服务 - 优化增强版
  *
  * 提供多层安全检测功能，包括：
  * 1. 请求内容检测
@@ -17,6 +18,7 @@ use Illuminate\Support\Str;
  * 3. User-Agent检测
  * 4. 文件上传检测
  * 5. 异常行为检测
+ * 6. 专项攻击检测
  */
 class ThreatDetectionService
 {
@@ -40,136 +42,64 @@ class ThreatDetectionService
     }
 
     /**
-     * 检查是否为资源文件路径：跳过资源文件的安全检查
+     * 检查是否为资源文件路径
      */
     public function isResourcePath(Request $request): bool
     {
         $path = $request->path();
-        // return match(true) {
-        //     str_starts_with($path, 'zxf/security/css/'),
-        //     str_starts_with($path, 'zxf/security/js/'),
-        //     str_starts_with($path, 'zxf/security/images/'),
-        //     str_starts_with($path, 'zxf/security/fonts/') => true,
-        //     default => false
-        // };
-        return str_starts_with($path, 'zxf/') || $this->isStaticFile($path);
-    }
 
-    // 检查是否为静态文件
-    private function isStaticFile($path): bool
-    {
-        $staticExtensions = [
-            'css', 'js', 'png', 'jpg', 'jpeg', 'gif', 'svg', 'ico',
-            'woff', 'woff2', 'ttf', 'eot', 'pdf', 'txt', 'xml', 'json',
-            'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'odt', 'ods', 'odp',
-            'mp3', 'mp4', 'mpeg', 'mpg', 'm4a', 'm4v', 'wmv', 'avi', 'mov',
-            'flv', 'webm', 'ogg', 'ogv', '3gp', '3g2', 'mkv', 'wav', 'aac',
-            'm4b', 'm4p', 'm4r', 'm4a', 'm4b', 'm4e',
-        ];
-
-        $extension = pathinfo($path, PATHINFO_EXTENSION);
-
-        return in_array(strtolower($extension), $staticExtensions);
-    }
-
-    /**
-     * 执行分层安全检测
-     */
-    public function performLayeredSecurityCheck(Request $request): array
-    {
-
-        // 第一层：超轻量级检查
-        $ultraLightChecks = [
-            'suspicious_method' => fn() => $this->hasSuspiciousMethod($request),
-            'empty_user_agent' => fn() => $this->hasEmptyUserAgent($request),
-        ];
-
-        foreach ($ultraLightChecks as $checkType => $checkFn) {
-            if ($checkFn()) {
-                return $this->createBlockResult($checkType, "检测到{$checkType}");
-            }
-        }
-
-        // 第二层：轻量级检查
-        $lightweightChecks = [
-            'suspicious_user_agent' => fn() => $this->hasSuspiciousUserAgent($request),
-            'suspicious_headers' => fn() => $this->hasSuspiciousHeaders($request),
-        ];
-
-        foreach ($lightweightChecks as $checkType => $checkFn) {
-            if ($checkFn()) {
-                return $this->createBlockResult($checkType, "检测到{$checkType}");
-            }
-        }
-
-        // 第三层：中等重量检查
-        $mediumChecks = [
-            'dangerous_upload' => fn() => $this->hasDangerousUploads($request),
-            'illegal_url' => fn() => !$this->isSafeUrl($request),
-        ];
-
-        foreach ($mediumChecks as $checkType => $checkFn) {
-            if ($checkFn()) {
-                return $this->createBlockResult($checkType, "检测到{$checkType}");
-            }
-        }
-
-        // 第四层：重量级检查（白名单路径跳过）
-        if (!$this->isWhitelistPath($request)) {
-            $heavyChecks = [
-                'malicious_request' => fn() => $this->isMaliciousRequest($request),
-                'anomalous_parameters' => fn() => $this->hasAnomalousParameters($request),
-            ];
-
-            foreach ($heavyChecks as $checkType => $checkFn) {
-                if ($checkFn()) {
-                    return $this->createBlockResult($checkType, "检测到{$checkType}");
-                }
-            }
-        }
-
-        return ['blocked' => false];
-    }
-
-    /**
-     * 检查可疑HTTP方法
-     */
-    protected function hasSuspiciousMethod(Request $request): bool
-    {
-        $method = strtoupper($request->method());
-        $allowedMethods = $this->config->get('allowed_methods', ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS', 'HEAD']);
-
-        if (!in_array($method, $allowedMethods)) {
-            security_config('enable_debug_logging',false) && Log::warning("可疑HTTP方法: {$method}");
+        // 安全包资源文件路径
+        if (str_starts_with($path, 'zxf/security/')) {
             return true;
         }
 
-        $suspiciousMethods = ['CONNECT', 'TRACE', 'TRACK', 'DEBUG'];
-        return in_array($method, $suspiciousMethods);
+        // 静态文件扩展名检查
+        return $this->isStaticFile($path);
     }
 
     /**
-     * 检查空User-Agent
+     * 检查是否为静态文件
      */
-    protected function hasEmptyUserAgent(Request $request): bool
+    private function isStaticFile(string $path): bool
     {
-        return empty($request->userAgent());
+        $staticExtensions = [
+            // 图片文件
+            'png', 'jpg', 'jpeg', 'gif', 'svg', 'ico', 'bmp', 'webp', 'tiff',
+            // 样式文件
+            'css', 'scss', 'sass', 'less',
+            // 脚本文件
+            'js', 'mjs', 'cjs',
+            // 字体文件
+            'woff', 'woff2', 'ttf', 'eot', 'otf',
+            // 文档文件
+            'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'odt', 'ods', 'odp',
+            // 媒体文件
+            'mp3', 'mp4', 'mpeg', 'mpg', 'm4a', 'm4v', 'wmv', 'avi', 'mov', 'flv', 'webm', 'ogg', 'ogv', '3gp', '3g2', 'mkv', 'wav', 'aac',
+            // 压缩文件
+            'zip', 'rar', '7z', 'tar', 'gz', 'bz2',
+            // 其他静态文件
+            'txt', 'xml', 'json', 'csv', 'yml', 'yaml', 'md', 'log',
+        ];
+
+        $extension = strtolower(pathinfo($path, PATHINFO_EXTENSION));
+        return in_array($extension, $staticExtensions);
     }
 
     /**
      * 检查可疑User-Agent
      */
-    protected function hasSuspiciousUserAgent(Request $request): bool
+    public function hasSuspiciousUserAgent(Request $request): bool
     {
         $userAgent = $request->userAgent();
+
         if (empty($userAgent)) {
-            return true;
+            return false;
         }
 
         // 先检查白名单
         $whitelistPatterns = $this->config->get('whitelist_user_agents', []);
         foreach ($whitelistPatterns as $pattern) {
-            if (preg_match($pattern, $userAgent)) {
+            if (@preg_match($pattern, $userAgent)) {
                 return false;
             }
         }
@@ -177,8 +107,11 @@ class ThreatDetectionService
         // 检查黑名单
         $suspiciousPatterns = $this->config->get('suspicious_user_agents', []);
         foreach ($suspiciousPatterns as $pattern) {
-            if (preg_match($pattern, $userAgent)) {
-                security_config('enable_debug_logging',false) && Log::warning("可疑User-Agent: " . Str::limit($userAgent, 100));
+            if (@preg_match($pattern, $userAgent)) {
+                $this->logDetection('可疑User-Agent', [
+                    'user_agent' => Str::limit($userAgent, 100),
+                    'pattern' => $pattern
+                ]);
                 return true;
             }
         }
@@ -189,15 +122,18 @@ class ThreatDetectionService
     /**
      * 检查可疑HTTP头
      */
-    protected function hasSuspiciousHeaders(Request $request): bool
+    public function hasSuspiciousHeaders(Request $request): bool
     {
-        $suspiciousHeaders = ['X-Forwarded-For', 'X-Real-IP', 'X-Client-IP'];
+        $suspiciousHeaders = $this->config->get('suspicious_headers', []);
 
-        foreach ($suspiciousHeaders as $header) {
+        foreach ($suspiciousHeaders as $header => $pattern) {
             if ($request->headers->has($header)) {
                 $value = $request->header($header);
-                if (str_contains($value, ',')) {
-                    security_config('enable_debug_logging',false) && Log::warning("可疑HTTP头: {$header} = {$value}");
+                if (@preg_match($pattern, $value)) {
+                    $this->logDetection('可疑HTTP头', [
+                        'header' => $header,
+                        'value' => $value
+                    ]);
                     return true;
                 }
             }
@@ -209,8 +145,12 @@ class ThreatDetectionService
     /**
      * 检查危险文件上传
      */
-    protected function hasDangerousUploads(Request $request): bool
+    public function hasDangerousUploads(Request $request): bool
     {
+        if (!$this->config->get('enable_file_check', true)) {
+            return false;
+        }
+
         $files = $request->allFiles();
         if (empty($files)) {
             return false;
@@ -228,15 +168,28 @@ class ThreatDetectionService
     /**
      * 检查URL安全性
      */
-    protected function isSafeUrl(Request $request): bool
+    public function isSafeUrl(Request $request): bool
     {
         $url = $request->fullUrl();
-        $patterns = $this->config->get('url_patterns', []);
+        $patterns = $this->getCompiledPatterns('url_patterns');
 
         foreach ($patterns as $pattern) {
-            if (preg_match($pattern, $url)) {
-                security_config('enable_debug_logging',false) && Log::warning("非法URL访问: " . Str::limit($url, 200));
+            if (@preg_match($pattern, $url)) {
+                $this->logDetection('非法URL访问', [
+                    'url' => Str::limit($url, 200),
+                    'pattern' => $pattern
+                ]);
                 return false;
+            }
+        }
+
+        // 检查URL白名单
+        $urlWhitelist = $this->config->get('url_whitelist_paths', []);
+        $path = $request->path();
+
+        foreach ($urlWhitelist as $pattern) {
+            if (fnmatch($pattern, $path)) {
+                return true;
             }
         }
 
@@ -246,7 +199,7 @@ class ThreatDetectionService
     /**
      * 检查恶意请求内容
      */
-    protected function isMaliciousRequest(Request $request): bool
+    public function isMaliciousRequest(Request $request): bool
     {
         $input = $request->input();
         if (empty($input)) {
@@ -254,42 +207,115 @@ class ThreatDetectionService
         }
 
         $patterns = $this->getCompiledPatterns('body_patterns');
+
+        return $this->checkInputDataRecursively($input, $patterns);
+    }
+
+    /**
+     * 检查SQL注入
+     */
+    public function hasSQLInjection(Request $request): bool
+    {
+        if (!$this->config->get('enable_sql_injection_detection', true)) {
+            return false;
+        }
+
+        $input = $request->input();
+        if (empty($input)) {
+            return false;
+        }
+
+        $patterns = $this->getCompiledPatterns('sql_injection_patterns');
+
+        return $this->checkInputDataRecursively($input, $patterns);
+    }
+
+    /**
+     * 检查XSS攻击
+     */
+    public function hasXSSAttack(Request $request): bool
+    {
+        if (!$this->config->get('enable_xss_detection', true)) {
+            return false;
+        }
+
+        $input = $request->input();
+        if (empty($input)) {
+            return false;
+        }
+
+        $patterns = $this->getCompiledPatterns('xss_attack_patterns');
+
+        return $this->checkInputDataRecursively($input, $patterns);
+    }
+
+    /**
+     * 检查命令注入
+     */
+    public function hasCommandInjection(Request $request): bool
+    {
+        if (!$this->config->get('enable_command_injection_detection', true)) {
+            return false;
+        }
+
+        $input = $request->input();
+        if (empty($input)) {
+            return false;
+        }
+
+        $patterns = $this->getCompiledPatterns('command_injection_patterns');
+
         return $this->checkInputDataRecursively($input, $patterns);
     }
 
     /**
      * 检查异常参数
      */
-    protected function hasAnomalousParameters(Request $request): bool
+    public function hasAnomalousParameters(Request $request): bool
     {
         if (!$this->config->get('enable_anomaly_detection', true)) {
             return false;
         }
 
         $parameters = $request->all();
-        $thresholds = $this->config->get('anomaly_thresholds', [
-            'max_parameters' => 100,
-            'max_parameter_length' => 255,
-        ]);
+        $thresholds = $this->config->get('anomaly_thresholds', []);
 
         // 检查参数数量
-        if (count($parameters) > $thresholds['max_parameters']) {
-            security_config('enable_debug_logging',false) && Log::warning("参数数量异常: " . count($parameters));
+        if (count($parameters) > ($thresholds['max_parameters'] ?? 100)) {
+            $this->logDetection('参数数量异常', [
+                'count' => count($parameters),
+                'max' => $thresholds['max_parameters'] ?? 100
+            ]);
+            return true;
+        }
+
+        // 检查POST数据大小
+        $postSize = strlen(serialize($request->post()));
+        if ($postSize > ($thresholds['max_post_size'] ?? 8388608)) {
+            $this->logDetection('POST数据过大', [
+                'size' => $postSize,
+                'max_size' => $thresholds['max_post_size'] ?? 8388608
+            ]);
             return true;
         }
 
         // 检查参数名和值
         foreach ($parameters as $key => $value) {
-            if (strlen($key) > $thresholds['max_parameter_length']) {
-                security_config('enable_debug_logging',false) && Log::warning("参数名长度异常: {$key}");
+            // 检查参数名长度
+            if (strlen($key) > ($thresholds['max_parameter_length'] ?? 255)) {
+                $this->logDetection('参数名长度异常', [
+                    'key' => $key,
+                    'length' => strlen($key),
+                    'max_length' => $thresholds['max_parameter_length'] ?? 255
+                ]);
                 return true;
             }
 
             // 检查可疑参数名
-            $suspiciousNames = ['cmd', 'exec', 'system', 'eval', 'php', 'script'];
+            $suspiciousNames = ['cmd', 'exec', 'system', 'eval', 'php', 'script', 'shell', 'bash', 'sh'];
             foreach ($suspiciousNames as $suspicious) {
                 if (stripos($key, $suspicious) !== false) {
-                    security_config('enable_debug_logging',false) && Log::warning("可疑参数名: {$key}");
+                    $this->logDetection('可疑参数名', ['key' => $key]);
                     return true;
                 }
             }
@@ -336,10 +362,20 @@ class ThreatDetectionService
     protected function isSafeFileExtension(UploadedFile $file): bool
     {
         $extension = strtolower($file->getClientOriginalExtension());
-        $disallowed = $this->config->get('disallowed_extensions', []);
 
+        // 检查白名单
+        $whitelist = $this->config->get('allowed_extensions_whitelist', []);
+        if (in_array($extension, $whitelist)) {
+            return true;
+        }
+
+        // 检查黑名单
+        $disallowed = $this->config->get('disallowed_extensions', []);
         if (in_array($extension, $disallowed)) {
-            security_config('enable_debug_logging',false) && Log::warning("危险文件扩展名: {$extension} - " . $file->getClientOriginalName());
+            $this->logDetection('危险文件扩展名', [
+                'extension' => $extension,
+                'filename' => $file->getClientOriginalName()
+            ]);
             return false;
         }
 
@@ -355,7 +391,11 @@ class ThreatDetectionService
         $fileSize = $file->getSize();
 
         if ($fileSize > $maxSize) {
-            security_config('enable_debug_logging',false) && Log::warning("文件大小超限: {$fileSize} - " . $file->getClientOriginalName());
+            $this->logDetection('文件大小超限', [
+                'size' => $fileSize,
+                'max_size' => $maxSize,
+                'filename' => $file->getClientOriginalName()
+            ]);
             return false;
         }
 
@@ -371,7 +411,10 @@ class ThreatDetectionService
         $disallowed = $this->config->get('disallowed_mime_types', []);
 
         if (in_array($mimeType, $disallowed)) {
-            security_config('enable_debug_logging',false) && Log::warning("危险MIME类型: {$mimeType} - " . $file->getClientOriginalName());
+            $this->logDetection('危险MIME类型', [
+                'mime_type' => $mimeType,
+                'filename' => $file->getClientOriginalName()
+            ]);
             return false;
         }
 
@@ -388,13 +431,19 @@ class ThreatDetectionService
             $patterns = $this->getCompiledPatterns('body_patterns');
 
             foreach ($patterns as $pattern) {
-                if (preg_match($pattern, $content)) {
-                    security_config('enable_debug_logging',false) && Log::warning("文件内容包含恶意代码: " . $file->getClientOriginalName());
+                if (@preg_match($pattern, $content)) {
+                    $this->logDetection('文件内容包含恶意代码', [
+                        'filename' => $file->getClientOriginalName(),
+                        'pattern' => $pattern
+                    ]);
                     return false;
                 }
             }
         } catch (Exception $e) {
-            security_config('enable_debug_logging',false) && Log::warning("文件内容检查失败: " . $e->getMessage());
+            $this->logDetection('文件内容检查失败', [
+                'filename' => $file->getClientOriginalName(),
+                'error' => $e->getMessage()
+            ]);
         }
 
         return true;
@@ -405,7 +454,8 @@ class ThreatDetectionService
      */
     protected function checkInputDataRecursively(array $data, array $patterns, string $parentKey = '', int $depth = 0): bool
     {
-        if ($depth > $this->config->get('max_recursion_depth', 10)) {
+        $maxDepth = $this->config->get('max_recursion_depth', 10);
+        if ($depth > $maxDepth) {
             return false;
         }
 
@@ -435,15 +485,25 @@ class ThreatDetectionService
             return false;
         }
 
+        // 检查最小内容长度
+        $minLength = $this->config->get('min_content_length', 3);
+        if (strlen($value) < $minLength) {
+            return false;
+        }
+
         $processedValue = $this->preprocessContent($value);
         if (empty($processedValue)) {
             return false;
         }
 
         foreach ($patterns as $pattern) {
-            if (preg_match($pattern, $processedValue)) {
+            if (@preg_match($pattern, $processedValue)) {
                 if (!$this->isFalsePositive($key, $processedValue, $pattern)) {
-                    security_config('enable_debug_logging',false) && Log::warning("恶意请求内容 - 参数: {$key}, 模式: {$pattern}");
+                    $this->logDetection('恶意请求内容', [
+                        'parameter' => $key,
+                        'value' => Str::limit($processedValue, 100),
+                        'pattern' => $pattern
+                    ]);
                     return true;
                 }
             }
@@ -466,7 +526,11 @@ class ThreatDetectionService
         $content = preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/', '', $content);
 
         // 标准化空格
-        return preg_replace('/\s+/', ' ', $content);
+        $content = preg_replace('/\s+/', ' ', $content);
+
+        // 解码常见编码
+        $content = urldecode($content);
+        return html_entity_decode($content, ENT_QUOTES | ENT_HTML5, 'UTF-8');
     }
 
     /**
@@ -474,13 +538,31 @@ class ThreatDetectionService
      */
     protected function isFalsePositive(string $key, string $value, string $pattern): bool
     {
-        $whitelistKeys = ['content', 'body', 'description', 'markdown', 'html_content'];
+        // 白名单键名
+        $whitelistKeys = ['content', 'body', 'description', 'markdown', 'html_content', 'message', 'comment'];
         if (in_array(strtolower($key), $whitelistKeys)) {
             return true;
         }
 
+        // 过短的内容
         if (strlen($value) < 10) {
             return true;
+        }
+
+        // 常见合法内容模式
+        $legitimatePatterns = [
+            '/^https?:\/\/[^\s]+$/i', // URL
+            '/^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/', // 邮箱
+            '/^\d{10,15}$/', // 长数字
+            '/^[a-f0-9]{32}$/i', // MD5
+            '/^[a-f0-9]{64}$/i', // SHA256
+        ];
+        $legitimatePatterns[] = $pattern;
+
+        foreach ($legitimatePatterns as $legitPattern) {
+            if (@preg_match($legitPattern, $value)) {
+                return true;
+            }
         }
 
         return false;
@@ -489,13 +571,13 @@ class ThreatDetectionService
     /**
      * 检查是否为白名单路径
      */
-    protected function isWhitelistPath(Request $request): bool
+    public function isWhitelistPath(Request $request): bool
     {
         $path = $request->path();
         $whitelistPaths = $this->config->get('body_whitelist_paths', []);
 
-        foreach ($whitelistPaths as $whitelist) {
-            if (fnmatch($whitelist, $path)) {
+        foreach ($whitelistPaths as $pattern) {
+            if (fnmatch($pattern, $path)) {
                 return true;
             }
         }
@@ -512,7 +594,12 @@ class ThreatDetectionService
             return;
         }
 
-        $patternTypes = ['body_patterns', 'url_patterns', 'suspicious_user_agents'];
+        $patternTypes = [
+            'body_patterns',
+            'url_patterns',
+            'suspicious_user_agents',
+            'whitelist_user_agents',
+        ];
 
         foreach ($patternTypes as $type) {
             $this->getCompiledPatterns($type);
@@ -524,56 +611,45 @@ class ThreatDetectionService
      */
     protected function getCompiledPatterns(string $type): array
     {
-        $cacheKey = $type;
+        $cacheKey = "compiled_patterns:{$type}";
 
-        if (!isset(self::$compiledPatterns[$cacheKey])) {
-            $patterns = $this->config->get($type, []);
-            $compiled = [];
-
-            foreach ($patterns as $pattern) {
-                if (@preg_match($pattern, '') !== false) {
-                    $compiled[] = $pattern;
-                } else {
-                    security_config('enable_debug_logging',false) && Log::warning("无效的正则表达式: {$pattern}");
-                }
-            }
-
-            self::$compiledPatterns[$cacheKey] = $compiled;
+        if (isset(self::$compiledPatterns[$cacheKey])) {
+            return self::$compiledPatterns[$cacheKey];
         }
 
-        return self::$compiledPatterns[$cacheKey];
+        $patterns = $this->config->get($type, []);
+        $compiled = [];
+
+        foreach ($patterns as $pattern) {
+            // 验证正则表达式有效性
+            if ($this->isValidPattern($pattern)) {
+                $compiled[] = $pattern;
+            }
+        }
+
+        self::$compiledPatterns[$cacheKey] = $compiled;
+        return $compiled;
     }
 
     /**
-     * 创建拦截结果
+     * 验证正则表达式有效性
      */
-    protected function createBlockResult(string $type, string $message): array
+    protected function isValidPattern(string $pattern): bool
     {
-        return [
-            'blocked' => true,
-            'type' => $type,
-            'reason' => $message,
-            'message' => $this->getBlockMessage($type),
-        ];
-    }
+        // 简单的有效性检查
+        if (@preg_match($pattern, '') !== false) {
+            return true;
+        }
 
-    /**
-     * 获取拦截消息
-     */
-    protected function getBlockMessage(string $type): string
-    {
-        $messages = [
-            'suspicious_method' => '请求方法不被允许',
-            'empty_user_agent' => 'User-Agent不能为空',
-            'suspicious_user_agent' => '可疑的User-Agent',
-            'suspicious_headers' => '可疑的请求头',
-            'dangerous_upload' => '危险的文件上传',
-            'illegal_url' => '非法的URL访问',
-            'malicious_request' => '恶意请求内容',
-            'anomalous_parameters' => '异常请求参数',
-        ];
+        $error = error_get_last();
+        if ($error && str_contains($error['message'], 'preg_match')) {
+            $this->logDetection('无效的正则表达式', [
+                'pattern' => $pattern,
+                'error' => $error['message']
+            ]);
+        }
 
-        return $messages[$type] ?? '安全规则拦截';
+        return false;
     }
 
     /**
@@ -582,6 +658,16 @@ class ThreatDetectionService
     public function getConfig(string $key, mixed $default = null, mixed $params = null)
     {
         return $this->config->get($key, $default, $params);
+    }
+
+    /**
+     * 记录检测日志
+     */
+    protected function logDetection(string $message, array $context = []): void
+    {
+        if ($this->config->get('enable_debug_logging', false)) {
+            Log::debug("安全检测: {$message}", $context);
+        }
     }
 
     /**

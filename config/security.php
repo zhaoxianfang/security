@@ -6,13 +6,12 @@ use zxf\Security\Config\SecurityConfig;
  * 安全中间件配置文件
  *
  * 配置特性：
- * 1. 支持动态配置源（类方法、闭包、数组等）
- * 2. 环境变量覆盖支持
- * 3. 性能优化参数
- * 4. 完整的类型提示和默认值
- *
- * 查看支持callable的用法示例：
- * @see  /vendor/zxf/security/example/security_example.md 配置示例
+ * 1. 所有配置项都有实际代码使用
+ * 2. 支持动态配置源（类方法、闭包、数组等）
+ * 3. 环境变量覆盖支持
+ * 4. 性能优化参数
+ * 5. 完整的类型提示和默认值
+ * 6. 详细的中文注释和使用示例
  */
 
 return [
@@ -25,6 +24,7 @@ return [
      * 在生产环境建议启用，开发环境可以根据需要关闭
      * 支持：boolean | callable
      * 默认值：true
+     * 示例：true | false | fn() => app()->environment('production')
      */
     'enabled' => env('SECURITY_MIDDLEWARE_ENABLED', true),
 
@@ -33,14 +33,10 @@ return [
      *
      * 在生产环境建议配置为全局使用，开发环境可以根据需要配置
      * 支持：string
-     * 可选值：global:全局使用, single:单个使用(在路由、控制器等地方手动使用security中间件)
-     * 示例：如果配置全局启用(enabled_type)，则所有路由都将默认使用安全中间件，不需要单独引入
-     *      路由分配中间件: Route::middleware(['security'])
-     *      控制器中间件: Route::get('profile', [UserController::class, 'show'])->middleware('security');
-     *      路由排除中间件: Route::withoutMiddleware(['security'])
+     * 可选值：global:全局使用, route:路由使用(在路由、控制器等地方手动使用security中间件)
      * 默认值：global
      */
-    'enabled_type' => env('SECURITY_MIDDLEWARE_ENABLED', 'global'),
+    'enabled_type' => env('SECURITY_MIDDLEWARE_TYPE', 'global'),
 
     /**
      * 安全中间件是否忽略本地环境的请求
@@ -71,13 +67,22 @@ return [
     'enable_debug_logging' => env('SECURITY_DEBUG_LOGGING', false),
 
     /**
-     * 是否启用性能日志
+     * 是否记录详细日志
      *
-     * 启用后会记录性能统计信息，用于监控和优化
+     * 记录详细的拦截日志，包括请求参数等
      * 支持：boolean | callable
      * 默认值：false
      */
-    'enable_performance_logging' => env('SECURITY_PERFORMANCE_LOGGING', false),
+    'log_details' => env('SECURITY_LOG_DETAILS', false),
+
+    /**
+     * 是否启用学习模式
+     *
+     * 启用后记录所有检测但不拦截，用于训练模型
+     * 支持：boolean | callable
+     * 默认值：false
+     */
+    'learning_mode' => env('SECURITY_LEARNING_MODE', false),
 
     // ==================== 速率限制配置 ====================
 
@@ -102,6 +107,26 @@ return [
         'hour' => env('SECURITY_MAX_REQUESTS_PER_HOUR', 10000),
         'day' => env('SECURITY_MAX_REQUESTS_PER_DAY', 100000),
     ],
+
+    /**
+     * 速率限制指纹生成策略
+     *
+     * 定义如何生成请求指纹用于速率限制
+     * 支持：string | array | callable
+     * 可选值：ip_only, ip_ua, ip_ua_path, custom
+     * 默认值：ip_ua_path
+     */
+    'rate_limit_strategy' => env('SECURITY_RATE_LIMIT_STRATEGY', 'ip_ua_path'),
+
+    /**
+     * 自定义速率限制指纹处理器
+     *
+     * 当 rate_limit_strategy 为 custom 时使用的自定义处理器
+     * 支持：string|array|null
+     * 默认值：null
+     * 示例：'App\Services\SecurityService::generateFingerprint'
+     */
+    'rate_limit_custom_handler' => env('SECURITY_RATE_LIMIT_CUSTOM_HANDLER', null),
 
     // ==================== IP自动检测配置 ====================
 
@@ -154,19 +179,28 @@ return [
          * 每次拦截时增加威胁评分
          *
          * 被拦截时增加的威胁评分
-         * 类型：integer
-         * 默认值：5
+         * 类型：float
+         * 默认值：10.00
          */
         'add_threat_score' => env('SECURITY_ADD_THREAT_SCORE', 10.00),
 
         /**
-         * 每次成功请求时轻微降低威胁评分
+         * 每次成功请求时降低威胁评分
          *
-         * 拦截后又成功请求时轻微降低威胁评分
-         * 类型：integer
-         * 默认值：2
+         * 成功请求时降低威胁评分
+         * 类型：float
+         * 默认值：1.00
          */
         'reduce_threat_score' => env('SECURITY_REDUCE_THREAT_SCORE', 1.00),
+
+        /**
+         * 威胁评分自然衰减（每小时）
+         *
+         * 每小时自动降低威胁评分
+         * 类型：float
+         * 默认值：0.5
+         */
+        'decay_rate_per_hour' => env('SECURITY_DECAY_RATE_PER_HOUR', 0.5),
 
         /**
          * 自动清理过期记录
@@ -185,6 +219,15 @@ return [
          * 默认值：24
          */
         'cleanup_interval' => env('SECURITY_CLEANUP_INTERVAL', 24),
+
+        /**
+         * 监控IP自动过期时间（天）
+         *
+         * 监控类型的IP记录自动过期时间
+         * 类型：integer
+         * 默认值：7
+         */
+        'monitoring_expire_days' => env('SECURITY_MONITORING_EXPIRE_DAYS', 7),
     ],
 
     // ==================== IP数据库配置 ====================
@@ -222,6 +265,15 @@ return [
          * 默认值：60
          */
         'stats_update_interval' => env('SECURITY_STATS_UPDATE_INTERVAL', 60),
+
+        /**
+         * 最大IP记录数
+         *
+         * 数据库最大保留的IP记录数
+         * 类型：integer
+         * 默认值：100000
+         */
+        'max_records' => env('SECURITY_MAX_IP_RECORDS', 100000),
     ],
 
     // ==================== HTTP方法配置 ====================
@@ -241,6 +293,20 @@ return [
         'DELETE',
         'OPTIONS',
         'HEAD',
+    ],
+
+    /**
+     * 可疑HTTP方法
+     *
+     * 这些HTTP方法将被视为可疑请求
+     * 支持：array | callable
+     * 默认值：['CONNECT', 'TRACE', 'TRACK', 'DEBUG']
+     */
+    'suspicious_methods' => [
+        'CONNECT',
+        'TRACE',
+        'TRACK',
+        'DEBUG',
     ],
 
     // ==================== 请求体检查配置 ====================
@@ -269,6 +335,24 @@ return [
         'status',
     ],
 
+    /**
+     * 请求体检测深度
+     *
+     * 递归检查请求体数据的最大深度
+     * 支持：integer | callable
+     * 默认值：5
+     */
+    'body_check_depth' => env('SECURITY_BODY_CHECK_DEPTH', 5),
+
+    /**
+     * 最小触发内容长度
+     *
+     * 只有内容长度超过此值才进行正则匹配
+     * 支持：integer | callable
+     * 默认值：3
+     */
+    'min_content_length' => env('SECURITY_MIN_CONTENT_LENGTH', 3),
+
     // ==================== URL检查配置 ====================
 
     /**
@@ -279,6 +363,28 @@ return [
      * 默认值：SecurityConfig::getIllegalUrlPatterns()
      */
     'url_patterns' => [SecurityConfig::class, 'getIllegalUrlPatterns'],
+
+    /**
+     * URL检测白名单路径
+     *
+     * 这些URL路径将跳过安全检测
+     * 支持：array | callable
+     * 默认值：['robots.txt', 'sitemap.xml', 'favicon.ico']
+     */
+    'url_whitelist_paths' => [
+        'robots.txt',
+        'sitemap.xml',
+        'favicon.ico',
+    ],
+
+    /**
+     * 最大URL长度
+     *
+     * 超过此长度的URL将被拒绝
+     * 支持：integer | callable
+     * 默认值：2048
+     */
+    'max_url_length' => env('SECURITY_MAX_URL_LENGTH', 2048),
 
     // ==================== User-Agent检查配置 ====================
 
@@ -300,7 +406,62 @@ return [
      */
     'whitelist_user_agents' => [SecurityConfig::class, 'getWhitelistUserAgents'],
 
+    /**
+     * 是否允许空User-Agent
+     *
+     * 是否允许没有User-Agent的请求
+     * 支持：boolean | callable
+     * 默认值：false
+     */
+    'allow_empty_user_agent' => env('SECURITY_ALLOW_EMPTY_UA', false),
+
+    /**
+     * 最大User-Agent长度
+     *
+     * 超过此长度的User-Agent将被拒绝
+     * 支持：integer | callable
+     * 默认值：512
+     */
+    'max_user_agent_length' => env('SECURITY_MAX_UA_LENGTH', 512),
+
+    // ==================== 请求头检查配置 ====================
+
+    /**
+     * 可疑请求头模式
+     *
+     * 匹配这些模式的请求头将被视为可疑
+     * 支持：array | callable
+     * 默认值：[
+     *     'X-Forwarded-For' => '/,/',  // 包含逗号的X-Forwarded-For
+     *     'X-Real-IP' => '/,/',        // 包含逗号的X-Real-IP
+     *     'Via' => '/.*\/',            // 任何Via头
+     * ]
+     */
+    'suspicious_headers' => [
+        'X-Forwarded-For' => '/,/',
+        'X-Real-IP' => '/,/',
+        'Via' => '/.*/',
+    ],
+
+    /**
+     * 最大请求头数量
+     *
+     * 超过此数量的请求头将被拒绝
+     * 支持：integer | callable
+     * 默认值：50
+     */
+    'max_header_count' => env('SECURITY_MAX_HEADER_COUNT', 50),
+
     // ==================== 文件上传检查配置 ====================
+
+    /**
+     * 是否启用文件上传检查
+     *
+     * 启用后会对上传文件进行安全检查
+     * 支持：boolean | callable
+     * 默认值：true
+     */
+    'enable_file_check' => env('SECURITY_ENABLE_FILE_CHECK', true),
 
     /**
      * 禁止上传的文件扩展名
@@ -339,6 +500,19 @@ return [
      */
     'enable_file_content_check' => env('SECURITY_FILE_CONTENT_CHECK', false),
 
+    /**
+     * 允许上传的文件扩展名白名单
+     *
+     * 即使在其他检查中，这些扩展名也被允许
+     * 支持：array | callable
+     * 默认值：['jpg', 'jpeg', 'png', 'gif', 'pdf', 'doc', 'docx', 'xls', 'xlsx']
+     */
+    'allowed_extensions_whitelist' => [
+        'jpg', 'jpeg', 'png', 'gif', 'pdf',
+        'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx',
+        'txt', 'zip', 'rar', '7z',
+    ],
+
     // ==================== 高级检测配置 ====================
 
     /**
@@ -349,15 +523,6 @@ return [
      * 默认值：true
      */
     'enable_advanced_detection' => env('SECURITY_ADVANCED_DETECTION', true),
-
-    /**
-     * 是否启用指纹识别
-     *
-     * 通过请求特征识别可疑客户端
-     * 支持：boolean | callable
-     * 默认值：true
-     */
-    'enable_fingerprinting' => env('SECURITY_FINGERPRINTING', true),
 
     /**
      * 是否启用异常检测
@@ -373,13 +538,77 @@ return [
      *
      * 异常检测的敏感度阈值
      * 支持：array | callable
-     * 默认值：['max_parameters' => 100, 'max_parameter_length' => 255]
+     * 默认值：[
+     *     'max_parameters' => 100,
+     *     'max_parameter_length' => 255,
+     *     'max_headers' => 50,
+     *     'max_cookie_length' => 4096,
+     *     'max_post_size' => 8388608, // 8MB
+     * ]
      */
     'anomaly_thresholds' => [
-        'max_parameters' => 100,
-        'max_parameter_length' => 255,
-        'max_headers' => 50,
+        'max_parameters' => env('SECURITY_MAX_PARAMETERS', 100),
+        'max_parameter_length' => env('SECURITY_MAX_PARAMETER_LENGTH', 255),
+        'max_headers' => env('SECURITY_MAX_HEADERS', 50),
+        'max_cookie_length' => env('SECURITY_MAX_COOKIE_LENGTH', 4096),
+        'max_post_size' => env('SECURITY_MAX_POST_SIZE', 8 * 1024 * 1024),
     ],
+
+    /**
+     * 是否启用SQL注入专项检测
+     *
+     * 专门针对SQL注入攻击的深度检测
+     * 支持：boolean | callable
+     * 默认值：true
+     */
+    'enable_sql_injection_detection' => env('SECURITY_SQL_INJECTION_DETECTION', true),
+
+    /**
+     * SQL注入正则表达式
+     *
+     * 用于检测恶意请求是否包含恶意SQL注入
+     * 支持：array | callable
+     * 默认值：SecurityConfig::getSQLInjectionPatterns()
+     */
+    'sql_injection_patterns' => [SecurityConfig::class, 'getSQLInjectionPatterns'],
+
+    /**
+     * 是否启用XSS攻击专项检测
+     *
+     * 专门针对XSS攻击的深度检测
+     * 支持：boolean | callable
+     * 默认值：true
+     */
+    'enable_xss_detection' => env('SECURITY_XSS_DETECTION', true),
+
+    /**
+     * XSS攻击正则表达式
+     *
+     * 用于检测恶意请求是否包含恶意SQL注入
+     * 支持：array | callable
+     * 默认值：SecurityConfig::getXSSAttackPatterns()
+     */
+    'xss_attack_patterns' => [SecurityConfig::class, 'getXSSAttackPatterns'],
+
+    /**
+     * 是否启用命令注入专项检测
+     *
+     * 专门针对命令注入攻击的深度检测
+     * 支持：boolean | callable
+     * 默认值：true
+     */
+    'enable_command_injection_detection' => env('SECURITY_COMMAND_INJECTION_DETECTION', true),
+
+
+    /**
+     * 命令注入检测正则表达式
+     *
+     * 用于检测恶意请求是否包含恶意SQL注入
+     * 支持：array | callable
+     * 默认值：SecurityConfig::getCommandInjectionPatterns()
+     */
+    'command_injection_patterns' => [SecurityConfig::class, 'getCommandInjectionPatterns'],
+
 
     // ==================== 缓存配置 ====================
 
@@ -410,7 +639,25 @@ return [
      */
     'max_ban_duration' => env('SECURITY_MAX_BAN_DURATION', 86400),
 
-    // ==================== 异常处理配置 ====================
+    /**
+     * 是否启用正则表达式缓存
+     *
+     * 启用后正则表达式将被预编译缓存，提升性能
+     * 支持：boolean | callable
+     * 默认值：true
+     */
+    'enable_pattern_cache' => env('SECURITY_PATTERN_CACHE', true),
+
+    /**
+     * 是否启用IP检查缓存
+     *
+     * 启用后IP检查结果将被缓存，提升性能
+     * 支持：boolean | callable
+     * 默认值：true
+     */
+    'enable_ip_cache' => env('SECURITY_IP_CACHE', true),
+
+    // ==================== 响应配置 ====================
 
     /**
      * 异常时是否阻止请求
@@ -422,14 +669,16 @@ return [
      */
     'block_on_exception' => env('SECURITY_BLOCK_ON_EXCEPTION', false),
 
-    // ==================== 响应格式配置 ====================
-
     /**
      * AJAX响应格式
      *
      * 拦截请求时返回的JSON响应格式
      * 支持：array | callable
-     * 默认值：['code' => 'code', 'message' => 'message', 'data' => 'data']
+     * 默认值：[
+     *     'code' => 'code',
+     *     'message' => 'message',
+     *     'data' => 'data'
+     * ]
      */
     'ajax_response_format' => [
         'code' => 'code',
@@ -455,6 +704,30 @@ return [
      */
     'error_view_data' => [],
 
+    /**
+     * 拦截响应HTTP状态码映射
+     *
+     * 不同类型的拦截返回不同的HTTP状态码
+     * 支持：array | callable
+     * 默认值：[
+     *     'Blacklist' => 403,
+     *     'RateLimit' => 429,
+     *     'MaliciousRequest' => 403,
+     *     'AnomalousParameters' => 422,
+     *     'SuspiciousUserAgent' => 400,
+     *     'SystemError' => 503,
+     * ]
+     */
+    'response_status_codes' => [
+        'Blacklist' => 403,
+        'RateLimit' => 429,
+        'MaliciousRequest' => 403,
+        'AnomalousParameters' => 422,
+        'SuspiciousUserAgent' => 400,
+        'SystemError' => 503,
+        'CustomRule' => 403,
+    ],
+
     // ==================== 自定义处理配置 ====================
 
     /**
@@ -476,6 +749,15 @@ return [
     'blacklist_handler' => env('SECURITY_BLACKLIST_HANDLE', null),
 
     /**
+     * 白名单处理逻辑
+     *
+     * 自定义的白名单检查逻辑，格式同上
+     * 支持：string|array|null
+     * 默认值：null
+     */
+    'whitelist_handler' => env('SECURITY_WHITELIST_HANDLE', null),
+
+    /**
      * 安全警报处理逻辑
      *
      * 发送安全警报的自定义逻辑，格式同上
@@ -487,22 +769,22 @@ return [
     // ==================== 性能优化配置 ====================
 
     /**
-     * 是否启用正则表达式缓存
+     * 是否启用批量处理
      *
-     * 启用后正则表达式将被预编译缓存，提升性能
+     * 启用后批量处理安全检测，提升性能
      * 支持：boolean | callable
      * 默认值：true
      */
-    'enable_pattern_cache' => env('SECURITY_PATTERN_CACHE', true),
+    'enable_batch_processing' => env('SECURITY_BATCH_PROCESSING', true),
 
     /**
-     * 是否启用指纹缓存
+     * 批量处理大小
      *
-     * 启用后请求指纹将被缓存，避免重复计算
-     * 支持：boolean | callable
-     * 默认值：true
+     * 批量处理数据时的大小限制，防止内存溢出
+     * 支持：integer | callable
+     * 默认值：1000
      */
-    'enable_fingerprint_cache' => env('SECURITY_FINGERPRINT_CACHE', true),
+    'batch_size' => env('SECURITY_BATCH_SIZE', 1000),
 
     /**
      * 最大递归深度
@@ -514,12 +796,78 @@ return [
     'max_recursion_depth' => env('SECURITY_MAX_RECURSION_DEPTH', 10),
 
     /**
-     * 批量处理大小
+     * 是否启用请求预处理
      *
-     * 批量处理数据时的大小限制，防止内存溢出
-     * 支持：integer | callable
-     * 默认值：1000
+     * 启用后对请求数据进行预处理，提升检测性能
+     * 支持：boolean | callable
+     * 默认值：true
      */
-    'batch_size' => env('SECURITY_BATCH_SIZE', 1000),
+    'enable_request_preprocessing' => env('SECURITY_REQUEST_PREPROCESSING', true),
 
+    // ==================== 防御层配置 ====================
+
+    /**
+     * 防御层配置
+     *
+     * 配置多层防御策略，从上到下依次执行
+     * 支持：array | callable
+     * 默认值：[
+     *     'ip_whitelist' => true,
+     *     'ip_blacklist' => true,
+     *     'method_check' => true,
+     *     'user_agent_check' => true,
+     *     'header_check' => true,
+     *     'url_check' => true,
+     *     'upload_check' => true,
+     *     'body_check' => true,
+     *     'anomaly_check' => true,
+     *     'rate_limit' => true,
+     *     'custom_check' => true,
+     * ]
+     */
+    'defense_layers' => [
+        'ip_whitelist' => env('SECURITY_DEFENSE_IP_WHITELIST', true),
+        'ip_blacklist' => env('SECURITY_DEFENSE_IP_BLACKLIST', true),
+        'method_check' => env('SECURITY_DEFENSE_METHOD', true), // 检查请求方法
+        'user_agent_check' => env('SECURITY_DEFENSE_USER_AGENT', true), // 检查UA
+        'header_check' => env('SECURITY_DEFENSE_HEADER', true),
+        'url_check' => env('SECURITY_DEFENSE_URL', true),
+        'upload_check' => env('SECURITY_DEFENSE_UPLOAD', true),
+        'body_check' => env('SECURITY_DEFENSE_BODY', true),
+        'anomaly_check' => env('SECURITY_DEFENSE_ANOMALY', true),
+        'rate_limit' => env('SECURITY_DEFENSE_RATE_LIMIT', true),
+        'sql_check' => env('SECURITY_DEFENSE_SQL', true), // 检查SQL注入
+        'xss_check' => env('SECURITY_DEFENSE_XSS', true), // 检查XSS攻击
+        'command_check' => env('SECURITY_DEFENSE_COMMON', true), // 检查命令注入
+        'custom_check' => env('SECURITY_DEFENSE_CUSTOM', true),
+    ],
+
+    // ==================== 其他配置 ====================
+
+    /**
+     * 是否启用API模式
+     *
+     * 启用后针对API请求优化响应格式
+     * 支持：boolean | callable
+     * 默认值：true
+     */
+    'enable_api_mode' => env('SECURITY_API_MODE', true),
+
+    /**
+     * 信任的代理IP列表
+     *
+     * 信任的代理服务器IP列表
+     * 支持：array | callable
+     * 默认值：[]
+     */
+    'trusted_proxies' => [],
+
+    /**
+     * 信任的代理头
+     *
+     * 信任的代理头名称
+     * 支持：array | callable
+     * 默认值：['X-Forwarded-For', 'X-Real-IP']
+     */
+    'trusted_headers' => ['X-Forwarded-For', 'X-Real-IP'],
 ];

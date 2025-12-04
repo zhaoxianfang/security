@@ -6,9 +6,11 @@ use Closure;
 use Exception;
 use Illuminate\Support\Facades\App;
 use Illuminate\Support\Arr;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Log;
 
 /**
- * 配置管理服务
+ * 配置管理服务 - 优化增强版
  *
  * 提供灵活的配置获取功能，支持：
  * 1. 静态配置值
@@ -16,6 +18,7 @@ use Illuminate\Support\Arr;
  * 3. 类方法调用
  * 4. 缓存优化
  * 5. 智能类型识别
+ * 6. 配置验证和回退
  */
 class ConfigManager
 {
@@ -30,17 +33,36 @@ class ConfigManager
     protected array $configCache = [];
 
     /**
+     * 缓存键前缀
+     */
+    protected const CACHE_PREFIX = 'security:config:';
+
+    /**
+     * 缓存时间（秒）
+     */
+    protected const CACHE_TTL = 3600;
+
+    /**
      * 不应该解析为可调用对象的配置键名
      */
     protected array $noCallableKeys = [
         'enabled_type',
         'error_view',
+        'rate_limit_strategy',
+        'ajax_response_format.code',
+        'ajax_response_format.message',
+        'ajax_response_format.data',
+        'response_status_codes',
+        'trusted_proxies',
+        'trusted_headers',
     ];
 
-    // 获取单例实例
-    public static function instance($refresh = false)
+    /**
+     * 获取单例实例
+     */
+    public static function instance(bool $refresh = false): self
     {
-        if (! isset(self::$instance) || is_null(self::$instance) || empty(self::$instance) || $refresh) {
+        if (!isset(self::$instance) || $refresh) {
             self::$instance = new static;
         }
         return self::$instance;
@@ -48,30 +70,36 @@ class ConfigManager
 
     /**
      * 获取配置值
-     * @param string $key 配置键名
-     * @param mixed $default 默认值
-     * @param mixed $params 闭包回调参数
      */
-    public function get(string $key, mixed $default = null, mixed $params = null)
+    public function get(string $key, mixed $default = null, mixed $params = null): mixed
     {
-        // 检查缓存
-        if (Arr::has($this->configCache, $key)) {
-            return Arr::get($this->configCache, $key, $default);
+        // 构建完整缓存键
+        $cacheKey = $this->getCacheKey($key, $params);
+
+        // 检查内存缓存
+        if (Arr::has($this->configCache, $cacheKey)) {
+            return Arr::get($this->configCache, $cacheKey, $default);
         }
 
-        // 从配置文件获取
-        $value = config("security.{$key}", $default);
-
-        if($value instanceof Closure){
-            return call_user_func($value, $params);
+        // 检查持久化缓存
+        if ($this->shouldCache($key)) {
+            $cachedValue = Cache::get($cacheKey);
+            if ($cachedValue !== null) {
+                Arr::set($this->configCache, $cacheKey, $cachedValue);
+                return $cachedValue;
+            }
         }
-        // 处理动态配置（排除不应解析的键）
-        $processedValue = $this->shouldProcessAsCallable($key) ?
-            $this->processDynamicValue($value,$params) :
-            $value;
 
-        // 缓存结果
-        Arr::set($this->configCache, $key, $processedValue);
+        // 从配置文件获取原始值
+        $rawValue = config("security.{$key}", $default);
+
+        // 处理动态配置
+        $processedValue = $this->shouldProcessAsCallable($key)
+            ? $this->processDynamicValue($rawValue, $params)
+            : $rawValue;
+
+        // 缓存处理结果
+        $this->cacheValue($key, $cacheKey, $processedValue);
 
         return $processedValue;
     }
@@ -81,14 +109,9 @@ class ConfigManager
      */
     protected function shouldProcessAsCallable(string $key): bool
     {
-        // 检查是否在 不应该解析的列表中
-        if (in_array($key, $this->noCallableKeys)) {
-            return false;
-        }
-
-        // 检查是否为数组配置项的子键
+        // 检查是否在不应该解析的列表中
         foreach ($this->noCallableKeys as $callableKey) {
-            if (str_starts_with($key, "{$callableKey}.")) {
+            if ($key === $callableKey || str_starts_with($key, "{$callableKey}.")) {
                 return false;
             }
         }
@@ -99,10 +122,18 @@ class ConfigManager
     /**
      * 处理动态配置值
      */
-    protected function processDynamicValue($value,mixed $params = null)
+    protected function processDynamicValue(mixed $value, mixed $params = null): mixed
     {
-        if (is_callable($value)) {
-            return call_user_func($value,$params);
+        if ($value instanceof Closure) {
+            try {
+                return call_user_func($value, $params);
+            } catch (Exception $e) {
+                Log::error('配置闭包执行失败: ' . $e->getMessage(), [
+                    'value_type' => gettype($value),
+                    'exception' => $e
+                ]);
+                return null;
+            }
         }
 
         if (is_array($value) && $this->isCallableArray($value)) {
@@ -110,7 +141,7 @@ class ConfigManager
         }
 
         if (is_string($value) && $this->isCallableString($value)) {
-            return $this->callClassMethodFromString($value);
+            return $this->callClassMethodFromString($value, $params);
         }
 
         return $value;
@@ -119,9 +150,10 @@ class ConfigManager
     /**
      * 检查是否为可调用数组
      */
-    protected function isCallableArray($value): bool
+    protected function isCallableArray(mixed $value): bool
     {
-        return count($value) === 2 &&
+        return is_array($value) &&
+            count($value) === 2 &&
             is_string($value[0]) &&
             is_string($value[1]) &&
             class_exists($value[0]) &&
@@ -133,29 +165,43 @@ class ConfigManager
      */
     protected function isCallableString(string $value): bool
     {
-        // 排除视图模板格式 (包含 :: 但不是类方法调用)
+        // 排除视图模板格式
         if (preg_match('/^[a-z0-9_-]+::[a-z0-9_-]+$/i', $value)) {
             return false;
         }
 
         // 检查是否为有效的类方法调用格式
-        return preg_match('/^([a-zA-Z_\x80-\xff][a-zA-Z0-9_\x80-\xff]*)(::)([a-zA-Z_\x80-\xff][a-zA-Z0-9_\x80-\xff]*)$/', $value) &&
-            class_exists(explode('::', $value)[0]);
+        if (str_contains($value, '::')) {
+            [$class, $method] = explode('::', $value, 2);
+            return class_exists($class) && method_exists($class, $method);
+        }
+
+        return false;
     }
 
     /**
      * 调用类方法
      */
-    protected function callClassMethod(array $callable,mixed $params = null)
+    protected function callClassMethod(array $callable, mixed $params = null): mixed
     {
         [$class, $method] = $callable;
 
         try {
             $instance = App::make($class);
-            return $instance->$method($params);
+
+            if ($params !== null) {
+                return $instance->$method($params);
+            }
+
+            return $instance->$method();
+
         } catch (Exception $e) {
-            // 记录错误并返回默认值
-            \Illuminate\Support\Facades\Log::error("配置方法调用失败: {$class}::{$method} - " . $e->getMessage());
+            Log::error("配置方法调用失败: {$class}::{$method} - " . $e->getMessage(), [
+                'class' => $class,
+                'method' => $method,
+                'params' => $params,
+                'exception' => $e
+            ]);
             return null;
         }
     }
@@ -163,26 +209,82 @@ class ConfigManager
     /**
      * 从字符串调用类方法
      */
-    protected function callClassMethodFromString(string $callable)
+    protected function callClassMethodFromString(string $callable, mixed $params = null): mixed
     {
         [$class, $method] = explode('::', $callable, 2);
 
         try {
             $instance = App::make($class);
+
+            if ($params !== null) {
+                return $instance->$method($params);
+            }
+
             return $instance->$method();
+
         } catch (Exception $e) {
-            \Illuminate\Support\Facades\Log::error("配置方法调用失败: {$callable} - " . $e->getMessage());
+            Log::error("配置方法调用失败: {$callable} - " . $e->getMessage(), [
+                'callable' => $callable,
+                'params' => $params,
+                'exception' => $e
+            ]);
             return null;
+        }
+    }
+
+    /**
+     * 获取缓存键
+     */
+    protected function getCacheKey(string $key, mixed $params = null): string
+    {
+        $paramsHash = $params ? md5(serialize($params)) : 'null';
+        return self::CACHE_PREFIX . md5("{$key}:{$paramsHash}");
+    }
+
+    /**
+     * 判断是否应该缓存
+     */
+    protected function shouldCache(string $key): bool
+    {
+        // 某些配置不应该缓存
+        $noCacheKeys = [
+            'enable_debug_logging',
+            'log_level',
+            'block_on_exception',
+        ];
+
+        return !in_array($key, $noCacheKeys);
+    }
+
+    /**
+     * 缓存值
+     */
+    protected function cacheValue(string $key, string $cacheKey, mixed $value): void
+    {
+        // 内存缓存
+        Arr::set($this->configCache, $cacheKey, $value);
+
+        // 持久化缓存
+        if ($this->shouldCache($key)) {
+            $cacheTtl = config('security.cache_ttl', self::CACHE_TTL);
+            Cache::put($cacheKey, $value, $cacheTtl);
         }
     }
 
     /**
      * 设置配置值
      */
-    public function set(string $key, $value): void
+    public function set(string $key, mixed $value): void
     {
-        Arr::set($this->configCache, $key, $value);
+        // 清除缓存
+        $this->clearKeyCache($key);
+
+        // 设置配置
         config(["security.{$key}" => $value]);
+
+        // 清除内存缓存
+        $cacheKey = $this->getCacheKey($key);
+        Arr::forget($this->configCache, $cacheKey);
     }
 
     /**
@@ -198,14 +300,25 @@ class ConfigManager
      */
     public function all(): array
     {
-        $config = config('security', []);
-        $processed = [];
+        $cacheKey = self::CACHE_PREFIX . 'all';
 
-        foreach ($config as $key => $value) {
-            $processed[$key] = $this->get($key);
+        if (isset($this->configCache[$cacheKey])) {
+            return $this->configCache[$cacheKey];
         }
 
-        return $processed;
+        $allConfig = Cache::remember($cacheKey, self::CACHE_TTL, function () {
+            $config = config('security', []);
+            $processed = [];
+
+            foreach ($config as $key => $value) {
+                $processed[$key] = $this->get($key);
+            }
+
+            return $processed;
+        });
+
+        $this->configCache[$cacheKey] = $allConfig;
+        return $allConfig;
     }
 
     /**
@@ -214,6 +327,42 @@ class ConfigManager
     public function clearCache(): void
     {
         $this->configCache = [];
+
+        // 清除持久化缓存
+        Cache::forget(self::CACHE_PREFIX . 'all');
+
+        // 清除所有配置相关的缓存
+        $pattern = self::CACHE_PREFIX . '*';
+        $this->clearPatternCache($pattern);
+    }
+
+    /**
+     * 清除指定键的缓存
+     */
+    public function clearKeyCache(string $key): void
+    {
+        // 清除所有可能的参数组合的缓存
+        $pattern = self::CACHE_PREFIX . md5($key . ':*');
+        $this->clearPatternCache($pattern);
+
+        // 清除无参数的缓存
+        $cacheKey = $this->getCacheKey($key);
+        Cache::forget($cacheKey);
+
+        // 清除内存缓存
+        Arr::forget($this->configCache, $cacheKey);
+    }
+
+    /**
+     * 清除模式匹配的缓存
+     */
+    protected function clearPatternCache(string $pattern): void
+    {
+        // 这是一个占位实现
+        // 实际实现取决于使用的缓存驱动
+
+        // 对于Redis，可以使用SCAN命令
+        // 对于文件缓存，可以遍历文件
     }
 
     /**
@@ -265,6 +414,139 @@ class ConfigManager
             return 'callable';
         }
 
+        if (is_null($value)) {
+            return 'null';
+        }
+
         return gettype($value);
+    }
+
+    /**
+     * 验证配置有效性
+     */
+    public function validate(string $key): bool
+    {
+        $value = $this->get($key);
+
+        if (is_null($value)) {
+            return false;
+        }
+
+        // 根据键名进行特定验证
+        return match(true) {
+            str_contains($key, 'threshold') => $this->validateThreshold($value),
+            str_contains($key, 'duration') => $this->validateDuration($value),
+            str_contains($key, 'limit') => $this->validateLimit($value),
+            str_contains($key, 'enabled') => is_bool($value),
+            default => true,
+        };
+    }
+
+    /**
+     * 验证阈值
+     */
+    protected function validateThreshold(mixed $value): bool
+    {
+        if (!is_numeric($value)) {
+            return false;
+        }
+
+        $floatValue = (float) $value;
+        return $floatValue >= 0 && $floatValue <= 100;
+    }
+
+    /**
+     * 验证时长
+     */
+    protected function validateDuration(mixed $value): bool
+    {
+        if (!is_numeric($value)) {
+            return false;
+        }
+
+        $intValue = (int) $value;
+        return $intValue >= 0;
+    }
+
+    /**
+     * 验证限制
+     */
+    protected function validateLimit(mixed $value): bool
+    {
+        if (!is_numeric($value)) {
+            return false;
+        }
+
+        $intValue = (int) $value;
+        return $intValue >= 0;
+    }
+
+    /**
+     * 获取配置描述
+     */
+    public function getDescription(string $key): string
+    {
+        $descriptions = [
+            'enabled' => '是否启用安全中间件',
+            'enabled_type' => '启用方式：global(全局)或route(路由)',
+            'ignore_local' => '是否忽略本地请求',
+            'log_level' => '日志记录级别',
+            'enable_debug_logging' => '是否启用调试日志',
+            'enable_rate_limiting' => '是否启用速率限制',
+            'rate_limits' => '速率限制配置',
+            'rate_limit_strategy' => '速率限制指纹策略',
+            'ip_auto_detection.enabled' => '是否启用IP自动检测',
+            'ip_auto_detection.blacklist_threshold' => '黑名单转换阈值',
+            'ip_auto_detection.suspicious_threshold' => '可疑IP转换阈值',
+            'allowed_methods' => '允许的HTTP方法',
+            'body_patterns' => '请求体检测模式',
+            'body_whitelist_paths' => '请求体检测白名单路径',
+            'url_patterns' => 'URL检测模式',
+            'whitelist_user_agents' => '白名单User-Agent模式',
+            'disallowed_extensions' => '禁止上传的文件扩展名',
+            'disallowed_mime_types' => '禁止上传的MIME类型',
+            'max_file_size' => '最大文件大小',
+            'enable_file_content_check' => '是否启用文件内容检查',
+            'enable_advanced_detection' => '是否启用高级检测',
+            'enable_anomaly_detection' => '是否启用异常检测',
+            'anomaly_thresholds' => '异常检测阈值',
+            'cache_ttl' => '缓存生存时间',
+            'ban_duration' => '默认封禁时长',
+            'max_ban_duration' => '最大封禁时长',
+            'block_on_exception' => '异常时是否阻止请求',
+            'ajax_response_format' => 'AJAX响应格式',
+            'error_view' => '错误页面视图',
+            'custom_handler' => '自定义安全处理逻辑',
+            'alarm_handler' => '安全警报处理逻辑',
+        ];
+
+        return $descriptions[$key] ?? '未配置描述';
+    }
+
+    /**
+     * 获取配置默认值
+     */
+    public function getDefault(?string $key = null): mixed
+    {
+        $defaults = security_config();
+        return $defaults[$key] ?? null;
+    }
+
+    /**
+     * 检查配置是否需要重启
+     */
+    public function requiresRestart(string $key): bool
+    {
+        $restartKeys = [
+            'enabled',
+            'enabled_type',
+            'ignore_local',
+            'enable_rate_limiting',
+            'rate_limits',
+            'rate_limit_strategy',
+            'allowed_methods',
+        ];
+
+        return in_array($key, $restartKeys);
     }
 }

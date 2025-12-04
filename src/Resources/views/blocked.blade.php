@@ -15,28 +15,21 @@
     <div class="header">
         <div class="shield-container">
             <svg class="shield" viewBox="0 0 100 100">
-                <!-- 盾牌外层光晕 -->
                 <defs>
+                    <linearGradient id="shieldGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                        <stop offset="0%" stop-color="#ff4757"></stop>
+                        <stop offset="100%" stop-color="#ff3838"></stop>
+                    </linearGradient>
                     <radialGradient id="shieldGlow" cx="50%" cy="50%" r="50%">
-                        <stop offset="0%" stop-color="#ff6b6b" stop-opacity="0.8" />
-                        <stop offset="100%" stop-color="#e74c3c" stop-opacity="0" />
+                        <stop offset="0%" stop-color="#ff6b6b" stop-opacity="0.8"></stop>
+                        <stop offset="100%" stop-color="#ff4757" stop-opacity="0"></stop>
                     </radialGradient>
                 </defs>
-                <circle cx="50" cy="50" r="48" fill="url(#shieldGlow)" opacity="0.7" />
 
-                <!-- 盾牌主体 -->
-                <path d="M50,10 L10,25 L10,50 C10,70 30,85 50,90 C70,85 90,70 90,50 L90,25 L50,10 Z"
-                      fill="#e74c3c" stroke="#fff" stroke-width="2"/>
-                <!-- 盾牌内部装饰 -->
-                <path d="M50,20 L25,30 L25,50 C25,65 40,75 50,78 C60,75 75,65 75,50 L75,30 L50,20 Z"
-                      fill="#c0392b" stroke="#fff" stroke-width="1"/>
-                <!-- 盾牌中央图标 -->
-                <path d="M50,40 L45,45 L50,50 L55,45 L50,40 Z M50,55 L40,50 L50,60 L60,50 L50,55 Z"
-                      fill="#fff"/>
-                <!-- 盾牌顶部装饰 -->
-                <ellipse cx="50" cy="15" rx="5" ry="3" fill="#fff"/>
-                <!-- 盾牌高光 -->
-                <path d="M20,30 L35,25 L40,40" fill="none" stroke="#fff" stroke-width="1" opacity="0.5"/>
+                <circle cx="50" cy="50" r="48" fill="url(#shieldGlow)" opacity="0.6"></circle>
+                <path d="M50,10 L10,25 L10,50 C10,70 30,85 50,90 C70,85 90,70 90,50 L90,25 L50,10 Z" fill="url(#shieldGradient)" stroke="#fff" stroke-width="2"></path>
+                <path d="M50,20 L25,30 L25,50 C25,65 40,75 50,78 C60,75 75,65 75,50 L75,30 L50,20 Z" fill="rgba(255,255,255,0.1)" stroke="#fff" stroke-width="1"></path>
+                <path d="M50,40 L45,45 L50,50 L55,45 L50,40 Z M50,55 L40,50 L50,60 L60,50 L50,55 Z" fill="#fff"></path>
             </svg>
         </div>
         <h1 class="title">{{ $title ?? '安全拦截' }}</h1>
