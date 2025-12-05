@@ -833,7 +833,7 @@ class SecurityMiddleware
         );
 
         !empty($viewData['context']) && ($viewData['context'] = array_to_pretty_json($viewData['context']));
-        !empty($viewData['errors']) && ($viewData['errors'] = array_to_pretty_json($viewData['context']));
+        !empty($viewData['errors']) && ($viewData['errors'] = array_to_pretty_json($viewData['errors']));
 
         return response()->view($view, $viewData, $statusCode)
             ->header('X-Security-Blocked', 'true')
