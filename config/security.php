@@ -35,6 +35,10 @@ return [
      * 支持：string
      * 可选值：global:全局使用, route:路由使用(在路由、控制器等地方手动使用security中间件)
      * 默认值：global
+     *  示例：如果配置全局启用(enabled_type)，则所有路由都将默认使用安全中间件，不需要单独引入
+     *       路由分配中间件: Route::middleware(['security'])
+     *       控制器中间件: Route::get('profile', [UserController::class, 'show'])->middleware('security');
+     *       路由排除中间件: Route::withoutMiddleware(['security'])
      */
     'enabled_type' => env('SECURITY_MIDDLEWARE_TYPE', 'global'),
 

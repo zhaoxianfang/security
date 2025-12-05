@@ -17,7 +17,8 @@
 ```bash
 composer require zxf/security
 ```
- ## 🚀 使用方法
+
+## 🚀 使用方法
 
 ### 发布
 ```bash
@@ -40,6 +41,22 @@ php artisan vendor:publish --tag=security-config
 php artisan vendor:publish --tag=security-migrations
 ```
 
+## 人性化
+> 发布了配置文件后，什么都不需要操作就自动进行了全局拦截，就是这么方便。
+> 如果不需要全局拦截，把`enabled_type`配置为`route`,进行自定义拦截。
+
+```php
+// 一、默认全局处理: enabled_type 的值为  global
+// 如果配置全局启用(enabled_type)，则所有路由都将默认使用安全中间件，你什么都不需要做。
+
+// 二、自定义处理: enabled_type 的值为  route
+// 1、路由分配中间件:
+Route::middleware(['security'])
+// 2、控制器中间件:
+Route::get('profile', [UserController::class, 'show'])->middleware('security');
+// 3、路由排除中间件:
+Route::withoutMiddleware(['security'])
+```
 
 ## 安全中间件包含的功能清单
 
