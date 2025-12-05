@@ -6,11 +6,8 @@ use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
-use zxf\Security\Middleware\SecurityMiddleware;
 use zxf\Security\Models\SecurityIp;
-use zxf\Security\Models\SecurityIpStat;
 use zxf\Security\Services\ConfigManager;
-use zxf\Security\Services\IpManagerService;
 use zxf\Security\Services\ThreatDetectionService;
 
 if (! function_exists('security_config')) {
@@ -575,12 +572,11 @@ if (! function_exists('security_response')) {
      *
      * 创建标准化的安全拦截响应，支持JSON和HTML格式。
      *
-     * @param string $title 拦截标题
      * @param string $type 拦截类型
      * @param string $message 拦截提示消息
      * @param array $context 额外上下文信息
-     * @param array $errors 异常信息
      * @param int $statusCode HTTP状态码
+     * @param array $errors 异常信息
      * @param Request|null $request 请求对象
      * @return Response|JsonResponse 响应对象
      *
@@ -598,17 +594,19 @@ if (! function_exists('security_response')) {
      *     return security_response('CustomRule', '自定义规则拦截', $details);
      * }
      */
-    function security_response(string $title, string $type, string $message, array $context = [], array $errors = [], $statusCode = 403, ?Request $request = null)
+    function security_response(string $type, string $message, array $context = [], int $statusCode = 403, array $errors = [], ?Request $request = null)
     {
         if (is_null($request) && function_exists('request')) {
             $request = request();
         }
 
+        $title = \zxf\Security\Constants\SecurityEvent::getEventName($type, $message);
+
         $responseData = [
             'title' => $title,
-            'message' =>$message,
             'type' => $type,
-            'reason' => $message,
+            'message' => $message,
+            'reason' => $title,
             'request_id' => Str::uuid()->toString(),
             'timestamp' => now()->toISOString(),
             'details' => $blockResult['details'] ?? [],
@@ -617,25 +615,18 @@ if (! function_exists('security_response')) {
         ];
 
         // 判断是否返回JSON
-        $isJson = !$request || $request->expectsJson() || $request->is('api/*') || $request->ajax();
-
-        if ($isJson) {
+        if (!$request || $request->expectsJson() || $request->is('api/*') || $request->ajax()) {
             $format = security_config('ajax_response_format', [
                 'code' => 'code',
                 'message' => 'message',
                 'data' => 'data',
             ]);
 
-            $jsonResponse = [
+            return response()->json([
                 $format['code'] => $statusCode,
-                $format['message'] => $responseData['message'],
-                $format['data'] => array_merge(
-                    $responseData,
-                    security_config('error_view_data', [])
-                ),
-            ];
-
-            return response()->json($jsonResponse, $statusCode, [
+                $format['message'] => $message,
+                $format['data'] => array_merge( $responseData, security_config('error_view_data', []) ),
+            ], $statusCode, [
                 'X-Security-Blocked' => 'true',
                 'X-Security-Type' => $type,
                 'X-Request-ID' => $responseData['request_id'],
@@ -644,10 +635,10 @@ if (! function_exists('security_response')) {
 
         // 返回HTML响应
         $view = security_config('error_view', 'security::blocked');
-        $viewData = array_merge(
-            $responseData,
-            security_config('error_view_data', [])
-        );
+        $viewData = array_merge( $responseData, security_config('error_view_data', []) );
+
+        !empty($viewData['context']) && ($viewData['context'] = array_to_pretty_json($viewData['context']));
+        !empty($viewData['errors']) && ($viewData['errors'] = array_to_pretty_json($viewData['context']));
 
         return response()->view($view, $viewData, $statusCode)
             ->header('X-Security-Blocked', 'true')
@@ -655,3 +646,51 @@ if (! function_exists('security_response')) {
             ->header('X-Request-ID', $responseData['request_id']);
     }
 }
+
+if (! function_exists('array_to_pretty_json')) {
+    /**
+     * 显示数组/对象为 格式化的json 字符串
+     */
+    function array_to_pretty_json(array|object|string $array=[]): string
+    {
+        // 如果是对象，先转换为数组
+        if (!is_array($array)) {
+            $array = (array) $array;
+        }
+        // 进行格式化 | 不转义 Unicode 字符 | 不转义斜杠
+        return json_encode($array, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    }
+}
+
+if (! function_exists('get_all_cache_keys')) {
+    /**
+     * 获取 Laravel 的所有缓存键
+     *
+     * @param string $prefix 键名前缀
+     * @param int|null $maxSize 最大返回数量限制
+     * @param bool $removePrefix 是否移除缓存键中的前缀
+     * @return array 缓存键名数组
+     *
+     * @example
+     *       get_all_cache_keys(); // 获取所有缓存键
+     *       get_all_cache_keys('security:'); // 获取指定前缀的缓存键
+     *       get_all_cache_keys('', 100); // 限制返回数量
+     */
+    function get_all_cache_keys(string $prefix = '', int $maxSize = null, bool $removePrefix = true): array
+    {
+        $cacheKeys = new \zxf\Security\Utils\GetCacheKeys();
+        return $cacheKeys->getAll($prefix, $maxSize, $removePrefix);
+    }
+}
+
+if (! function_exists('clean_security_cache')) {
+    /**
+     * 删除 zxf/security 包的所有缓存
+     */
+    function clean_security_cache(): bool
+    {
+        $cacheKeys = new \zxf\Security\Utils\GetCacheKeys();
+        return $cacheKeys->clearByPrefix('security:');
+    }
+}
+

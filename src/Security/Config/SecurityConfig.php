@@ -3,6 +3,7 @@
 namespace zxf\Security\Config;
 
 use Exception;
+use zxf\Security\Constants\SecurityEvent;
 use zxf\Security\Contracts\SecurityConfigInterface;
 
 /**
@@ -614,6 +615,36 @@ class SecurityConfig implements SecurityConfigInterface
     }
 
     /**
+     * 获取触发事件类型 封禁时长（单位：秒）
+     * @return array 触发事件类型 封禁时长（单位：秒）
+     */
+    public static function getEventTypeBanDuration(): array
+    {
+        return [
+            SecurityEvent::WHITELIST => 0, // 白名单：0 表示不封禁
+            SecurityEvent::BLACKLIST => 30 * 24 * 3600, // 黑名单：30 天
+            SecurityEvent::METHOD_CHECK => 1800, // 请求方法检查：30 分钟
+            SecurityEvent::SUSPICIOUS_METHOD => 1800, // 可疑请求方法：30 分钟
+            SecurityEvent::EMPTY_USER_AGENT => 1800, // User-Agent为空：30 分钟
+            SecurityEvent::USER_AGENT_TOO_LONG => 1800, // User-Agent过长：30 分钟
+            SecurityEvent::SUSPICIOUS_USER_AGENT => 1800, // 可疑的User-Agent：30 分钟
+            SecurityEvent::TOO_MANY_HEADERS => 3600, // 请求头过多：1 小时
+            SecurityEvent::SUSPICIOUS_HEADERS => 3600, // 可疑的请求头：1 小时
+            SecurityEvent::URL_TOO_LONG => 600, // URL过长：10 分钟
+            SecurityEvent::ILLEGAL_URL => 3600, // 非法URL：1 小时
+            SecurityEvent::DANGEROUS_UPLOAD => 600, // 危险文件上传：10 分钟
+            SecurityEvent::MALICIOUS_REQUEST => 12 * 3600, // 恶意请求：12 小时
+            SecurityEvent::ANOMALOUS_PARAMETERS => 600, // 异常参数：10 分钟
+            SecurityEvent::RATE_LIMIT => 600, // 请求频率过高：10 分钟
+            SecurityEvent::SQL_INJECTION => 48 * 3600, // SQL注入拦截：48 小时
+            SecurityEvent::XSS_ATTACK => 48 * 3600, // XSS攻击拦截：48 小时
+            SecurityEvent::COMMAND_INJECTION => 48 * 3600, // 命令注入拦截：48 小时
+            SecurityEvent::CUSTOM_RULE => 1800, // 自定义规则拦截：30 分钟
+            SecurityEvent::ERROR => 0, // 系统异常：0 表示不封禁
+        ];
+    }
+
+    /**
      * 验证配置完整性
      *
      * @return bool 配置是否完整有效
@@ -639,23 +670,6 @@ class SecurityConfig implements SecurityConfigInterface
         } catch (Exception $e) {
             return false;
         }
-    }
-
-    /**
-     * 获取所有配置方法（用于验证完整性）
-     *
-     * @return array 所有公共静态方法
-     */
-    public static function getAllMethods(): array
-    {
-        return [
-            'getMaliciousBodyPatterns',
-            'getIllegalUrlPatterns',
-            'getSuspiciousUserAgents',
-            'getWhitelistUserAgents',
-            'getDisallowedExtensions',
-            'getDisallowedMimeTypes',
-        ];
     }
 
     /**

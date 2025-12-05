@@ -16,6 +16,7 @@ use zxf\Security\Services\RateLimiterService;
 use zxf\Security\Services\IpManagerService;
 use zxf\Security\Services\ThreatDetectionService;
 use zxf\Security\Exceptions\SecurityException;
+use zxf\Security\Constants\SecurityEvent;
 
 /**
  * 安全拦截中间件
@@ -203,7 +204,7 @@ class SecurityMiddleware
         if ($this->ipManager->isWhitelisted($request)) {
             $this->logDebug('IP白名单，跳过安全检查');
             // 记录访问但不拦截
-            $this->ipManager->recordAccess($request, false, 'whitelist');
+            $this->ipManager->recordAccess($request, false, SecurityEvent::WHITELIST);
             return ['blocked' => false, 'release' => true];
         }
 
@@ -216,11 +217,11 @@ class SecurityMiddleware
     protected function checkIpBlacklist(Request $request): array
     {
         if ($this->ipManager->isBlacklisted($request)) {
-            $ipRecord = $this->ipManager->recordAccess($request, true, 'blacklist');
-            $this->logSecurityEvent($request, 'Blacklist', 'IP黑名单拦截', $ipRecord);
+            $ipRecord = $this->ipManager->recordAccess($request, true, SecurityEvent::BLACKLIST);
+            $this->logSecurityEvent($request, SecurityEvent::BLACKLIST, $ipRecord);
             return [
                 'blocked' => true,
-                'type' => 'Blacklist',
+                'type' => SecurityEvent::BLACKLIST,
                 'reason' => '您的IP地址已被列入黑名单',
                 'message' => '访问被拒绝：IP地址在黑名单中',
             ];
@@ -240,11 +241,11 @@ class SecurityMiddleware
 
         // 检查是否允许的方法
         if (!in_array($method, $allowedMethods)) {
-            $ipRecord = $this->ipManager->recordAccess($request, true, 'method_check');
-            $this->logSecurityEvent($request, 'MethodCheck', '不允许的HTTP方法', $ipRecord);
+            $ipRecord = $this->ipManager->recordAccess($request, true, SecurityEvent::METHOD_CHECK);
+            $this->logSecurityEvent($request, SecurityEvent::METHOD_CHECK, $ipRecord);
             return [
                 'blocked' => true,
-                'type' => 'MethodCheck',
+                'type' => SecurityEvent::METHOD_CHECK,
                 'reason' => "不允许的HTTP方法: {$method}",
                 'message' => '请求方法不被允许',
             ];
@@ -252,11 +253,11 @@ class SecurityMiddleware
 
         // 检查可疑方法
         if (in_array($method, $suspiciousMethods)) {
-            $ipRecord = $this->ipManager->recordAccess($request, true, 'suspicious_method');
-            $this->logSecurityEvent($request, 'SuspiciousMethod', '可疑的HTTP方法', $ipRecord);
+            $ipRecord = $this->ipManager->recordAccess($request, true, SecurityEvent::SUSPICIOUS_METHOD);
+            $this->logSecurityEvent($request, SecurityEvent::SUSPICIOUS_METHOD, $ipRecord);
             return [
                 'blocked' => true,
-                'type' => 'SuspiciousMethod',
+                'type' => SecurityEvent::SUSPICIOUS_METHOD,
                 'reason' => "可疑的HTTP方法: {$method}",
                 'message' => '请求方法可疑',
             ];
@@ -274,11 +275,11 @@ class SecurityMiddleware
 
         // 检查是否允许空User-Agent
         if (empty($userAgent) && !$this->threatDetector->getConfig('allow_empty_user_agent', false)) {
-            $ipRecord = $this->ipManager->recordAccess($request, true, 'empty_user_agent');
-            $this->logSecurityEvent($request, 'EmptyUserAgent', '空User-Agent', $ipRecord);
+            $ipRecord = $this->ipManager->recordAccess($request, true, SecurityEvent::EMPTY_USER_AGENT);
+            $this->logSecurityEvent($request, SecurityEvent::EMPTY_USER_AGENT, $ipRecord);
             return [
                 'blocked' => true,
-                'type' => 'EmptyUserAgent',
+                'type' => SecurityEvent::EMPTY_USER_AGENT,
                 'reason' => 'User-Agent为空',
                 'message' => 'User-Agent不能为空',
             ];
@@ -287,11 +288,11 @@ class SecurityMiddleware
         // 检查User-Agent长度
         $maxLength = $this->threatDetector->getConfig('max_user_agent_length', 512);
         if (strlen($userAgent) > $maxLength) {
-            $ipRecord = $this->ipManager->recordAccess($request, true, 'user_agent_too_long');
-            $this->logSecurityEvent($request, 'UserAgentTooLong', 'User-Agent过长', $ipRecord);
+            $ipRecord = $this->ipManager->recordAccess($request, true, SecurityEvent::USER_AGENT_TOO_LONG);
+            $this->logSecurityEvent($request, SecurityEvent::USER_AGENT_TOO_LONG, $ipRecord);
             return [
                 'blocked' => true,
-                'type' => 'UserAgentTooLong',
+                'type' => SecurityEvent::USER_AGENT_TOO_LONG,
                 'reason' => "User-Agent长度超过{$maxLength}字符",
                 'message' => 'User-Agent过长',
             ];
@@ -299,11 +300,11 @@ class SecurityMiddleware
 
         // 检查可疑User-Agent
         if ($this->threatDetector->hasSuspiciousUserAgent($request)) {
-            $ipRecord = $this->ipManager->recordAccess($request, true, 'suspicious_user_agent');
-            $this->logSecurityEvent($request, 'SuspiciousUserAgent', '可疑的User-Agent', $ipRecord);
+            $ipRecord = $this->ipManager->recordAccess($request, true, SecurityEvent::SUSPICIOUS_USER_AGENT);
+            $this->logSecurityEvent($request, SecurityEvent::SUSPICIOUS_USER_AGENT, $ipRecord);
             return [
                 'blocked' => true,
-                'type' => 'SuspiciousUserAgent',
+                'type' => SecurityEvent::SUSPICIOUS_USER_AGENT,
                 'reason' => '可疑的User-Agent模式',
                 'message' => 'User-Agent可疑',
             ];
@@ -320,11 +321,11 @@ class SecurityMiddleware
         // 检查请求头数量
         $maxHeaderCount = $this->threatDetector->getConfig('max_header_count', 50);
         if (count($request->headers->all()) > $maxHeaderCount) {
-            $ipRecord = $this->ipManager->recordAccess($request, true, 'too_many_headers');
-            $this->logSecurityEvent($request, 'TooManyHeaders', '请求头过多', $ipRecord);
+            $ipRecord = $this->ipManager->recordAccess($request, true, SecurityEvent::TOO_MANY_HEADERS);
+            $this->logSecurityEvent($request, SecurityEvent::TOO_MANY_HEADERS, $ipRecord);
             return [
                 'blocked' => true,
-                'type' => 'TooManyHeaders',
+                'type' => SecurityEvent::TOO_MANY_HEADERS,
                 'reason' => "请求头数量超过{$maxHeaderCount}个",
                 'message' => '请求头过多',
             ];
@@ -332,11 +333,11 @@ class SecurityMiddleware
 
         // 检查可疑请求头
         if ($this->threatDetector->hasSuspiciousHeaders($request)) {
-            $ipRecord = $this->ipManager->recordAccess($request, true, 'suspicious_headers');
-            $this->logSecurityEvent($request, 'SuspiciousHeaders', '可疑的请求头', $ipRecord);
+            $ipRecord = $this->ipManager->recordAccess($request, true, SecurityEvent::SUSPICIOUS_HEADERS);
+            $this->logSecurityEvent($request, SecurityEvent::SUSPICIOUS_HEADERS, $ipRecord);
             return [
                 'blocked' => true,
-                'type' => 'SuspiciousHeaders',
+                'type' => SecurityEvent::SUSPICIOUS_HEADERS,
                 'reason' => '包含可疑的请求头',
                 'message' => '请求头可疑',
             ];
@@ -353,11 +354,11 @@ class SecurityMiddleware
         // 检查URL长度
         $maxUrlLength = $this->threatDetector->getConfig('max_url_length', 2048);
         if (strlen($request->fullUrl()) > $maxUrlLength) {
-            $ipRecord = $this->ipManager->recordAccess($request, true, 'url_too_long');
-            $this->logSecurityEvent($request, 'UrlTooLong', 'URL过长', $ipRecord);
+            $ipRecord = $this->ipManager->recordAccess($request, true, SecurityEvent::URL_TOO_LONG);
+            $this->logSecurityEvent($request, SecurityEvent::URL_TOO_LONG, $ipRecord);
             return [
                 'blocked' => true,
-                'type' => 'UrlTooLong',
+                'type' => SecurityEvent::URL_TOO_LONG,
                 'reason' => "URL长度超过{$maxUrlLength}字符",
                 'message' => 'URL过长',
             ];
@@ -365,11 +366,11 @@ class SecurityMiddleware
 
         // 检查URL路径安全性
         if (!$this->threatDetector->isSafeUrl($request)) {
-            $ipRecord = $this->ipManager->recordAccess($request, true, 'illegal_url');
-            $this->logSecurityEvent($request, 'IllegalUrl', '非法的URL路径', $ipRecord);
+            $ipRecord = $this->ipManager->recordAccess($request, true, SecurityEvent::ILLEGAL_URL);
+            $this->logSecurityEvent($request, SecurityEvent::ILLEGAL_URL, $ipRecord);
             return [
                 'blocked' => true,
-                'type' => 'IllegalUrl',
+                'type' => SecurityEvent::ILLEGAL_URL,
                 'reason' => '访问了非法的URL路径',
                 'message' => 'URL路径非法',
             ];
@@ -397,11 +398,11 @@ class SecurityMiddleware
         }
 
         if ($this->threatDetector->hasDangerousUploads($request)) {
-            $ipRecord = $this->ipManager->recordAccess($request, true, 'dangerous_upload');
-            $this->logSecurityEvent($request, 'DangerousUpload', '危险的文件上传', $ipRecord);
+            $ipRecord = $this->ipManager->recordAccess($request, true, SecurityEvent::DANGEROUS_UPLOAD);
+            $this->logSecurityEvent($request, SecurityEvent::DANGEROUS_UPLOAD, $ipRecord);
             return [
                 'blocked' => true,
-                'type' => 'DangerousUpload',
+                'type' => SecurityEvent::DANGEROUS_UPLOAD,
                 'reason' => '检测到危险的文件上传',
                 'message' => '文件上传被拒绝',
             ];
@@ -422,11 +423,11 @@ class SecurityMiddleware
 
         // 检查请求体内容
         if ($this->threatDetector->isMaliciousRequest($request)) {
-            $ipRecord = $this->ipManager->recordAccess($request, true, 'malicious_request');
-            $this->logSecurityEvent($request, 'MaliciousRequest', '恶意的请求内容', $ipRecord);
+            $ipRecord = $this->ipManager->recordAccess($request, true, SecurityEvent::MALICIOUS_REQUEST);
+            $this->logSecurityEvent($request, SecurityEvent::MALICIOUS_REQUEST, $ipRecord);
             return [
                 'blocked' => true,
-                'type' => 'MaliciousRequest',
+                'type' => SecurityEvent::MALICIOUS_REQUEST,
                 'reason' => '检测到恶意的请求内容',
                 'message' => '请求内容包含恶意代码',
             ];
@@ -445,11 +446,11 @@ class SecurityMiddleware
         }
 
         if ($this->threatDetector->hasAnomalousParameters($request)) {
-            $ipRecord = $this->ipManager->recordAccess($request, true, 'anomalous_parameters');
-            $this->logSecurityEvent($request, 'AnomalousParameters', '异常的请求参数', $ipRecord);
+            $ipRecord = $this->ipManager->recordAccess($request, true, SecurityEvent::ANOMALOUS_PARAMETERS);
+            $this->logSecurityEvent($request, SecurityEvent::ANOMALOUS_PARAMETERS, $ipRecord);
             return [
                 'blocked' => true,
-                'type' => 'AnomalousParameters',
+                'type' => SecurityEvent::ANOMALOUS_PARAMETERS,
                 'reason' => '检测到异常的请求参数',
                 'message' => '请求参数异常',
             ];
@@ -469,17 +470,78 @@ class SecurityMiddleware
 
         $rateLimitCheck = $this->rateLimiter->check($request);
         if ($rateLimitCheck['blocked']) {
-            $ipRecord = $this->ipManager->recordAccess($request, true, 'rate_limit');
-            $this->logSecurityEvent($request, 'RateLimit', '速率限制拦截', $ipRecord);
+            $ipRecord = $this->ipManager->recordAccess($request, true, SecurityEvent::RATE_LIMIT);
+            $this->logSecurityEvent($request, SecurityEvent::RATE_LIMIT, $ipRecord);
             return [
                 'blocked' => true,
-                'type' => 'RateLimit',
+                'type' => SecurityEvent::RATE_LIMIT,
                 'reason' => '访问频率过高',
                 'message' => '访问频率过高，请稍后再试',
                 'details' => $rateLimitCheck['details'] ?? [],
             ];
         }
 
+        return ['blocked' => false];
+    }
+
+    /**
+     * SQL 注入安全检查
+     * @param Request $request
+     * @return false[]
+     */
+    protected function checkSQLInjection(Request $request)
+    {
+        if($this->threatDetector->hasSQLInjection($request)){
+            $ipRecord = $this->ipManager->recordAccess($request, true, SecurityEvent::SQL_INJECTION);
+            $this->logSecurityEvent($request, SecurityEvent::SQL_INJECTION, $ipRecord);
+            return [
+                'blocked' => true,
+                'type' => SecurityEvent::SQL_INJECTION,
+                'reason' => 'SQL注入拦截',
+                'message' => '请求信息可能存在SQL注入风险',
+            ];
+        }
+        return ['blocked' => false];
+    }
+
+
+    /**
+     * 检查XSS攻击
+     * @param Request $request
+     * @return false[]
+     */
+    protected function checkXSSAttack(Request $request)
+    {
+        if($this->threatDetector->hasXSSAttack($request)){
+            $ipRecord = $this->ipManager->recordAccess($request, true, SecurityEvent::XSS_ATTACK);
+            $this->logSecurityEvent($request, SecurityEvent::XSS_ATTACK, $ipRecord);
+            return [
+                'blocked' => true,
+                'type' => SecurityEvent::XSS_ATTACK,
+                'reason' => 'XSS攻击',
+                'message' => '请求信息可能存在XSS攻击',
+            ];
+        }
+        return ['blocked' => false];
+    }
+
+    /**
+     * 检查命令注入
+     * @param Request $request
+     * @return false[]
+     */
+    protected function checkCommandInjection(Request $request)
+    {
+        if($this->threatDetector->hasCommandInjection($request)){
+            $ipRecord = $this->ipManager->recordAccess($request, true, SecurityEvent::COMMAND_INJECTION);
+            $this->logSecurityEvent($request, SecurityEvent::COMMAND_INJECTION, $ipRecord);
+            return [
+                'blocked' => true,
+                'type' => SecurityEvent::COMMAND_INJECTION,
+                'reason' => '命令注入',
+                'message' => '请求信息可能存在命令注入',
+            ];
+        }
         return ['blocked' => false];
     }
 
@@ -499,11 +561,11 @@ class SecurityMiddleware
             $result = call_user_func($callable, $request);
 
             if (is_array($result) && isset($result['blocked']) && $result['blocked']) {
-                $ipRecord = $this->ipManager->recordAccess($request, true, 'custom_rule');
-                $this->logSecurityEvent($request, 'CustomRule', '自定义规则拦截', $ipRecord);
+                $ipRecord = $this->ipManager->recordAccess($request, true, SecurityEvent::CUSTOM_RULE);
+                $this->logSecurityEvent($request, SecurityEvent::CUSTOM_RULE, $ipRecord);
                 return [
                     'blocked' => true,
-                    'type' => 'CustomRule',
+                    'type' => SecurityEvent::CUSTOM_RULE,
                     'reason' => $result['reason'] ?? '自定义安全规则拦截',
                     'message' => $result['message'] ?? '自定义安全规则拦截',
                 ];
@@ -517,68 +579,6 @@ class SecurityMiddleware
 
         return ['blocked' => false];
     }
-
-    /**
-     * SQL 注入安全检查
-     * @param Request $request
-     * @return false[]
-     */
-    protected function checkSQLInjection(Request $request)
-    {
-        if($this->threatDetector->hasSQLInjection($request)){
-            $ipRecord = $this->ipManager->recordAccess($request, true, 'SqlInjection');
-            $this->logSecurityEvent($request, 'SqlInjection', 'SQL注入拦截', $ipRecord);
-            return [
-                'blocked' => true,
-                'type' => 'SqlInjection',
-                'reason' => 'SQL注入拦截',
-                'message' => '请求信息可能存在SQL注入风险',
-            ];
-        }
-        return ['blocked' => false];
-    }
-
-
-    /**
-     * 检查XSS攻击
-     * @param Request $request
-     * @return false[]
-     */
-    protected function checkXSSAttack(Request $request)
-    {
-        if($this->threatDetector->hasXSSAttack($request)){
-            $ipRecord = $this->ipManager->recordAccess($request, true, 'XSSAttack');
-            $this->logSecurityEvent($request, 'XSSAttack', 'XSS攻击', $ipRecord);
-            return [
-                'blocked' => true,
-                'type' => 'XSSAttack',
-                'reason' => 'XSS攻击',
-                'message' => '请求信息可能存在XSS攻击',
-            ];
-        }
-        return ['blocked' => false];
-    }
-
-    /**
-     * 检查命令注入
-     * @param Request $request
-     * @return false[]
-     */
-    protected function checkCommandInjection(Request $request)
-    {
-        if($this->threatDetector->hasCommandInjection($request)){
-            $ipRecord = $this->ipManager->recordAccess($request, true, 'CommandInjection');
-            $this->logSecurityEvent($request, 'CommandInjection', '命令注入', $ipRecord);
-            return [
-                'blocked' => true,
-                'type' => 'CommandInjection',
-                'reason' => '命令注入',
-                'message' => '请求信息可能存在命令注入',
-            ];
-        }
-        return ['blocked' => false];
-    }
-
 
     /**
      * 处理被拦截的请求
@@ -618,16 +618,16 @@ class SecurityMiddleware
      */
     protected function handleSecurityException(Request $request, SecurityException $e)
     {
-        $this->logSecurityEvent($request, 'SecurityError', $e->getMessage());
+        $this->logSecurityEvent($request, SecurityEvent::ERROR, $e->getMessage());
 
-        if ($this->threatDetector->getConfig('block_on_exception', false)) {
+        if ($this->threatDetector->getConfig('block_on_exception', true)) {
             $this->detectionStats['blocked_requests']++;
 
             return $this->createBlockResponse(
                 $request,
                 [
                     'blocked' => true,
-                    'type' => 'SecurityError',
+                    'type' => SecurityEvent::ERROR,
                     'reason' => '安全系统异常',
                     'message' => config('app.debug') ? $e->getMessage() : '系统进行安全拦截时异常',
                     'details' => $e->getContext(),
@@ -649,14 +649,14 @@ class SecurityMiddleware
             'request' => $this->getRequestInfo($request)
         ]);
 
-        if ($this->threatDetector->getConfig('block_on_exception', false)) {
+        if ($this->threatDetector->getConfig('block_on_exception', true)) {
             $this->detectionStats['blocked_requests']++;
 
             return $this->createBlockResponse(
                 $request,
                 [
                     'blocked' => true,
-                    'type' => 'SystemError',
+                    'type' => SecurityEvent::ERROR,
                     'reason' => '系统暂时不可用',
                     'message' => '系统暂时不可用',
                     'details' => ['exception' => config('app.debug') ? $e->getMessage() : '内部错误'],
@@ -734,7 +734,7 @@ class SecurityMiddleware
         $statusCode = $this->getStatusCode($blockResult['type']);
 
         // API请求返回JSON
-        if ($request->expectsJson() || $request->is('api/*') || $request->ajax() || $this->threatDetector->getConfig('enable_api_mode', true)) {
+        if (($request->expectsJson() || $request->is('api/*') || $request->ajax()) && $this->threatDetector->getConfig('enable_api_mode', true)) {
             return $this->createJsonResponse($responseData, $statusCode);
         }
 
@@ -832,6 +832,9 @@ class SecurityMiddleware
             $this->threatDetector->getConfig('error_view_data', [])
         );
 
+        !empty($viewData['context']) && ($viewData['context'] = array_to_pretty_json($viewData['context']));
+        !empty($viewData['errors']) && ($viewData['errors'] = array_to_pretty_json($viewData['context']));
+
         return response()->view($view, $viewData, $statusCode)
             ->header('X-Security-Blocked', 'true')
             ->header('X-Security-Type', $data['type'])
@@ -904,8 +907,9 @@ class SecurityMiddleware
     /**
      * 记录安全事件（主日志）
      */
-    protected function logSecurityEvent(Request $request, string $type, string $reason, mixed $ipRecord = []): void
+    protected function logSecurityEvent(Request $request, string $type, mixed $ipRecord = []): void
     {
+        $reason = SecurityEvent::getEventName($type);
         $logData = [
             'type' => $type,
             'security_id' => !empty($ipRecord) && $ipRecord['id'] ? $ipRecord['id'] : null,

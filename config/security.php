@@ -75,15 +75,6 @@ return [
      */
     'log_details' => env('SECURITY_LOG_DETAILS', false),
 
-    /**
-     * 是否启用学习模式
-     *
-     * 启用后记录所有检测但不拦截，用于训练模型
-     * 支持：boolean | callable
-     * 默认值：false
-     */
-    'learning_mode' => env('SECURITY_LEARNING_MODE', false),
-
     // ==================== 速率限制配置 ====================
 
     /**
@@ -198,36 +189,27 @@ return [
          *
          * 每小时自动降低威胁评分
          * 类型：float
-         * 默认值：0.5
+         * 默认值：0.3
          */
-        'decay_rate_per_hour' => env('SECURITY_DECAY_RATE_PER_HOUR', 0.5),
+        'decay_rate_per_hour' => env('SECURITY_DECAY_RATE_PER_HOUR', 0.3),
 
         /**
          * 自动清理过期记录
          *
-         * 是否自动清理过期的IP记录
+         * 是否自动清理过期的IP记录, 默认关闭, 清理时会删除数据库记录
          * 类型：boolean
          * 默认值：true
          */
-        'auto_cleanup' => env('SECURITY_AUTO_CLEANUP', true),
-
-        /**
-         * 清理间隔（小时）
-         *
-         * 自动清理任务的执行间隔
-         * 类型：integer
-         * 默认值：24
-         */
-        'cleanup_interval' => env('SECURITY_CLEANUP_INTERVAL', 24),
+        'auto_cleanup' => env('SECURITY_AUTO_CLEANUP', false),
 
         /**
          * 监控IP自动过期时间（天）
          *
-         * 监控类型的IP记录自动过期时间
+         * 监控类型的IP记录自动过期时间【auto_cleanup开启时有效】
          * 类型：integer
          * 默认值：7
          */
-        'monitoring_expire_days' => env('SECURITY_MONITORING_EXPIRE_DAYS', 7),
+        'monitoring_expire_days' => env('SECURITY_MONITORING_EXPIRE_DAYS', 15),
     ],
 
     // ==================== IP数据库配置 ====================
@@ -248,32 +230,6 @@ return [
          */
         'cache_ttl' => env('SECURITY_IP_CACHE_TTL', 300),
 
-        /**
-         * 批量操作大小
-         *
-         * 批量处理IP记录时的大小
-         * 类型：integer
-         * 默认值：1000
-         */
-        'batch_size' => env('SECURITY_IP_BATCH_SIZE', 1000),
-
-        /**
-         * 统计更新间隔（分钟）
-         *
-         * 更新统计信息的时间间隔
-         * 类型：integer
-         * 默认值：60
-         */
-        'stats_update_interval' => env('SECURITY_STATS_UPDATE_INTERVAL', 60),
-
-        /**
-         * 最大IP记录数
-         *
-         * 数据库最大保留的IP记录数
-         * 类型：integer
-         * 默认值：100000
-         */
-        'max_records' => env('SECURITY_MAX_IP_RECORDS', 100000),
     ],
 
     // ==================== HTTP方法配置 ====================
@@ -334,15 +290,6 @@ return [
         'health',
         'status',
     ],
-
-    /**
-     * 请求体检测深度
-     *
-     * 递归检查请求体数据的最大深度
-     * 支持：integer | callable
-     * 默认值：5
-     */
-    'body_check_depth' => env('SECURITY_BODY_CHECK_DEPTH', 5),
 
     /**
      * 最小触发内容长度
@@ -486,9 +433,9 @@ return [
      *
      * 允许上传的最大文件大小
      * 支持：integer | callable
-     * 默认值：10485760 (10MB)
+     * 默认值：52,428,800 (50MB)
      */
-    'max_file_size' => env('SECURITY_MAX_FILE_SIZE', 10 * 1024 * 1024),
+    'max_file_size' => env('SECURITY_MAX_FILE_SIZE', 50 * 1024 * 1024),
 
     /**
      * 是否启用文件内容检查
@@ -516,15 +463,6 @@ return [
     // ==================== 高级检测配置 ====================
 
     /**
-     * 是否启用高级检测
-     *
-     * 启用更复杂的安全检测逻辑
-     * 支持：boolean | callable
-     * 默认值：true
-     */
-    'enable_advanced_detection' => env('SECURITY_ADVANCED_DETECTION', true),
-
-    /**
      * 是否启用异常检测
      *
      * 检测异常的请求参数和行为
@@ -541,17 +479,13 @@ return [
      * 默认值：[
      *     'max_parameters' => 100,
      *     'max_parameter_length' => 255,
-     *     'max_headers' => 50,
-     *     'max_cookie_length' => 4096,
-     *     'max_post_size' => 8388608, // 8MB
+     *     'max_post_size' => 52428800, // 50MB
      * ]
      */
     'anomaly_thresholds' => [
         'max_parameters' => env('SECURITY_MAX_PARAMETERS', 100),
         'max_parameter_length' => env('SECURITY_MAX_PARAMETER_LENGTH', 255),
-        'max_headers' => env('SECURITY_MAX_HEADERS', 50),
-        'max_cookie_length' => env('SECURITY_MAX_COOKIE_LENGTH', 4096),
-        'max_post_size' => env('SECURITY_MAX_POST_SIZE', 8 * 1024 * 1024),
+        'max_post_size' => env('SECURITY_MAX_POST_SIZE', 50 * 1024 * 1024),
     ],
 
     /**
@@ -635,9 +569,15 @@ return [
      *
      * 最大封禁时间，防止设置过长
      * 支持：integer | callable
-     * 默认值：86400
+     * 默认值：7,776,000 （90天）
      */
-    'max_ban_duration' => env('SECURITY_MAX_BAN_DURATION', 86400),
+    'max_ban_duration' => env('SECURITY_MAX_BAN_DURATION', 7776000),
+
+    /**
+     * 不同安全事件类型 对应的封禁时长映射
+     * 检测到安全威胁时的封禁时间映射
+     */
+    'ban_duration_map' => [SecurityConfig::class, 'getEventTypeBanDuration'],
 
     /**
      * 是否启用正则表达式缓存
@@ -667,7 +607,7 @@ return [
      * 支持：boolean | callable
      * 默认值：false
      */
-    'block_on_exception' => env('SECURITY_BLOCK_ON_EXCEPTION', false),
+    'block_on_exception' => env('SECURITY_BLOCK_ON_EXCEPTION', true),
 
     /**
      * AJAX响应格式
@@ -761,30 +701,12 @@ return [
      * 安全警报处理逻辑
      *
      * 发送安全警报的自定义逻辑，格式同上
-     * 支持：string|array|null
+     * 支持：string|array|null, eg. [Class, method] or \Namespace\Class::method
      * 默认值：null
      */
     'alarm_handler' => env('SECURITY_ALARM_HANDLE', null),
 
     // ==================== 性能优化配置 ====================
-
-    /**
-     * 是否启用批量处理
-     *
-     * 启用后批量处理安全检测，提升性能
-     * 支持：boolean | callable
-     * 默认值：true
-     */
-    'enable_batch_processing' => env('SECURITY_BATCH_PROCESSING', true),
-
-    /**
-     * 批量处理大小
-     *
-     * 批量处理数据时的大小限制，防止内存溢出
-     * 支持：integer | callable
-     * 默认值：1000
-     */
-    'batch_size' => env('SECURITY_BATCH_SIZE', 1000),
 
     /**
      * 最大递归深度
@@ -794,15 +716,6 @@ return [
      * 默认值：10
      */
     'max_recursion_depth' => env('SECURITY_MAX_RECURSION_DEPTH', 10),
-
-    /**
-     * 是否启用请求预处理
-     *
-     * 启用后对请求数据进行预处理，提升检测性能
-     * 支持：boolean | callable
-     * 默认值：true
-     */
-    'enable_request_preprocessing' => env('SECURITY_REQUEST_PREPROCESSING', true),
 
     // ==================== 防御层配置 ====================
 

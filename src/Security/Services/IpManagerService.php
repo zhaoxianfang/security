@@ -8,6 +8,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use InvalidArgumentException;
+use zxf\Security\Constants\SecurityEvent;
 use zxf\Security\Models\SecurityIp;
 
 /**
@@ -412,22 +413,12 @@ class IpManagerService
      */
     protected function getBanDuration(string $type): int
     {
-        $durations = [
-            'MaliciousRequest' => 24 * 3600,      // 24小时
-            'SQLInjection' => 48 * 3600,          // 48小时
-            'XSSAttack' => 24 * 3600,             // 24小时
-            'CommandInjection' => 72 * 3600,      // 72小时
-            'AnomalousParameters' => 12 * 3600,   // 12小时
-            'RateLimit' => 3600,                  // 1小时
-            'Blacklist' => 30 * 24 * 3600,        // 30天
-            'IllegalUrl' => 6 * 3600,             // 6小时
-            'DangerousUpload' => 12 * 3600,       // 12小时
-        ];
-
         $defaultDuration = $this->config->get('ban_duration', 3600);
-        $maxDuration = $this->config->get('max_ban_duration', 86400);
+        $maxDuration = $this->config->get('max_ban_duration', 7776000);
+        $banDurationMap = $this->config->get('ban_duration_map', []); // 封禁时长映射
 
-        $duration = $durations[$type] ?? $defaultDuration;
+        // 根据事件类型获取封禁时长
+        $duration = $banDurationMap[$type]?? $defaultDuration;
 
         // 确保不超过最大封禁时长
         return min($duration, $maxDuration);
@@ -633,8 +624,8 @@ class IpManagerService
      */
     public function clearCache(): void
     {
-        // 清除IP相关缓存
-        Cache::flush();
+        // 清理安全相关的缓存
+        clean_security_cache();
 
         if ($this->config->get('enable_debug_logging', false)) {
             Log::info('IP管理服务缓存已清除');

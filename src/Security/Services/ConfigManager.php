@@ -248,8 +248,12 @@ class ConfigManager
     {
         // 某些配置不应该缓存
         $noCacheKeys = [
+            'enabled',
+            'enabled_type',
+            'ignore_local',
             'enable_debug_logging',
             'log_level',
+            'log_details',
             'block_on_exception',
         ];
 
@@ -481,72 +485,4 @@ class ConfigManager
         return $intValue >= 0;
     }
 
-    /**
-     * 获取配置描述
-     */
-    public function getDescription(string $key): string
-    {
-        $descriptions = [
-            'enabled' => '是否启用安全中间件',
-            'enabled_type' => '启用方式：global(全局)或route(路由)',
-            'ignore_local' => '是否忽略本地请求',
-            'log_level' => '日志记录级别',
-            'enable_debug_logging' => '是否启用调试日志',
-            'enable_rate_limiting' => '是否启用速率限制',
-            'rate_limits' => '速率限制配置',
-            'rate_limit_strategy' => '速率限制指纹策略',
-            'ip_auto_detection.enabled' => '是否启用IP自动检测',
-            'ip_auto_detection.blacklist_threshold' => '黑名单转换阈值',
-            'ip_auto_detection.suspicious_threshold' => '可疑IP转换阈值',
-            'allowed_methods' => '允许的HTTP方法',
-            'body_patterns' => '请求体检测模式',
-            'body_whitelist_paths' => '请求体检测白名单路径',
-            'url_patterns' => 'URL检测模式',
-            'whitelist_user_agents' => '白名单User-Agent模式',
-            'disallowed_extensions' => '禁止上传的文件扩展名',
-            'disallowed_mime_types' => '禁止上传的MIME类型',
-            'max_file_size' => '最大文件大小',
-            'enable_file_content_check' => '是否启用文件内容检查',
-            'enable_advanced_detection' => '是否启用高级检测',
-            'enable_anomaly_detection' => '是否启用异常检测',
-            'anomaly_thresholds' => '异常检测阈值',
-            'cache_ttl' => '缓存生存时间',
-            'ban_duration' => '默认封禁时长',
-            'max_ban_duration' => '最大封禁时长',
-            'block_on_exception' => '异常时是否阻止请求',
-            'ajax_response_format' => 'AJAX响应格式',
-            'error_view' => '错误页面视图',
-            'custom_handler' => '自定义安全处理逻辑',
-            'alarm_handler' => '安全警报处理逻辑',
-        ];
-
-        return $descriptions[$key] ?? '未配置描述';
-    }
-
-    /**
-     * 获取配置默认值
-     */
-    public function getDefault(?string $key = null): mixed
-    {
-        $defaults = security_config();
-        return $defaults[$key] ?? null;
-    }
-
-    /**
-     * 检查配置是否需要重启
-     */
-    public function requiresRestart(string $key): bool
-    {
-        $restartKeys = [
-            'enabled',
-            'enabled_type',
-            'ignore_local',
-            'enable_rate_limiting',
-            'rate_limits',
-            'rate_limit_strategy',
-            'allowed_methods',
-        ];
-
-        return in_array($key, $restartKeys);
-    }
 }

@@ -20,8 +20,7 @@ class SecurityCleanupCommand extends Command
     /**
      * 命令名称和签名
      */
-    protected $signature = 'security:cleanup 
-                            {--force : 强制清理无需确认}
+    protected $signature = 'security:cleanup
                             {--only-expired : 仅清理过期记录}';
 
     /**
@@ -34,29 +33,7 @@ class SecurityCleanupCommand extends Command
      */
     public function handle(): int
     {
-        $this->info('🧹 开始清理安全数据...');
-        $this->line('');
-
-        // 显示清理选项
-        if (!$this->option('force')) {
-            $this->info('📋 将执行以下清理操作:');
-
-            if ($this->option('only-expired')) {
-                $this->line('  • 清理过期IP记录');
-            } else {
-                $this->line('  • 清理过期IP记录');
-                $this->line('  • 更新统计信息');
-                $this->line('  • 清理缓存数据');
-            }
-            $this->line('');
-
-            if (!$this->confirm('确定要继续清理吗？', true)) {
-                $this->info('清理已取消。');
-                return self::SUCCESS;
-            }
-        }
-
-        $this->line('');
+        $this->info('🧹 开始清理...');
 
         try {
             // 清理过期IP记录
@@ -64,7 +41,6 @@ class SecurityCleanupCommand extends Command
 
             // 如果不是仅清理过期记录，执行完整清理
             if (!$this->option('only-expired')) {
-                $this->updateStatistics();
                 $this->clearCaches();
             }
 
@@ -83,26 +59,11 @@ class SecurityCleanupCommand extends Command
      */
     protected function cleanupExpiredIps(): void
     {
-        $this->info('🗑️  清理过期IP记录...');
-
         $deleted = SecurityIp::cleanupExpired();
 
         if ($deleted > 0) {
-            $this->info("  ✅ 清理了 {$deleted} 条过期IP记录");
-        } else {
-            $this->info("  ℹ️  没有找到过期的IP记录");
+            $this->info(" 清理了 {$deleted} 条过期IP记录");
         }
-    }
-
-    /**
-     * 更新统计信息
-     */
-    protected function updateStatistics(): void
-    {
-        $this->info('📊 更新统计信息...');
-
-        SecurityIp::updateDailyStats();
-        $this->info('  ✅ 已更新每日统计信息');
     }
 
     /**
@@ -110,11 +71,9 @@ class SecurityCleanupCommand extends Command
      */
     protected function clearCaches(): void
     {
-        $this->info('🧼 清理缓存数据...');
-
         // 清理安全相关的缓存
-        Cache::flush();
-        $this->info('  ✅ 已清理所有安全缓存');
+        clean_security_cache();
+        $this->info('🧼 已清理所有安全缓存');
     }
 
     /**
@@ -122,12 +81,9 @@ class SecurityCleanupCommand extends Command
      */
     protected function showCompletion(): void
     {
-        $this->line('');
-        $this->info('✅ 安全数据清理完成！');
-        $this->line('');
-
+        $this->info(' 数据清理完成！');
         $this->comment('💡 提示: 可以设置定时任务自动运行清理命令');
         $this->line('      例如: php artisan schedule:run 中添加');
-        $this->line('      $schedule->command(\'security:cleanup --force\')->daily();');
+        $this->line('      $schedule->command(\'security:cleanup\')->daily();');
     }
 }

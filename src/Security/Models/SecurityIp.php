@@ -319,11 +319,6 @@ class SecurityIp extends Model
             // 清除相关缓存
             self::clearIpCache($ip);
 
-            // 异步更新统计表
-            if ($blocked) {
-                self::updateDailyStatsAsync();
-            }
-
             DB::commit();
 
             return $ipRecord;
@@ -341,24 +336,17 @@ class SecurityIp extends Model
     }
 
     /**
-     * 异步更新统计信息
+     * 应用自然衰减
      */
-    protected static function updateDailyStatsAsync(): void
+    protected function applyNaturalDecay(): void
     {
-        // 如果禁用批量处理，直接更新
-        if (!security_config('enable_batch_processing', true)) {
-            self::updateDailyStats();
-            return;
-        }
+        // 如果上次请求超过1小时，应用衰减
+        if ($this->last_request_at && $this->last_request_at->diffInHours(now()) >= 1) {
+            $decayRate = security_config('ip_auto_detection.decay_rate_per_hour', 0.3);
+            $hours = $this->last_request_at->diffInHours(now());
+            $decayAmount = $decayRate * $hours;
 
-        // 使用延迟队列更新统计
-        if (function_exists('dispatch') && class_exists(Dispatchable::class)) {
-            dispatch(function () {
-                self::updateDailyStats();
-            })->delay(now()->addSeconds(10));
-        } else {
-            // 如果没有队列，直接执行
-            self::updateDailyStats();
+            $this->threat_score = max(0.00, $this->threat_score - $decayAmount);
         }
     }
 
@@ -597,47 +585,6 @@ class SecurityIp extends Model
     }
 
     /**
-     * 更新每日统计信息 - 优化版
-     */
-    public static function updateDailyStats(): void
-    {
-        $today = now()->format('Y-m-d');
-
-        try {
-            // 使用批量处理
-            $stats = self::query()
-                ->select([
-                    'type',
-                    DB::raw('COUNT(*) as total_ips'),
-                    DB::raw('SUM(request_count) as total_requests'),
-                    DB::raw('SUM(blocked_count) as total_blocks'),
-                    DB::raw('AVG(threat_score) as avg_threat_score'),
-                ])
-                ->where('status', self::STATUS_ACTIVE)
-                ->groupBy('type')
-                ->get();
-
-            foreach ($stats as $stat) {
-                SecurityIpStat::updateOrCreate(
-                    [
-                        'stat_date' => $today,
-                        'ip_type' => $stat->type,
-                    ],
-                    [
-                        'total_ips' => $stat->total_ips,
-                        'total_requests' => $stat->total_requests,
-                        'total_blocks' => $stat->total_blocks,
-                        'avg_threat_score' => $stat->avg_threat_score,
-                    ]
-                );
-            }
-
-        } catch (Exception $e) {
-            Log::error('更新IP统计信息失败: ' . $e->getMessage());
-        }
-    }
-
-    /**
      * 获取IP统计信息
      */
     public static function getIpStats(string $ip): array
@@ -668,7 +615,7 @@ class SecurityIp extends Model
      */
     public static function cleanupExpired(): int
     {
-        if (!security_config('ip_auto_detection.auto_cleanup', true)) {
+        if (!security_config('ip_auto_detection.auto_cleanup', false)) {
             return 0;
         }
 
@@ -680,7 +627,7 @@ class SecurityIp extends Model
                 ->delete();
 
             // 清理长时间未活动的监控IP
-            $monitoringExpireDays = security_config('ip_auto_detection.monitoring_expire_days', 7);
+            $monitoringExpireDays = security_config('ip_auto_detection.monitoring_expire_days', 15);
             $monitoringDeleted = self::query()
                 ->where('type', self::TYPE_MONITORING)
                 ->where('last_request_at', '<', now()->subDays($monitoringExpireDays))

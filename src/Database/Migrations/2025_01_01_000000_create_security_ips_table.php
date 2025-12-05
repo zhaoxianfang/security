@@ -63,24 +63,6 @@ return new class extends Migration
             // 注释说明
             $table->comment('安全IP管理表 - 统一管理白名单、黑名单、可疑IP和监控IP');
         });
-
-        // 创建统计表用于快速查询
-        Schema::create('security_ip_stats', function (Blueprint $table) {
-            $table->bigIncrements('id');
-            $table->date('stat_date')->comment('统计日期 - 示例: 2024-01-01');
-            $table->enum('ip_type', ['whitelist', 'blacklist', 'suspicious', 'monitoring'])->comment('IP类型');
-            $table->unsignedInteger('total_ips')->default(0)->comment('总IP数量');
-            $table->unsignedBigInteger('total_requests')->default(0)->comment('总请求数');
-            $table->unsignedBigInteger('total_blocks')->default(0)->comment('总拦截数');
-            $table->decimal('avg_threat_score', 5, 2)->default(0.00)->comment('平均威胁评分');
-            $table->timestamps();
-
-            // 唯一索引
-            $table->unique(['stat_date', 'ip_type'], 'uniq_date_type');
-            $table->index('stat_date');
-
-            $table->comment('安全IP统计表 - 每日IP统计信息');
-        });
     }
 
     /**
@@ -88,7 +70,6 @@ return new class extends Migration
      */
     public function down(): void
     {
-        Schema::dropIfExists('security_ip_stats');
         Schema::dropIfExists('security_ips');
     }
 };

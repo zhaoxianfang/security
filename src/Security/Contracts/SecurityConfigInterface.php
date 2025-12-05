@@ -101,6 +101,15 @@ interface SecurityConfigInterface
     public static function getCommandInjectionPatterns(): array;
 
     /**
+     * 获取事件类型禁用时长（可选）
+     *
+     * 返回事件类型禁用时长的数组
+     *
+     * @return array 事件类型禁用时长数组
+     */
+    public static function getEventTypeBanDuration(): array;
+
+    /**
      * 获取配置版本信息（可选）
      *
      * 返回配置的版本信息，用于兼容性检查

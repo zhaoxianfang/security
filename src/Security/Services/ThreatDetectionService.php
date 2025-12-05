@@ -291,10 +291,10 @@ class ThreatDetectionService
 
         // 检查POST数据大小
         $postSize = strlen(serialize($request->post()));
-        if ($postSize > ($thresholds['max_post_size'] ?? 8388608)) {
+        if ($postSize > ($thresholds['max_post_size'] ?? 52428800)) {
             $this->logDetection('POST数据过大', [
                 'size' => $postSize,
-                'max_size' => $thresholds['max_post_size'] ?? 8388608
+                'max_size' => $thresholds['max_post_size'] ?? 52428800
             ]);
             return true;
         }
@@ -387,7 +387,7 @@ class ThreatDetectionService
      */
     protected function isSafeFileSize(UploadedFile $file): bool
     {
-        $maxSize = $this->config->get('max_file_size', 10 * 1024 * 1024);
+        $maxSize = $this->config->get('max_file_size', 50 * 1024 * 1024);
         $fileSize = $file->getSize();
 
         if ($fileSize > $maxSize) {
