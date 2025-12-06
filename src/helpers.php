@@ -676,7 +676,7 @@ if (! function_exists('get_all_cache_keys')) {
      *       get_all_cache_keys('security:'); // 获取指定前缀的缓存键
      *       get_all_cache_keys('', 100); // 限制返回数量
      */
-    function get_all_cache_keys(string $prefix = '', int $maxSize = null, bool $removePrefix = true): array
+    function get_all_cache_keys(string $prefix = '', ?int $maxSize = null, bool $removePrefix = true): array
     {
         $cacheKeys = new \zxf\Security\Utils\GetCacheKeys();
         return $cacheKeys->getAll($prefix, $maxSize, $removePrefix);

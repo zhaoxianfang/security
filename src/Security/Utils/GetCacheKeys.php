@@ -78,7 +78,7 @@ class GetCacheKeys
      * @return array 缓存键名数组
      * @throws \RuntimeException 当缓存驱动不支持或发生错误时抛出
      */
-    public function getAll(string $prefix = '', int $maxSize = null, bool $removePrefix = true): array
+    public function getAll(string $prefix = '', ?int $maxSize = null, bool $removePrefix = true): array
     {
         $maxSize = $maxSize ?? $this->defaultMaxSize;
         $storeName = get_class($this->store);
