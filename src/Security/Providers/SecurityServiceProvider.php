@@ -15,7 +15,6 @@ use zxf\Security\Services\IpManagerService;
 use zxf\Security\Services\ThreatDetectionService;
 use zxf\Security\Console\Commands\SecurityInstallCommand;
 use zxf\Security\Console\Commands\SecurityCleanupCommand;
-use zxf\Security\Console\Commands\SecurityStatsCommand;
 use Composer\InstalledVersions;
 
 
@@ -196,7 +195,6 @@ class SecurityServiceProvider extends ServiceProvider
             $this->commands([
                 SecurityInstallCommand::class,   // 一键安装命令
                 SecurityCleanupCommand::class,   // 清理命令
-                SecurityStatsCommand::class,     // 统计命令（需要创建）
             ]);
         }
     }
