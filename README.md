@@ -1,16 +1,18 @@
+<p align="center"><a href="https://www.yoc.cn" target="_blank"><img src="./docs/images/security.png" width="400" alt="Security"></a></p>
+
+# Laravel Security - Laravel 项目安全拦截包
+
 <p align="center">
-  <a href="https://www.yoc.cn">
-    <picture>
-      <img src="./docs/images/security.png" alt="Security">
-    </picture>
-  </a>
+    <a href="https://packagist.org/packages/zxf/security"><img src="https://img.shields.io/packagist/v/zxf/security?style=flat-square&logo=composer&logoColor=orange" alt="Version"></a>
+    <a href="https://github.com/zhaoxianfang/security"><img src="https://img.shields.io/packagist/dt/zxf/security?logo=github&logoColor=white&style=flat-square" alt="Total Downloads"></a>
+    <a href="https://www.php.net/"><img src="https://img.shields.io/packagist/php-v/zxf/security?style=flat-square&logo=php" alt="PHP Version"></a>
+    <a href="https://github.com/zhaoxianfang/security"><img src="https://img.shields.io/github/release/zhaoxianfang/util.svg" alt="Release"></a>
+    <a href="https://packagist.org/packages/zxf/security"><img src="https://img.shields.io/packagist/l/zxf/security?logo=bookstack&logoColor=white&style=flat-square" alt="License"></a>
+    <a href="https://www.yoc.cn"><img src="https://img.shields.io/badge/docs-yoc.cn-blue" alt="Documentation"></a>
 </p>
 
-# Laravel Security Middleware - Laravel 安全拦截中间件
 
-![](https://img.shields.io/packagist/dt/zxf/security) ![](https://img.shields.io/github/stars/zhaoxianfang/util.svg) ![](https://img.shields.io/github/forks/zhaoxianfang/util.svg) ![](https://img.shields.io/github/tag/zhaoxianfang/util.svg) ![](https://img.shields.io/github/release/zhaoxianfang/util.svg) ![](https://img.shields.io/github/issues/zhaoxianfang/util.svg)
-
-高级安全拦截中间件包，为Laravel应用提供全面的安全防护。
+`zxf/security`是一个高级安全拦截中间件包，为Laravel应用提供全面的、可自定义拦截和自定义配置 的安全拦截防护。
 
 ## 📦 安装
 
@@ -41,15 +43,20 @@ php artisan vendor:publish --tag=security-config
 php artisan vendor:publish --tag=security-migrations
 ```
 
-## 人性化
+## 快速入门
 > 发布了配置文件后，什么都不需要操作就自动进行了全局拦截，就是这么方便。
 > 如果不需要全局拦截，把`enabled_type`配置为`route`,进行自定义拦截。
 
-```php
-// 一、默认全局处理: enabled_type 的值为  global
-// 如果配置全局启用(enabled_type)，则所有路由都将默认使用安全中间件，你什么都不需要做。
+### 全局拦截
 
-// 二、自定义处理: enabled_type 的值为  route
+> 下载并发布配置文件，其他的什么都不要做就搞定啦~，就是这么便捷；
+> 部分路由(路由组)不需要进行安全拦截，请使用`withoutMiddleware`方法进行排除:`Route::withoutMiddleware(['security'])`。
+
+### 自定义拦截
+修改配置文件`config/security.php` 中的`enabled_type`配置项为`custom`
+
+在需要进行安全拦截的路由，添加中间件`security`
+```php
 // 1、路由分配中间件:
 Route::middleware(['security'])
 // 2、控制器中间件:
