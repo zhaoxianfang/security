@@ -1,4 +1,4 @@
-<p align="center"><a href="https://www.yoc.cn" target="_blank"><img src="./docs/images/security.png" width="400" alt="Security"></a></p>
+<p align="center"><a href="https://www.yoc.cn" target="_blank"><img src="./docs/images/security.png" width="100%" alt="Security"></a></p>
 
 # Laravel Security - Laravel 项目安全拦截包
 
