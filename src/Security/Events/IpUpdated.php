@@ -20,6 +20,6 @@ class IpUpdated
      */
     public function __construct(
         public SecurityIp $ip,
-        public array $changes
+        public array $changes = []
     ) {}
 }

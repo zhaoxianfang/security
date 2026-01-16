@@ -9,7 +9,7 @@ use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\DB;
 
 /**
- * 安全包安装命令 - 优化增强版
+ * 安全包安装命令
  *
  * 功能说明：
  * 1. 一键发布配置文件
@@ -190,10 +190,14 @@ class SecurityInstallCommand extends Command
             Artisan::call('migrate:status');
             $output = Artisan::output();
 
-            $hasPendingMigrations = preg_match('/\s+No\s+\|\s+Yes\s+/', $output);
-
-            if (!$hasPendingMigrations && str_contains($output, 'Ran')) {
-                return;
+            // 使用换行分割$output后逐行读取 $output 里面 包含 security_ips_table 字符串的这一行中是否包含 Ran 字符串
+            $lines = explode("\n", $output);
+            foreach ($lines as $line) {
+                if (str_contains($line, 'security_ips_table')) {
+                    if (str_contains($line, 'Ran')) {
+                        break;
+                    }
+                }
             }
 
             // 运行迁移
@@ -220,7 +224,6 @@ class SecurityInstallCommand extends Command
                         }
                     }
                 }
-
             }
 
         } catch (Exception $e) {

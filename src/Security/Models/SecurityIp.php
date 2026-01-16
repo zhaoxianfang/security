@@ -12,6 +12,8 @@ use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use zxf\Security\Events\IpAdded;
+use zxf\Security\Events\IpTypeChanged;
 
 /**
  * 安全IP管理模型 - PHP 8.2+ 优化版
@@ -231,7 +233,7 @@ class SecurityIp extends Model
                     $q->where('is_range', true)
                       ->whereNotNull('ip_range')
                       ->whereRaw(
-                          'INET_ATON(?) BETWEEN INET_ATON(SUBSTRING_INDEX(ip_range, \'/\', 1)) 
+                          'INET_ATON(?) BETWEEN INET_ATON(SUBSTRING_INDEX(ip_range, \'/\', 1))
                            AND (INET_ATON(SUBSTRING_INDEX(ip_range, \'/\', 1)) + (POW(2, 32 - CAST(SUBSTRING_INDEX(ip_range, \'/\', -1) AS UNSIGNED)) - 1))',
                           [$ip]
                       );
@@ -288,7 +290,7 @@ class SecurityIp extends Model
                     $q->where('is_range', true)
                       ->whereNotNull('ip_range')
                       ->whereRaw(
-                          'INET_ATON(?) BETWEEN INET_ATON(SUBSTRING_INDEX(ip_range, \'/\', 1)) 
+                          'INET_ATON(?) BETWEEN INET_ATON(SUBSTRING_INDEX(ip_range, \'/\', 1))
                            AND (INET_ATON(SUBSTRING_INDEX(ip_range, \'/\', 1)) + (POW(2, 32 - CAST(SUBSTRING_INDEX(ip_range, \'/\', -1) AS UNSIGNED)) - 1))',
                           [$ip]
                       );

@@ -20,7 +20,7 @@ class IpTypeChanged
      */
     public function __construct(
         public SecurityIp $ip,
-        public string $oldType,
-        public string $newType
+        public string $oldType = '',
+        public string $newType = ''
     ) {}
 }

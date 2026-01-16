@@ -609,7 +609,7 @@ if (! function_exists('security_response')) {
             'reason' => $title,
             'request_id' => Str::uuid()->toString(),
             'timestamp' => now()->toISOString(),
-            'details' => $blockResult['details'] ?? [],
+            'details' => $context['details'] ?? [],
             'errors' => $errors,
             'context' => $context,
         ];
