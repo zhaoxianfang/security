@@ -1,0 +1,25 @@
+<?php
+
+namespace zxf\Security\Events;
+
+use Illuminate\Foundation\Events\Dispatchable;
+use Illuminate\Queue\SerializesModels;
+use zxf\Security\Models\SecurityIp;
+
+/**
+ * IP记录更新事件
+ *
+ * 当IP记录被更新时触发
+ */
+class IpUpdated
+{
+    use Dispatchable, SerializesModels;
+
+    /**
+     * 创建新的事件实例
+     */
+    public function __construct(
+        public SecurityIp $ip,
+        public array $changes
+    ) {}
+}
