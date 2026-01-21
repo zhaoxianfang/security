@@ -40,25 +40,25 @@ use zxf\Security\Events\IpTypeChanged;
  * - 外键约束（如有需要）
  * - 自动审计字段
  *
- * @property-read int $id 主键ID
- * @property-read string $ip_address IP地址
- * @property-read string|null $ip_range IP段范围(CIDR格式)
- * @property-read bool $is_range 是否为IP段
- * @property-read string $type IP类型(whitelist/blacklist/suspicious/monitoring)
- * @property-read string $status 状态(active/inactive/pending)
- * @property-read string $reason 添加原因
- * @property-read int $request_count 总请求次数
- * @property-read int $blocked_count 拦截次数
- * @property-read int $success_count 成功请求次数
- * @property-read float $threat_score 威胁评分(0-100)
- * @property-read \Carbon\Carbon|null $last_request_at 最后请求时间
- * @property-read \Carbon\Carbon|null $first_seen_at 首次出现时间
- * @property-read bool $auto_detected 是否自动检测
- * @property-read int $trigger_count 触发规则次数
- * @property-read array|null $trigger_rules 触发规则记录
- * @property-read \Carbon\Carbon|null $expires_at 过期时间
- * @property-read \Carbon\Carbon $created_at 创建时间
- * @property-read \Carbon\Carbon $updated_at 更新时间
+ * @property int $id 主键ID
+ * @property string $ip_address IP地址
+ * @property string|null $ip_range IP段范围(CIDR格式)
+ * @property bool $is_range 是否为IP段
+ * @property string $type IP类型(whitelist/blacklist/suspicious/monitoring)
+ * @property string $status 状态(active/inactive/pending)
+ * @property string $reason 添加原因
+ * @property int $request_count 总请求次数
+ * @property int $blocked_count 拦截次数
+ * @property int $success_count 成功请求次数
+ * @property float $threat_score 威胁评分(0-100)
+ * @property \Carbon\Carbon|null $last_request_at 最后请求时间
+ * @property \Carbon\Carbon|null $first_seen_at 首次出现时间
+ * @property bool $auto_detected 是否自动检测
+ * @property int $trigger_count 触发规则次数
+ * @property array|null $trigger_rules 触发规则记录
+ * @property \Carbon\Carbon|null $expires_at 过期时间
+ * @property \Carbon\Carbon $created_at 创建时间
+ * @property \Carbon\Carbon $updated_at 更新时间
  * @property-read string $type_name 显示类型名称
  * @property-read string $status_name 显示状态名称
  * @property-read bool $is_expired 是否已过期

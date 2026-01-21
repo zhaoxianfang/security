@@ -69,10 +69,15 @@ class ConfigManager
     }
 
     /**
-     * 获取配置值
+     * 获取配置值 - 支持热重载
      */
     public function get(string $key, mixed $default = null, mixed $params = null): mixed
     {
+        // 检查是否应该实时读取（不使用缓存）
+        if ($this->shouldReadRealtime($key)) {
+            return $this->getRealtime($key, $default, $params);
+        }
+
         // 构建完整缓存键
         $cacheKey = $this->getCacheKey($key, $params);
 
@@ -102,6 +107,50 @@ class ConfigManager
         $this->cacheValue($key, $cacheKey, $processedValue);
 
         return $processedValue;
+    }
+
+    /**
+     * 实时读取配置（不使用缓存）
+     */
+    protected function getRealtime(string $key, mixed $default = null, mixed $params = null): mixed
+    {
+        // 直接从配置文件读取
+        $rawValue = config("security.{$key}", $default);
+
+        // 处理动态配置
+        return $this->shouldProcessAsCallable($key)
+            ? $this->processDynamicValue($rawValue, $params)
+            : $rawValue;
+    }
+
+    /**
+     * 检查配置项是否应实时读取
+     *
+     * 直接读取配置，避免通过热重载服务造成递归
+     */
+    protected function shouldReadRealtime(string $key): bool
+    {
+        try {
+            // 直接从Laravel配置读取no_cache_keys，避免通过ConfigHotReloadService
+            $noCacheKeys = config('security.hot_reload.no_cache_keys', []);
+
+            foreach ($noCacheKeys as $pattern) {
+                if (str_ends_with($pattern, '*')) {
+                    $prefix = substr($pattern, 0, -1);
+                    if (str_starts_with($key, $prefix)) {
+                        return true;
+                    }
+                } elseif ($key === $pattern) {
+                    return true;
+                }
+            }
+
+            return false;
+
+        } catch (\Exception $e) {
+            // 忽略错误，返回false
+            return false;
+        }
     }
 
     /**

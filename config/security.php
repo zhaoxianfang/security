@@ -316,16 +316,202 @@ return [
     'url_patterns' => [SecurityConfig::class, 'getIllegalUrlPatterns'],
 
     /**
-     * URL检测白名单路径
+     * 规则引擎配置
      *
-     * 这些URL路径将跳过安全检测
+     * 启用高级规则引擎，支持：
+     * - 规则优先级和权重管理
+     * - 动态规则配置和运行时调整
+     * - 规则学习和自适应能力
+     * - 智能拦截决策机制
+     */
+    'rule_engine' => [
+        // 是否启用规则引擎
+        'enabled' => true,
+
+        // 是否启用自适应学习
+        'enable_adaptive_learning' => false,
+
+        // 自适应学习参数
+        'adaptive_learning' => [
+            // 最小学习样本数
+            'min_samples' => 100,
+
+            // 学习更新频率（秒）
+            'update_interval' => 300,
+
+            // 学习窗口大小
+            'window_size' => 1000,
+        ],
+
+        // 威胁评分阈值
+        'threat_thresholds' => [
+            'critical' => 80,  // 严重威胁
+            'high' => 60,      // 高危威胁
+            'medium' => 40,    // 中危威胁
+            'low' => 20,       // 低危威胁
+        ],
+
+        // 最大威胁评分
+        'max_threat_score' => 100,
+
+        // 禁用的规则ID列表
+        'disabled_rules' => [],
+
+        // 自定义规则列表
+        'custom_rules' => [],
+    ],
+
+    /**
+     * 自适应封禁时长配置
+     *
+     * 根据威胁评分动态调整封禁时长
+     */
+    'adaptive_ban_duration' => [
+        'enabled' => true,
+
+        // 威胁评分与封禁时长倍数映射
+        'multipliers' => [
+            90 => 10,  // 评分90+，10倍时长
+            80 => 5,   // 评分80-90，5倍时长
+            70 => 3,   // 评分70-80，3倍时长
+            60 => 2,   // 评分60-70，2倍时长
+        ],
+    ],
+
+    /**
+     * URL检测白名单路径 - 安全增强版
+     *
+     * 这些URL路径将跳过URL安全检测（注意：其他安全检查仍会执行）
      * 支持：array | callable
-     * 默认值：['robots.txt', 'sitemap.xml', 'favicon.ico']
+     *
+     * ==================== 安全警告 ====================
+     * ⚠️  此白名单仅跳过URL路径检测，不会跳过以下安全检查：
+     *    - IP黑名单检查
+     *    - 频率限制检查
+     *    - 请求体恶意内容检查
+     *    - 文件上传检查
+     *    - 异常行为检查
+     *    - SQL注入/XSS/命令注入检测
+     *
+     * ⚠️  宽泛的白名单（如 'api/*'）可能导致攻击绕过安全检测
+     *    建议使用精确路径而非通配符
+     *
+     * ⚠️  如需完全跳过某个路径的所有安全检查，
+     *    请使用 Route::withoutMiddleware(['security'])
+     *
+     * ==================== 白名单安全级别 ====================
+     * 每个路径可以指定安全级别：
+     * - 'low' (低风险): 仅跳过基础URL检查，保留所有安全检测
+     * - 'medium' (中风险): 跳过URL检查，但保留关键安全检测
+     * - 'high' (高风险): 跳过URL检查，需谨慎使用
+     *
+     * ==================== 配置示例 ====================
+     * 简单格式: 'robots.txt'
+     * 带级别: ['path' => 'api/health', 'level' => 'low']
+     * 带方法限制: ['path' => 'api/ping', 'methods' => ['GET'], 'level' => 'low']
      */
     'url_whitelist_paths' => [
-        'robots.txt',
-        'sitemap.xml',
-        'favicon.ico',
+        // 基础静态文件（低风险）
+        ['path' => 'robots.txt', 'level' => 'low'],
+        ['path' => 'sitemap.xml', 'level' => 'low'],
+        ['path' => 'favicon.ico', 'level' => 'low'],
+
+        // 健康检查端点（低风险，仅限GET方法）
+        ['path' => 'health', 'methods' => ['GET'], 'level' => 'low'],
+        ['path' => 'status', 'methods' => ['GET'], 'level' => 'low'],
+        ['path' => 'ping', 'methods' => ['GET'], 'level' => 'low'],
+        ['path' => 'ready', 'methods' => ['GET'], 'level' => 'low'],
+
+        // ⚠️  警告：以下通配符路径可能带来安全风险
+        // 建议移除或替换为具体的精确路径
+        //
+        // 资源文件（中风险 - 仍保留内容安全检查）
+        // 'assets/*',    // 建议移除，使用静态资源服务器
+        // 'public/*',    // 建议移除，危险
+        // 'static/*',    // 建议移除，危险
+        // 'css/*',       // 建议移除，使用静态资源服务器
+        // 'js/*',        // 建议移除，使用静态资源服务器
+        // 'images/*',    // 建议移除，使用静态资源服务器
+
+        // API路径（高风险 - 强烈建议移除通配符）
+        // 'api/*',       // 危险！建议移除
+        // 'v1/*',        // 危险！建议移除
+        // 'v2/*',        // 危险！建议移除
+        // 'graphql',     // 需要额外安全措施
+        // 'rest/*',      // 危险！建议移除
+    ],
+
+    /**
+     * 白名单路径安全策略
+     *
+     * 定义白名单路径的安全检查策略
+     */
+    'whitelist_security_policy' => [
+        // 即使在白名单中，也保留的安全检查
+        'always_check' => [
+            'ip_blacklist',        // 始终检查IP黑名单
+            'rate_limit',          // 始终进行频率限制
+            'body_patterns',       // 始终检查请求体恶意内容
+            'file_upload',         // 始终检查文件上传
+            'sql_injection',       // 始终检测SQL注入
+            'xss_attack',          // 始终检测XSS攻击
+            'command_injection',    // 始终检测命令注入
+        ],
+
+        // 根据级别保留的检查
+        'level_checks' => [
+            'low' => [
+                'method_check',        // HTTP方法检查
+                'user_agent_check',    // User-Agent检查
+                'header_check',        // 请求头检查
+            ],
+            'medium' => [
+                'method_check',
+            ],
+            'high' => [
+                // 最少检查
+            ],
+        ],
+
+        // 需要额外认证的白名单路径
+        'require_auth' => [
+            'graphql',
+            'api/*',
+        ],
+    ],
+
+    /**
+     * 配置热重载配置
+     *
+     * 实现配置修改后立即生效，无需重启应用
+     */
+    'hot_reload' => [
+        // 是否启用热重载
+        'enabled' => env('SECURITY_HOT_RELOAD_ENABLED', true),
+
+        // 配置文件监听（秒）
+        'watch_interval' => env('SECURITY_CONFIG_WATCH_INTERVAL', 5),
+
+        // 配置版本键（用于检测配置变更）
+        'version_key' => 'security:config:version',
+
+        // 需要实时生效的配置项
+        'realtime_keys' => [
+            'url_whitelist_paths',
+            'defense_layers',
+            'enabled',
+            'ip_auto_detection',
+            'rate_limits',
+            'ban_duration',
+            'rule_engine',
+        ],
+
+        // 不应缓存的配置项（实时读取）
+        'no_cache_keys' => [
+            'url_whitelist_paths',
+            'enabled',
+            'defense_layers',
+        ],
     ],
 
     /**

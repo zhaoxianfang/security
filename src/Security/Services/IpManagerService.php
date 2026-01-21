@@ -152,19 +152,32 @@ class IpManagerService
     }
 
     /**
-     * 封禁IP
+     * 封禁IP - 优化增强版
+     *
+     * 支持威胁评分和动态封禁时长
+     *
+     * @param Request $request HTTP请求
+     * @param string $type 事件类型
+     * @param float $threatScore 威胁评分（0-100）
+     * @return bool 是否成功
      */
-    public function banIp(Request $request, string $type): void
+    public function banIp(Request $request, string $type, float $threatScore = 0): bool
     {
         $clientIp = $this->getClientRealIp($request);
 
         // 如果IP已经是黑名单，不再重复封禁
         if (SecurityIp::isBlacklisted($clientIp)) {
-            return;
+            if ($this->config->get('enable_debug_logging', false)) {
+                Log::info("IP已在黑名单中，跳过封禁", [
+                    'ip' => $clientIp,
+                    'type' => $type,
+                ]);
+            }
+            return false;
         }
 
-        $duration = $this->getBanDuration($type);
-        $reason = $this->getBanReason($type);
+        $duration = $this->getBanDuration($type, $threatScore);
+        $reason = $this->getBanReason($type, $threatScore);
 
         try {
             // 添加到数据库黑名单
@@ -175,20 +188,29 @@ class IpManagerService
                 true // 自动检测
             );
 
+            // 更新威胁评分
+            if ($threatScore > 0) {
+                SecurityIp::updateThreatScore($clientIp, $threatScore);
+            }
+
             // 更新缓存
             $this->clearIpCache($clientIp);
 
             if ($this->config->get('enable_debug_logging', false)) {
-                Log::warning("IP封禁: {$clientIp} 类型: {$type} 时长: {$duration}秒 原因: {$reason}");
+                Log::warning("IP封禁: {$clientIp} 类型: {$type} 时长: {$duration}秒 原因: {$reason} 威胁评分: {$threatScore}");
             }
+
+            return true;
 
         } catch (Exception $e) {
             Log::error("封禁IP失败: " . $e->getMessage(), [
                 'ip' => $clientIp,
                 'type' => $type,
                 'duration' => $duration,
+                'threat_score' => $threatScore,
                 'exception' => $e
             ]);
+            return false;
         }
     }
 
@@ -409,25 +431,55 @@ class IpManagerService
     }
 
     /**
-     * 获取封禁时长
+     * 获取封禁时长 - 优化增强版
+     *
+     * 支持根据威胁评分动态调整封禁时长
+     *
+     * @param string $type 事件类型
+     * @param float $threatScore 威胁评分（0-100）
+     * @return int 封禁时长（秒）
      */
-    protected function getBanDuration(string $type): int
+    protected function getBanDuration(string $type, float $threatScore = 0): int
     {
         $defaultDuration = $this->config->get('ban_duration', 3600);
         $maxDuration = $this->config->get('max_ban_duration', 7776000);
         $banDurationMap = $this->config->get('ban_duration_map', []); // 封禁时长映射
 
-        // 根据事件类型获取封禁时长
-        $duration = $banDurationMap[$type]?? $defaultDuration;
+        // 根据事件类型获取基础封禁时长
+        $duration = $banDurationMap[$type] ?? $defaultDuration;
+
+        // 根据威胁评分动态调整封禁时长
+        if ($threatScore > 0 && $this->config->get('enable_adaptive_ban_duration', true)) {
+            // 威胁评分越高，封禁时长越长
+            $adaptiveFactor = 1.0;
+
+            if ($threatScore >= 90) {
+                $adaptiveFactor = 10.0; // 10倍时长
+            } elseif ($threatScore >= 80) {
+                $adaptiveFactor = 5.0;  // 5倍时长
+            } elseif ($threatScore >= 70) {
+                $adaptiveFactor = 3.0;  // 3倍时长
+            } elseif ($threatScore >= 60) {
+                $adaptiveFactor = 2.0;  // 2倍时长
+            }
+
+            $duration = (int)($duration * $adaptiveFactor);
+        }
 
         // 确保不超过最大封禁时长
         return min($duration, $maxDuration);
     }
 
     /**
-     * 获取封禁原因
+     * 获取封禁原因 - 优化增强版
+     *
+     * 支持根据威胁评分动态生成更详细的封禁原因
+     *
+     * @param string $type 事件类型
+     * @param float $threatScore 威胁评分（0-100）
+     * @return string 封禁原因
      */
-    protected function getBanReason(string $type): string
+    protected function getBanReason(string $type, float $threatScore = 0): string
     {
         $reasons = [
             'MaliciousRequest' => '恶意请求',
@@ -442,9 +494,27 @@ class IpManagerService
             'SuspiciousUserAgent' => '可疑User-Agent',
             'SuspiciousHeaders' => '可疑请求头',
             'MethodCheck' => 'HTTP方法检查',
+            'PathTraversal' => '路径遍历攻击',
+            'FileInclusion' => '文件包含攻击',
+            'HighThreat' => '高威胁评分',
         ];
 
-        return $reasons[$type] ?? '安全违规';
+        $baseReason = $reasons[$type] ?? '安全违规';
+
+        // 根据威胁评分添加详细信息
+        if ($threatScore > 0) {
+            if ($threatScore >= 90) {
+                $baseReason .= '（极度危险 - 评分：' . $threatScore . '）';
+            } elseif ($threatScore >= 70) {
+                $baseReason .= '（高风险 - 评分：' . $threatScore . '）';
+            } elseif ($threatScore >= 50) {
+                $baseReason .= '（中等风险 - 评分：' . $threatScore . '）';
+            } else {
+                $baseReason .= '（低风险 - 评分：' . $threatScore . '）';
+            }
+        }
+
+        return $baseReason;
     }
 
     /**

@@ -4,6 +4,7 @@ namespace zxf\Security\Middleware;
 
 use Closure;
 use Exception;
+use Throwable;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Http\JsonResponse;
@@ -15,8 +16,11 @@ use InvalidArgumentException;
 use zxf\Security\Services\RateLimiterService;
 use zxf\Security\Services\IpManagerService;
 use zxf\Security\Services\ThreatDetectionService;
+use zxf\Security\Services\WhitelistSecurityService;
+use zxf\Security\Services\ConfigHotReloadService;
 use zxf\Security\Exceptions\SecurityException;
 use zxf\Security\Constants\SecurityEvent;
+use zxf\Security\Utils\ExceptionHandler;
 
 /**
  * 安全拦截中间件
@@ -40,6 +44,13 @@ class SecurityMiddleware
     protected RateLimiterService $rateLimiter;
     protected IpManagerService $ipManager;
     protected ThreatDetectionService $threatDetector;
+    protected ?WhitelistSecurityService $whitelistService = null;
+    protected ?ConfigHotReloadService $hotReloadService = null;
+
+    /**
+     * 是否正在重载配置
+     */
+    protected bool $isReloadingConfig = false;
 
     /**
      * 检测统计信息
@@ -67,6 +78,20 @@ class SecurityMiddleware
         $this->rateLimiter = $rateLimiter;
         $this->ipManager = $ipManager;
         $this->threatDetector = $threatDetector;
+
+        // 懒加载白名单服务（使用异常处理）
+        $this->whitelistService = ExceptionHandler::safeExecute(
+            fn() => app(WhitelistSecurityService::class),
+            null,
+            'WhitelistService initialization'
+        );
+
+        // 懒加载热重载服务（使用异常处理）
+        $this->hotReloadService = ExceptionHandler::safeExecute(
+            fn() => app(ConfigHotReloadService::class),
+            null,
+            'ConfigHotReloadService initialization'
+        );
     }
 
     /**
@@ -83,6 +108,21 @@ class SecurityMiddleware
         $this->detectionStats['start_time'] = microtime(true);
 
         try {
+            // 检查配置热重载（带异常保护）
+            if ($this->hotReloadService && !$this->isReloadingConfig) {
+                $this->isReloadingConfig = true;
+                try {
+                    $this->hotReloadService->reloadConfig();
+                } catch (Throwable $e) {
+                    // 记录但继续执行
+                    Log::warning('配置热重载失败，继续执行安全检查', [
+                        'error' => $e->getMessage(),
+                    ]);
+                } finally {
+                    $this->isReloadingConfig = false;
+                }
+            }
+
             // 1. 检查中间件是否启用
             if (!$this->isEnabled()) {
                 $this->logDebug('安全中间件已禁用，跳过检查');
@@ -113,9 +153,22 @@ class SecurityMiddleware
 
         } catch (SecurityException $e) {
             // 安全相关异常
+            ExceptionHandler::handle($e, ['request_path' => $request->path()]);
             return $this->handleSecurityException($request, $e);
-        } catch (Exception $e) {
-            // 其他异常
+        } catch (Throwable $e) {
+            // 其他异常（包括递归、内存等）
+            ExceptionHandler::handle($e, ['request_path' => $request->path()]);
+
+            // 检查是否为递归异常
+            if (ExceptionHandler::isRecursionException($e)) {
+                Log::critical('检测到递归异常，安全检查失败，放行请求', [
+                    'error' => $e->getMessage(),
+                    'request_path' => $request->path(),
+                ]);
+                // 递归异常时放行请求，避免死循环
+                return $next($request);
+            }
+
             return $this->handleGeneralException($request, $e);
         } finally {
             // 记录性能统计
@@ -349,6 +402,11 @@ class SecurityMiddleware
     /**
      * 检查URL
      */
+    /**
+     * 检查URL安全性 - 优化增强版
+     *
+     * 使用安全白名单服务，支持分级控制和方法限制
+     */
     protected function checkUrl(Request $request): array
     {
         // 检查URL长度
@@ -364,7 +422,34 @@ class SecurityMiddleware
             ];
         }
 
-        // 检查URL路径安全性
+        // 检查URL白名单（使用新的安全白名单服务）
+        if ($this->whitelistService) {
+            $whitelistConfig = $this->whitelistService->isWhitelisted($request);
+
+            if ($whitelistConfig) {
+                // 获取需要保留的安全检查
+                $requiredChecks = $this->whitelistService->getRequiredChecks($whitelistConfig);
+
+                // 执行必须的安全检查
+                foreach ($requiredChecks as $check) {
+                    $result = $this->executeRequiredCheck($request, $check);
+                    if ($result['blocked']) {
+                        return $result;
+                    }
+                }
+
+                // 所有检查通过，放行
+                $this->logDebug('URL白名单（带安全检查）', [
+                    'path' => $request->path(),
+                    'level' => $whitelistConfig['level'] ?? 'low',
+                    'required_checks' => $requiredChecks,
+                ]);
+
+                return ['blocked' => false, 'release' => true];
+            }
+        }
+
+        // 不在白名单，执行完整的URL安全检查
         if (!$this->threatDetector->isSafeUrl($request)) {
             $ipRecord = $this->ipManager->recordAccess($request, true, SecurityEvent::ILLEGAL_URL);
             $this->logSecurityEvent($request, SecurityEvent::ILLEGAL_URL, $ipRecord);
@@ -376,16 +461,31 @@ class SecurityMiddleware
             ];
         }
 
-        // 检查URL白名单
-        $urlWhitelist = $this->threatDetector->getConfig('url_whitelist_paths', []);
-        $path = $request->path();
-        foreach ($urlWhitelist as $pattern) {
-            if (fnmatch($pattern, $path)) {
-                return ['blocked' => false, 'release' => true];
-            }
-        }
-
         return ['blocked' => false];
+    }
+
+    /**
+     * 执行白名单路径必须的安全检查
+     *
+     * @param Request $request HTTP请求
+     * @param string $check 检查类型
+     * @return array 检查结果
+     */
+    protected function executeRequiredCheck(Request $request, string $check): array
+    {
+        return match ($check) {
+            'ip_blacklist' => $this->checkIpBlacklist($request),
+            'rate_limit' => $this->checkRateLimit($request),
+            'body_patterns' => $this->checkRequestBody($request),
+            'file_upload' => $this->checkUploads($request),
+            'sql_injection' => $this->checkSQLInjection($request),
+            'xss_attack' => $this->checkXSSAttack($request),
+            'command_injection' => $this->checkCommandInjection($request),
+            'method_check' => $this->checkHttpMethod($request),
+            'user_agent_check' => $this->checkUserAgent($request),
+            'header_check' => $this->checkHeaders($request),
+            default => ['blocked' => false],
+        };
     }
 
     /**
@@ -614,13 +714,33 @@ class SecurityMiddleware
     }
 
     /**
-     * 处理安全异常
+     * 处理安全异常 - 优化增强版
+     *
+     * 改进点：
+     * 1. 增加详细的异常日志记录
+     * 2. 提供更友好的错误信息
+     * 3. 确保系统在异常时不会崩溃
+     *
+     * @param Request $request HTTP请求对象
+     * @param SecurityException $e 安全异常
+     * @return Response|JsonResponse HTTP响应
      */
     protected function handleSecurityException(Request $request, SecurityException $e)
     {
+        // 记录详细的异常信息
         $this->logSecurityEvent($request, SecurityEvent::ERROR, $e->getMessage());
 
-        if ($this->threatDetector->getConfig('block_on_exception', true)) {
+        // 添加到错误列表
+        $this->addError('安全异常: ' . $e->getMessage(), [
+            'exception' => get_class($e),
+            'file' => $e->getFile(),
+            'line' => $e->getLine(),
+            'trace' => config('app.debug') ? $e->getTraceAsString() : null,
+            'context' => $e->getContext(),
+        ]);
+
+        // 根据配置决定是否拦截
+        if ($this->threatDetector->getConfig('block_on_exception', false)) {
             $this->detectionStats['blocked_requests']++;
 
             return $this->createBlockResponse(
@@ -629,27 +749,61 @@ class SecurityMiddleware
                     'blocked' => true,
                     'type' => SecurityEvent::ERROR,
                     'reason' => '安全系统异常',
-                    'message' => config('app.debug') ? $e->getMessage() : '系统进行安全拦截时异常',
-                    'details' => $e->getContext(),
+                    'message' => config('app.debug')
+                        ? '安全检查时发生异常: ' . $e->getMessage()
+                        : '系统进行安全检查时出现异常，请稍后重试',
+                    'details' => [
+                        'exception_type' => get_class($e),
+                        'request_id' => Str::uuid()->toString(),
+                    ],
                 ]
             );
         }
 
-        // 异常时放行请求
+        // 异常时放行请求（默认行为，避免影响正常业务）
+        Log::warning('安全中间件异常但放行请求', [
+            'exception' => $e->getMessage(),
+            'url' => $request->fullUrl(),
+            'method' => $request->method(),
+            'ip' => $request->ip(),
+        ]);
+
         return $this->handleNormalRequest($request, fn($req) => $this->passRequest($req));
     }
 
     /**
-     * 处理一般异常
+     * 处理一般异常 - 优化增强版
+     *
+     * 改进点：
+     * 1. 增加详细的异常日志记录
+     * 2. 提供更友好的错误信息
+     * 3. 确保系统在异常时不会崩溃
+     *
+     * @param Request $request HTTP请求对象
+     * @param Throwable $e 一般异常
+     * @return Response|JsonResponse HTTP响应
      */
-    protected function handleGeneralException(Request $request, Exception $e)
+    protected function handleGeneralException(Request $request, Throwable $e)
     {
-        Log::error('安全中间件执行异常: ' . $e->getMessage(), [
-            'exception' => $e,
-            'request' => $this->getRequestInfo($request)
+        // 记录详细的异常信息
+        Log::error('安全中间件执行异常', [
+            'exception' => $e->getMessage(),
+            'exception_type' => get_class($e),
+            'file' => $e->getFile(),
+            'line' => $e->getLine(),
+            'trace' => config('app.debug') ? $e->getTraceAsString() : null,
+            'request' => $this->getRequestInfo($request),
         ]);
 
-        if ($this->threatDetector->getConfig('block_on_exception', true)) {
+        // 添加到错误列表
+        $this->addError('系统异常: ' . $e->getMessage(), [
+            'exception' => get_class($e),
+            'file' => $e->getFile(),
+            'line' => $e->getLine(),
+        ]);
+
+        // 根据配置决定是否拦截
+        if ($this->threatDetector->getConfig('block_on_exception', false)) {
             $this->detectionStats['blocked_requests']++;
 
             return $this->createBlockResponse(
@@ -658,13 +812,25 @@ class SecurityMiddleware
                     'blocked' => true,
                     'type' => SecurityEvent::ERROR,
                     'reason' => '系统暂时不可用',
-                    'message' => '系统暂时不可用',
-                    'details' => ['exception' => config('app.debug') ? $e->getMessage() : '内部错误'],
+                    'message' => config('app.debug')
+                        ? '系统异常: ' . $e->getMessage()
+                        : '系统暂时不可用，请稍后重试',
+                    'details' => [
+                        'exception_type' => get_class($e),
+                        'request_id' => Str::uuid()->toString(),
+                    ],
                 ]
             );
         }
 
-        // 异常时放行请求
+        // 异常时放行请求（默认行为，避免影响正常业务）
+        Log::warning('安全中间件异常但放行请求', [
+            'exception' => $e->getMessage(),
+            'url' => $request->fullUrl(),
+            'method' => $request->method(),
+            'ip' => $request->ip(),
+        ]);
+
         return $this->handleNormalRequest($request, fn($req) => $this->passRequest($req));
     }
 

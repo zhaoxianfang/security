@@ -61,6 +61,7 @@ class SecurityConfig implements SecurityConfigInterface
      * 关键威胁检测模式 - 最高性能和安全优先级
      *
      * 覆盖最危险且最常见的攻击类型，性能最优
+     * 优化：减少误报，提高检测精度
      * 目标：在0.1ms内完成关键威胁检测
      */
     protected static function getCriticalThreatPatterns(): array
@@ -68,27 +69,31 @@ class SecurityConfig implements SecurityConfigInterface
         return [
             /**
              * 合并的关键XSS和脚本注入检测
-             * 优化：使用原子组和否定预查减少回溯
+             * 优化：使用原子组和否定预查减少回溯，减少误报
+             * 改进：只检测真正危险的脚本注入
              */
-            '/(?>(?:<script\b[^>]*>.*?<\/script>|javascript:\s*[^"\'\s{}<>]*|vbscript:\s*[^"\'\s{}<>]*|data:\s*(?:text|application)\/(?:javascript|ecmascript)|\bon\w+\s*=\s*["\']?[^"\'>]*(?:alert|prompt|confirm)\s*\([^)]*\)))/is',
+            '/(?>(?:<script\b[^>]*>.*?<\/script>|javascript:\s*(?>alert|confirm|prompt|eval|expression)\s*\(|vbscript:\s*(?>msgbox|eval|execute)\s*\(|data:\s*(?>text|application)\/(?:javascript|ecmascript)|\bon\w+\s*=\s*["\']?(?>alert|prompt|confirm|eval)\s*\([^)]*\)))/is',
 
             /**
              * 合并的关键SQL注入检测
-             * 优化：使用精确匹配和单词边界
+             * 优化：使用精确匹配和单词边界，减少误报
+             * 改进：要求更完整的SQL结构，避免匹配普通文本
              */
-            '/\b(?>union\s+select|select\s+[\w*]+\s+from|insert\s+into|update\s+\w+\s+set|drop\s+(?>table|database|view|procedure)|delete\s+from|truncate\s+table|exec\s*\(|xp_cmdshell|sp_|--\s+|\/\*[^*]*\*+(?:[^*\/][^*]*\*+)*\/|0x[0-9a-f]+|char\s*\(\s*\d+(?:\s*,\s*\d+)*\s*\))/is',
+            '/\b(?>union\s+(?>all\s+)?select\b|select\s+(?>\*|\w+)\s+from\b|\binsert\s+into\b|\bupdate\s+\w+\s+set\b|\bdrop\s+(?>table|database|view|procedure)\b|\bdelete\s+from\b|\btruncate\s+table\b|\bexec\s*\(|xp_cmdshell|sp_\b|--\s+.*$|\/\*[^*]*\*+(?:[^*\/][^*]*\*+)*\/|0x[0-9a-f]{6,}|char\s*\(\s*\d+(?:\s*,\s*\d+){2,}\s*\))/is',
 
             /**
              * 合并的关键命令注入检测
-             * 优化：精确匹配系统函数和特殊字符
+             * 优化：精确匹配系统函数和特殊字符，减少误报
+             * 改进：要求更完整的命令结构
              */
-            '/\b(?>system|exec|shell_exec|passthru|proc_open|popen|pcntl_exec)\s*\([^)]*\)|`[^`]*`|\|\s*\w+|\&\s*\w+|;\s*\w+|\$\s*\([^)]*\)|\.\.\/\.\.\//i',
+            '/\b(?>system|shell_exec|passthru|proc_open|popen|pcntl_exec)\s*\(\s*[^)]+\s*\)|`[^`]{10,}`|\|\s*\w+\s+[&|]|\&\s*\w+\s+[&|]|;\s*\w+\s+[&|]|\$\([^)]{10,}\)|\.\.\/\.\.\//i',
 
             /**
              * 合并的关键路径遍历和文件包含检测
-             * 优化：减少分组，提高匹配速度
+             * 优化：减少分组，提高匹配速度，减少误报
+             * 改进：要求更完整的路径结构
              */
-            '/(?>\.\.\/|\.\.\\\\|\/etc\/(?>passwd|shadow|hosts)|\/winnt\/system32|\/windows\/system32|\b(?:include|require)(?:_once)?\s*\(?\s*[\'"][^"\']*\.(?:php|phtml|inc)|\b(?:include|require)(?:_once)?\s*\(?\s*[\'"](?>https?|ftp|phar):\/\/|php:\/\/(?>input|filter|glob|data|expect))/i',
+            '/(?>\.\.\/{2,}|\.\.\\{2,}|\/etc\/(?>passwd|shadow|hosts)(?>\?|$)|\/winnt\/system32|\/windows\/system32|\b(?:include|require)(?:_once)?\s*\(?\s*[\'"][^"\']*\.(?:php|phtml|inc|js)\b|\b(?:include|require)(?:_once)?\s*\(?\s*[\'"](?>https?|ftp|phar):\/\/|php:\/\/(?>input|filter|glob|data|expect))/i',
         ];
     }
 
@@ -347,6 +352,7 @@ class SecurityConfig implements SecurityConfigInterface
      *
      * 针对目录遍历、敏感文件泄露、配置信息暴露等攻击的全面防护
      * 采用精确匹配和高性能正则，在保持低误报率的同时提供全面保护
+     * 优化：增加对常见API路径和合法文件模式的豁免，减少误报
      *
      * @return array URL检测正则表达式数组
      */
@@ -354,55 +360,77 @@ class SecurityConfig implements SecurityConfigInterface
     {
         return [
             /**
-             * 隐藏文件和目录检测
+             * 隐藏文件和目录检测（排除已知的合法路径）
+             * 优化：排除 .git/, .well-known/ 等标准隐藏目录
              */
-            '~/(?:\.(?!well-known/|git/)[^/]*|\.{2,})(?=/|$)~i',
+            '~/(?:\.(?!git/|well-known/|env\.example|env\.production|env\.testing|env\.staging|env\.local|gitignore|gitattributes|htaccess|htpasswd)[^/]*|\.{2,})(?=/|$)~i',
 
             /**
-             * 配置文件和敏感数据文件检测
+             * 配置文件和敏感数据文件检测（严格模式）
+             * 优化：只匹配明确以敏感扩展名结尾的文件，避免误报
              */
-            '/\.(?>env|config|settings|configuration|secret|key|credential|token|auth|cert|pem|crt)(?>\.[\w]+)?$/i',
-            '/\.(?>gitignore|gitattributes|htaccess|htpasswd|nginx\.conf|apache2?\.conf|httpd\.conf|\.conf)(?>\.[\w]+)?$/i',
-            '/(?>composer|package|yarn|pip|gemfile|pom|gradle|build|makefile)(?:\.(?>json|lock|yml|yaml|xml|properties))?$/i',
+            '/\.(?>env$|secret$|credential$|token$|auth$|key$|cert$|pem$|crt$|password$)(?![\w])/i',
+            '/\.(?>settings$|configuration$|config$)(?![\w])/i',
 
             /**
-             * 源代码和脚本文件泄露检测
+             * 版本控制和开发文件检测
              */
-            '/\.(?>php[3457s]?|phtml|phar|inc|phps)(?>\.[\w]+)?$/i',
-            '/\.(?>jspx?|asp|aspx?|asmx|ascx|cer|asa|ashx)(?>\.[\w]+)?$/i',
-            '/\.(?>pl|py|rb|rhtml|sh|bash|cgi|fcgi|wsgi)(?>\.[\w]+)?$/i',
-            '/\.(?>java|class|jar|war|ear|jspf)(?>\.[\w]+)?$/i',
-            '/\.(?>js|html?|xhtml|xml|json|yml|yaml)(?>\.[\w]+)?$/i',
-            '/\.(?>ts|jsx|tsx|vue|svelte|elm)(?>\.[\w]+)?$/i',
-            '/\.(?>c|cpp|h|hpp|go|rs|swift|kt|kts)(?>\.[\w]+)?$/i',
+            '/\.(?>gitignore$|gitattributes$|htaccess$|htpasswd$|nginx\.conf$|apache2?\.conf$|httpd\.conf$|\.conf$)(?![\w])/i',
+
+            /**
+             * 构建工具配置文件（仅根目录）
+             */
+            '/^(?:\/|)(composer|package|yarn|pip|gemfile|pom|gradle|build|makefile)(?:\.(json|lock|yml|yaml|xml|properties))$/i',
+
+            /**
+             * 源代码文件检测（排除静态资源）
+             */
+            '/\.(?>php[3457s]?$|phtml$|phar$|inc$|phps$)(?![\w])/i',
+            '/\.(?>jspx?$|asp$|aspx?$|asmx$|ascx$|cer$|asa$|ashx$)(?![\w])/i',
+            '/\.(?>pl$|py$|rb$|rhtml$|sh$|bash$|csh$|ksh$|zsh$|cgi$|fcgi$|wsgi$)(?![\w])/i',
+            '/\.(?>java$|class$|jar$|war$|ear$|jspf$)(?![\w])/i',
 
             /**
              * 数据库文件和备份文件检测
              */
-            '/\.(?>sql|db|mdb|accdb|sqlite|dbf|mdf|ldf|frm|ibd|myd|myi|ndb)(?>\.[\w]+)?$/i',
-            '/\.(?>bak|old|backup|temp|tmp|swp|swo|swn)(?>\.[\w]+)?$/i',
-            '/\.(?>log|trace|debug|error|access|audit|out|err)(?>\.[\w]+)?$/i',
+            '/\.(?>sql$|db$|mdb$|accdb$|sqlite$|dbf$|mdf$|ldf$|frm$|ibd$|myd$|myi$|ndb$)(?![\w])/i',
+            '/\.(?>bak$|old$|backup$|temp$|tmp$|swp$|swo$|swn$)(?![\w])/i',
+            '/\.(?>log$|trace$|debug$|error$|access$|audit$|out$|err$)(?![\w])/i',
 
             /**
-             * 敏感目录路径检测
+             * 敏感目录路径检测（避免误报API路径）
+             * 优化：使用更精确的路径匹配，减少对 /api/* 等合法路径的误判
              */
-            '/(?:^|\/)(?>backup|temp|tmp|cache|session|logs|data|uploads|downloads)(?:\/|$)/i',
-            '/(?:^|\/)(?>node_modules|vendor|bower_components|dist|build|target|out|bin)(?:\/|$)/i',
-            '/(?:^|\/)(?>\.git|\.svn|\.hg|\.DS_Store|Thumbs\.db|desktop\.ini)(?:\/|$)/i',
-            '/(?:^|\/)(?>administrator|phpmyadmin|wp-admin|admin|dashboard|console|manager)(?:\/|$)/i',
-            '/(?:^|\/)(?>api|graphql|rest|soap|xmlrpc|jsonrpc)(?:\/|$)/i',
+            '/(?:^|\/)(?:backup$|temp$|tmp$|cache$|session$|logs$|data$|uploads$|downloads$)(?:\/|$)/i',
+            '/(?:^|\/)(?:node_modules$|vendor$|bower_components$|dist$|build$|target$|out$|bin$)(?:\/|$)/i',
+            '/(?:^|\/)(?:\.git$|\.svn$|\.hg$|\.DS_Store$|Thumbs\.db$|desktop\.ini$)(?:\/|$)/i',
+            '/(?:^|\/)(?:administrator$|phpmyadmin$|wp-admin$|admin$|dashboard$|console$|manager$)(?:\/|$)/i',
+
+            /**
+             * API相关路径豁免（避免误拦截正常API请求）
+             * 注意：这些路径不应该被拦截，所以不在检测列表中
 
             /**
              * 系统文档和许可证文件检测
              */
-            '/(?:readme|license|changelog|contributing|todo|faq|history|changes|release_notes)\.(?>md|txt|rst|html?|pdf)$/i',
+            '/^(?:\/|)(readme|license|changelog|contributing|todo|faq|history|changes|release_notes)\.(md|txt|rst|html?|pdf)$/i',
 
             /**
              * 开发工具和调试文件检测
              */
-            '/(?:webpack\.config|babel\.config|tsconfig|eslint|prettier|jest\.config)\.(?>js|ts|json)$/i',
-            '/(?:\.env\.|\.dockerignore|docker-compose|Dockerfile|\.travis|\.circleci)/i',
-            '/(?:\.vscode|\.idea|\.editorconfig|\.prettierrc|\.eslintrc)/i',
+            '/^(?:\/|)(webpack\.config|babel\.config|tsconfig|eslint|prettier|jest\.config)\.(js|ts|json)$/i',
+            '/^(?:\/|)(\.env\.|\.dockerignore|docker-compose|Dockerfile|\.travis|\.circleci)$/i',
+            '/^(?:\/|)(\.vscode|\.idea|\.editorconfig|\.prettierrc|\.eslintrc)$/i',
+
+            /**
+             * 危险操作和系统敏感路径（严格检测）
+             */
+            '/\/etc\/(?>passwd$|shadow$|hosts$)/i',
+            '/\/winnt\/system32/i',
+            '/\/windows\/system32/i',
+            '/php:\/\/(?>input$|filter$|glob$|data$|expect$)/i',
+            '/proc\/self\/(?:environ|fd|mem)/i',
+            '/sys\/kernel\//i',
         ];
     }
 
