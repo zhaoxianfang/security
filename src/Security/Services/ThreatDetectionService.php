@@ -119,6 +119,9 @@ class ThreatDetectionService
 
     /**
      * 检查可疑User-Agent
+     *
+     * 支持动态配置源（类方法、闭包、数组）
+     * 增强异常处理，避免配置错误导致系统异常
      */
     public function hasSuspiciousUserAgent(Request $request): bool
     {
@@ -128,23 +131,33 @@ class ThreatDetectionService
             return false;
         }
 
+        // 获取白名单模式（支持动态配置）
+        $whitelistPatternsConfig = $this->config->get('whitelist_user_agents', []);
+        $whitelistPatterns = $this->resolvePatterns($whitelistPatternsConfig, 'whitelist_user_agents');
+
         // 先检查白名单
-        $whitelistPatterns = $this->config->get('whitelist_user_agents', []);
-        foreach ($whitelistPatterns as $pattern) {
-            if (@preg_match($pattern, $userAgent)) {
-                return false;
+        if (!empty($whitelistPatterns)) {
+            foreach ($whitelistPatterns as $pattern) {
+                if (@preg_match($pattern, $userAgent)) {
+                    return false;
+                }
             }
         }
 
+        // 获取可疑模式（支持动态配置）
+        $suspiciousPatternsConfig = $this->config->get('suspicious_user_agents', []);
+        $suspiciousPatterns = $this->resolvePatterns($suspiciousPatternsConfig, 'suspicious_user_agents');
+
         // 检查黑名单
-        $suspiciousPatterns = $this->config->get('suspicious_user_agents', []);
-        foreach ($suspiciousPatterns as $pattern) {
-            if (@preg_match($pattern, $userAgent)) {
-                $this->logDetection('可疑User-Agent', [
-                    'user_agent' => Str::limit($userAgent, 100),
-                    'pattern' => $pattern
-                ]);
-                return true;
+        if (!empty($suspiciousPatterns)) {
+            foreach ($suspiciousPatterns as $pattern) {
+                if (@preg_match($pattern, $userAgent)) {
+                    $this->logDetection('可疑User-Agent', [
+                        'user_agent' => Str::limit($userAgent, 100),
+                        'pattern' => $pattern
+                    ]);
+                    return true;
+                }
             }
         }
 
@@ -153,18 +166,47 @@ class ThreatDetectionService
 
     /**
      * 检查可疑HTTP头
+     *
+     * 支持动态配置源，增强异常处理
+     * 支持配置项为数组或可调用对象
      */
     public function hasSuspiciousHeaders(Request $request): bool
     {
-        $suspiciousHeaders = $this->config->get('suspicious_headers', []);
+        $suspiciousHeadersConfig = $this->config->get('suspicious_headers', []);
+        $suspiciousHeaders = [];
 
+        // 处理动态配置源
+        if (is_callable($suspiciousHeadersConfig)) {
+            try {
+                $suspiciousHeaders = call_user_func($suspiciousHeadersConfig);
+            } catch (\Exception $e) {
+                $this->logDetection('可疑HTTP头配置读取失败', [
+                    'error' => $e->getMessage()
+                ]);
+                $suspiciousHeaders = [];
+            }
+        } elseif (is_array($suspiciousHeadersConfig)) {
+            $suspiciousHeaders = $suspiciousHeadersConfig;
+        }
+
+        if (empty($suspiciousHeaders)) {
+            return false;
+        }
+
+        // 遍历检查每个可疑头
         foreach ($suspiciousHeaders as $header => $pattern) {
+            // 跳过非关联数组的键
+            if (!is_string($header) || !is_string($pattern)) {
+                continue;
+            }
+
             if ($request->headers->has($header)) {
                 $value = $request->header($header);
                 if (@preg_match($pattern, $value)) {
                     $this->logDetection('可疑HTTP头', [
                         'header' => $header,
-                        'value' => $value
+                        'value' => Str::limit($value, 100),
+                        'pattern' => $pattern
                     ]);
                     return true;
                 }
@@ -213,10 +255,46 @@ class ThreatDetectionService
         $fullUrl = $request->fullUrl();
 
         // 1. 检查URL路径白名单（优先级最高）
-        $urlWhitelist = $this->config->get('url_whitelist_paths', []);
-        foreach ($urlWhitelist as $pattern) {
-            if (fnmatch($pattern, $path)) {
-                return true;
+        // 安全处理：配置项可能为数组或可调用对象
+        $urlWhitelistConfig = $this->config->get('url_whitelist_paths', []);
+        $urlWhitelist = [];
+
+        // 处理配置项为可调用对象的情况
+        if (is_callable($urlWhitelistConfig)) {
+            try {
+                $urlWhitelist = call_user_func($urlWhitelistConfig);
+            } catch (\Exception $e) {
+                $this->logDetection('URL白名单配置读取失败', [
+                    'error' => $e->getMessage()
+                ]);
+                $urlWhitelist = [];
+            }
+        } elseif (is_array($urlWhitelistConfig)) {
+            $urlWhitelist = $urlWhitelistConfig;
+        }
+
+        // 遍历白名单配置（支持简单字符串和复杂对象格式）
+        foreach ($urlWhitelist as $item) {
+            if (is_string($item)) {
+                // 简单字符串格式：直接匹配路径
+                if (fnmatch($item, $path)) {
+                    return true;
+                }
+            } elseif (is_array($item) && isset($item['path'])) {
+                // 复杂对象格式：支持路径、方法、级别等配置
+                $whitelistPath = $item['path'];
+                // 检查路径匹配
+                if (fnmatch($whitelistPath, $path)) {
+                    // 检查方法限制
+                    if (isset($item['methods']) && is_array($item['methods'])) {
+                        $currentMethod = $request->method();
+                        if (!in_array($currentMethod, $item['methods'], true)) {
+                            // 方法不匹配，继续检查其他白名单项
+                            continue;
+                        }
+                    }
+                    return true;
+                }
             }
         }
 
@@ -587,20 +665,29 @@ class ThreatDetectionService
 
     /**
      * 检查文件扩展名
+     *
+     * 支持动态配置源（类方法、闭包、数组）
+     * 增强异常处理
      */
     protected function isSafeFileExtension(UploadedFile $file): bool
     {
         $extension = strtolower($file->getClientOriginalExtension());
 
+        // 获取白名单（支持动态配置）
+        $whitelistConfig = $this->config->get('allowed_extensions_whitelist', []);
+        $whitelist = $this->resolvePatterns($whitelistConfig, 'allowed_extensions_whitelist');
+
         // 检查白名单
-        $whitelist = $this->config->get('allowed_extensions_whitelist', []);
-        if (in_array($extension, $whitelist)) {
+        if (in_array($extension, $whitelist, true)) {
             return true;
         }
 
+        // 获取黑名单（支持动态配置）
+        $disallowedConfig = $this->config->get('disallowed_extensions', []);
+        $disallowed = $this->resolvePatterns($disallowedConfig, 'disallowed_extensions');
+
         // 检查黑名单
-        $disallowed = $this->config->get('disallowed_extensions', []);
-        if (in_array($extension, $disallowed)) {
+        if (in_array($extension, $disallowed, true)) {
             $this->logDetection('危险文件扩展名', [
                 'extension' => $extension,
                 'filename' => $file->getClientOriginalName()
@@ -633,13 +720,19 @@ class ThreatDetectionService
 
     /**
      * 检查MIME类型
+     *
+     * 支持动态配置源（类方法、闭包、数组）
+     * 增强异常处理
      */
     protected function isSafeMimeType(UploadedFile $file): bool
     {
         $mimeType = $file->getMimeType();
-        $disallowed = $this->config->get('disallowed_mime_types', []);
 
-        if (in_array($mimeType, $disallowed)) {
+        // 获取禁止的MIME类型（支持动态配置）
+        $disallowedConfig = $this->config->get('disallowed_mime_types', []);
+        $disallowed = $this->resolvePatterns($disallowedConfig, 'disallowed_mime_types');
+
+        if (in_array($mimeType, $disallowed, true)) {
             $this->logDetection('危险MIME类型', [
                 'mime_type' => $mimeType,
                 'filename' => $file->getClientOriginalName()
@@ -1101,6 +1194,9 @@ class ThreatDetectionService
 
     /**
      * 获取预编译的正则表达式
+     *
+     * 支持动态配置源（类方法、闭包、数组）
+     * 增强异常处理
      */
     protected function getCompiledPatterns(string $type): array
     {
@@ -1110,7 +1206,10 @@ class ThreatDetectionService
             return self::$compiledPatterns[$cacheKey];
         }
 
-        $patterns = $this->config->get($type, []);
+        // 获取配置（支持动态配置）
+        $patternsConfig = $this->config->get($type, []);
+        $patterns = $this->resolvePatterns($patternsConfig, $type);
+
         $compiled = [];
 
         foreach ($patterns as $pattern) {
@@ -1122,6 +1221,64 @@ class ThreatDetectionService
 
         self::$compiledPatterns[$cacheKey] = $compiled;
         return $compiled;
+    }
+
+    /**
+     * 解析模式配置
+     *
+     * 支持多种配置源：
+     * - 静态数组
+     * - 类方法调用 [ClassName, method]
+     * - 字符串类方法 "ClassName::method"
+     * - 闭包函数
+     *
+     * @param mixed $config 配置值
+     * @param string $configKey 配置键名（用于日志）
+     * @return array 解析后的模式数组
+     */
+    protected function resolvePatterns(mixed $config, string $configKey): array
+    {
+        // 如果是数组，直接返回
+        if (is_array($config)) {
+            return $config;
+        }
+
+        // 如果是可调用对象，执行调用
+        if (is_callable($config)) {
+            try {
+                $result = call_user_func($config);
+                return is_array($result) ? $result : [];
+            } catch (\Exception $e) {
+                $this->logDetection("配置项 {$configKey} 调用失败", [
+                    'error' => $e->getMessage(),
+                    'config_type' => gettype($config),
+                ]);
+                return [];
+            }
+        }
+
+        // 如果是字符串，尝试解析类方法
+        if (is_string($config) && str_contains($config, '::')) {
+            try {
+                [$className, $methodName] = explode('::', $config, 2);
+                if (class_exists($className) && method_exists($className, $methodName)) {
+                    $result = call_user_func([$className, $methodName]);
+                    return is_array($result) ? $result : [];
+                }
+            } catch (\Exception $e) {
+                $this->logDetection("配置项 {$configKey} 解析失败", [
+                    'error' => $e->getMessage(),
+                    'config_value' => $config,
+                ]);
+                return [];
+            }
+        }
+
+        // 无法解析，返回空数组
+        $this->logDetection("配置项 {$configKey} 格式不支持", [
+            'config_type' => gettype($config),
+        ]);
+        return [];
     }
 
     /**

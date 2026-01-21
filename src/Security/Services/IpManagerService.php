@@ -434,6 +434,7 @@ class IpManagerService
      * 获取封禁时长 - 优化增强版
      *
      * 支持根据威胁评分动态调整封禁时长
+     * 配置项：adaptive_ban_duration
      *
      * @param string $type 事件类型
      * @param float $threatScore 威胁评分（0-100）
@@ -449,21 +450,31 @@ class IpManagerService
         $duration = $banDurationMap[$type] ?? $defaultDuration;
 
         // 根据威胁评分动态调整封禁时长
-        if ($threatScore > 0 && $this->config->get('enable_adaptive_ban_duration', true)) {
-            // 威胁评分越高，封禁时长越长
-            $adaptiveFactor = 1.0;
+        if ($threatScore > 0) {
+            // 获取自适应封禁配置（修正配置键路径）
+            $adaptiveConfig = $this->config->get('adaptive_ban_duration', []);
+            $enabled = $adaptiveConfig['enabled'] ?? false;
 
-            if ($threatScore >= 90) {
-                $adaptiveFactor = 10.0; // 10倍时长
-            } elseif ($threatScore >= 80) {
-                $adaptiveFactor = 5.0;  // 5倍时长
-            } elseif ($threatScore >= 70) {
-                $adaptiveFactor = 3.0;  // 3倍时长
-            } elseif ($threatScore >= 60) {
-                $adaptiveFactor = 2.0;  // 2倍时长
+            if ($enabled) {
+                // 从配置读取倍数
+                $multipliers = $adaptiveConfig['multipliers'] ?? [
+                    90 => 10,
+                    80 => 5,
+                    70 => 3,
+                    60 => 2,
+                ];
+
+                // 根据威胁评分应用倍数
+                $adaptiveFactor = 1.0;
+                foreach ($multipliers as $threshold => $multiplier) {
+                    if ($threatScore >= $threshold) {
+                        $adaptiveFactor = $multiplier;
+                        break;
+                    }
+                }
+
+                $duration = (int)($duration * $adaptiveFactor);
             }
-
-            $duration = (int)($duration * $adaptiveFactor);
         }
 
         // 确保不超过最大封禁时长

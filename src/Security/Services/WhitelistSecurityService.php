@@ -260,6 +260,8 @@ class WhitelistSecurityService
     /**
      * 检查请求是否达到频率限制
      *
+     * 使用Laravel内置缓存实现速率限制，避免依赖外部服务
+     *
      * @param Request $request HTTP请求
      * @return bool
      */
@@ -270,7 +272,6 @@ class WhitelistSecurityService
         }
 
         try {
-            $rateLimiter = app(RateLimiterService::class);
             $key = 'whitelist:' . $request->ip() . ':' . $request->path();
 
             // 白名单路径的频率限制更宽松
@@ -280,17 +281,29 @@ class WhitelistSecurityService
             ];
 
             foreach ($limits as $period => $maxRequests) {
-                if (!$rateLimiter->attempt($key, $maxRequests, $period)) {
+                $periodKey = $key . ':' . $period;
+                $currentCount = cache()->get($periodKey, 0);
+
+                if ($currentCount >= $maxRequests) {
                     Log::warning('白名单路径频率限制触发', [
                         'path' => $request->path(),
                         'ip' => $request->ip(),
                         'period' => $period,
+                        'count' => $currentCount,
+                        'max' => $maxRequests,
                     ]);
                     return true;
                 }
+
+                // 原子性递增计数器
+                cache()->put($periodKey, $currentCount + 1, $period);
             }
         } catch (Exception $e) {
-            // 忽略错误
+            Log::error('白名单路径频率限制检查失败', [
+                'error' => $e->getMessage(),
+                'path' => $request->path(),
+            ]);
+            // 忽略错误，放行请求
         }
 
         return false;
