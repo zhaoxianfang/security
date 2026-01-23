@@ -200,7 +200,7 @@ return [
         /**
          * 自动清理过期记录
          *
-         * 是否自动清理过期的IP记录, 默认关闭, 清理时会删除数据库记录
+         * 是否自动清理过期的IP记录, 默认关闭, 清理时会删除此ip的数据库记录
          * 类型：boolean
          * 默认值：true
          */
@@ -211,7 +211,7 @@ return [
          *
          * 监控类型的IP记录自动过期时间【auto_cleanup开启时有效】
          * 类型：integer
-         * 默认值：7
+         * 默认值：15
          */
         'monitoring_expire_days' => env('SECURITY_MONITORING_EXPIRE_DAYS', 15),
     ],
