@@ -305,6 +305,94 @@ class SecurityIp extends Model
     }
 
     /**
+     * 从黑名单中移除IP
+     *
+     * @param string $ip IP地址
+     * @return bool 是否成功移除
+     */
+    public static function removeFromBlacklist(string $ip): bool
+    {
+        try {
+            $records = self::query()
+                ->where('ip_address', $ip)
+                ->where('type', self::TYPE_BLACKLIST)
+                ->get();
+
+            if ($records->isEmpty()) {
+                return false;
+            }
+
+            foreach ($records as $record) {
+                // 触发删除事件
+                \Illuminate\Support\Facades\Event::dispatch(
+                    new \zxf\Security\Events\IpDeleted($record)
+                );
+            }
+
+            // 删除记录
+            $deleted = self::query()
+                ->where('ip_address', $ip)
+                ->where('type', self::TYPE_BLACKLIST)
+                ->delete();
+
+            // 清除缓存
+            self::clearIpCache($ip);
+
+            return $deleted > 0;
+        } catch (Throwable $e) {
+            Log::error('从黑名单移除IP失败: ' . $e->getMessage(), [
+                'ip' => $ip,
+                'exception' => $e
+            ]);
+            return false;
+        }
+    }
+
+    /**
+     * 从白名单中移除IP
+     *
+     * @param string $ip IP地址
+     * @return bool 是否成功移除
+     */
+    public static function removeFromWhitelist(string $ip): bool
+    {
+        try {
+            $records = self::query()
+                ->where('ip_address', $ip)
+                ->where('type', self::TYPE_WHITELIST)
+                ->get();
+
+            if ($records->isEmpty()) {
+                return false;
+            }
+
+            foreach ($records as $record) {
+                // 触发删除事件
+                \Illuminate\Support\Facades\Event::dispatch(
+                    new \zxf\Security\Events\IpDeleted($record)
+                );
+            }
+
+            // 删除记录
+            $deleted = self::query()
+                ->where('ip_address', $ip)
+                ->where('type', self::TYPE_WHITELIST)
+                ->delete();
+
+            // 清除缓存
+            self::clearIpCache($ip);
+
+            return $deleted > 0;
+        } catch (Throwable $e) {
+            Log::error('从白名单移除IP失败: ' . $e->getMessage(), [
+                'ip' => $ip,
+                'exception' => $e
+            ]);
+            return false;
+        }
+    }
+
+    /**
      * 批量检查IP状态 - 高性能批量查询
      *
      * 一次性检查多个IP的状态，减少数据库连接次数
@@ -318,38 +406,67 @@ class SecurityIp extends Model
      */
     public static function batchCheck(array $ips): array
     {
-        if (empty($ips)) {
+        try {
+            if (empty($ips) || !is_array($ips)) {
+                return [];
+            }
+
+            // 过滤无效IP
+            $validIps = array_filter($ips, function($ip) {
+                return is_string($ip) && !empty(trim($ip));
+            });
+
+            if (empty($validIps)) {
+                return [];
+            }
+
+            // 去重减少查询量
+            $uniqueIps = array_values(array_unique($validIps));
+
+            // 限制批量查询数量
+            $maxBatchSize = 1000;
+            if (count($uniqueIps) > $maxBatchSize) {
+                $uniqueIps = array_slice($uniqueIps, 0, $maxBatchSize);
+                Log::warning('批量IP检查超出限制，已截断', [
+                    'total' => count($validIps),
+                    'limited' => $maxBatchSize
+                ]);
+            }
+
+            // 批量查询数据库
+            $records = self::query()
+                ->select(['ip_address', 'type', 'status', 'expires_at'])
+                ->whereIn('ip_address', $uniqueIps)
+                ->where('is_range', false)
+                ->where('status', self::STATUS_ACTIVE)
+                ->where(function (Builder $query) {
+                    $query->whereNull('expires_at')
+                          ->orWhere('expires_at', '>', now());
+                })
+                ->limit($maxBatchSize)
+                ->get();
+
+            // 构建结果映射
+            $result = [];
+            foreach ($uniqueIps as $ip) {
+                $result[$ip] = 'none'; // 默认状态
+            }
+
+            foreach ($records as $record) {
+                if ($record && $record->status === self::STATUS_ACTIVE) {
+                    $result[$record->ip_address] = $record->type;
+                }
+            }
+
+            return $result;
+        } catch (Throwable $e) {
+            Log::error('批量IP检查失败: ' . $e->getMessage(), [
+                'ips_count' => is_array($ips) ? count($ips) : 0,
+                'exception' => $e
+            ]);
+            // 返回空结果，避免影响系统运行
             return [];
         }
-
-        // 去重减少查询量
-        $uniqueIps = array_unique($ips);
-
-        // 批量查询数据库
-        $records = self::query()
-            ->select(['ip_address', 'type', 'status', 'expires_at'])
-            ->whereIn('ip_address', $uniqueIps)
-            ->where('is_range', false)
-            ->where('status', self::STATUS_ACTIVE)
-            ->where(function (Builder $query) {
-                $query->whereNull('expires_at')
-                      ->orWhere('expires_at', '>', now());
-            })
-            ->get();
-
-        // 构建结果映射
-        $result = [];
-        foreach ($uniqueIps as $ip) {
-            $result[$ip] = 'none'; // 默认状态
-        }
-
-        foreach ($records as $record) {
-            if ($record->status === self::STATUS_ACTIVE) {
-                $result[$record->ip_address] = $record->type;
-            }
-        }
-
-        return $result;
     }
 
     /**
@@ -395,22 +512,26 @@ class SecurityIp extends Model
 
                 // 如果记录不存在，创建新记录
                 if ($affected === 0) {
-                    $ipRecord = self::create([
-                        'ip_address' => $ip,
-                        'is_range' => false,
-                        'type' => self::TYPE_MONITORING,
-                        'status' => self::STATUS_ACTIVE,
-                        'reason' => '正常监控',
-                        'first_seen_at' => now(),
-                        'last_request_at' => now(),
-                        'threat_score' => $blocked ? 10.00 : 0.00,
-                        'request_count' => 1,
-                        'blocked_count' => $blocked ? 1 : 0,
-                        'success_count' => $blocked ? 0 : 1,
-                        'auto_detected' => false,
-                        'trigger_count' => 0,
-                        'trigger_rules' => [],
-                    ]);
+                    if(security_config('ip_auto_detection.record_normal_visitor', false)) {
+                        $ipRecord = self::create([
+                            'ip_address' => $ip,
+                            'is_range' => false,
+                            'type' => self::TYPE_MONITORING,
+                            'status' => self::STATUS_ACTIVE,
+                            'reason' => '正常监控',
+                            'first_seen_at' => now(),
+                            'last_request_at' => now(),
+                            'threat_score' => $blocked ? 10.00 : 0.00,
+                            'request_count' => 1,
+                            'blocked_count' => $blocked ? 1 : 0,
+                            'success_count' => $blocked ? 0 : 1,
+                            'auto_detected' => false,
+                            'trigger_count' => 0,
+                            'trigger_rules' => [],
+                        ]);
+                    }else{
+                        $ipRecord = null;
+                    }
                 } else {
                     // 查询更新后的记录
                     $ipRecord = self::query()
@@ -452,7 +573,7 @@ class SecurityIp extends Model
                 return $ipRecord;
             }, 3); // 最多重试3次
 
-        } catch (Exception $e) {
+        } catch (Throwable $e) {
             Log::error('记录IP访问失败: ' . $e->getMessage(), [
                 'ip' => $ip,
                 'blocked' => $blocked,
@@ -552,25 +673,27 @@ class SecurityIp extends Model
                                 }
                             }
                         } else {
-                            // 记录不存在，创建新记录
-                            $threatScore = $stats['blocked'] > 0 ? min(100.00, $stats['blocked'] * 10) : 0.00;
-                            self::create([
-                                'ip_address' => $ip,
-                                'is_range' => false,
-                                'type' => $threatScore >= 50 ? self::TYPE_SUSPICIOUS : self::TYPE_MONITORING,
-                                'status' => self::STATUS_ACTIVE,
-                                'reason' => $threatScore >= 50 ? '可疑监控' : '正常监控',
-                                'first_seen_at' => now(),
-                                'last_request_at' => now(),
-                                'threat_score' => $threatScore,
-                                'request_count' => $stats['blocked'] + $stats['success'],
-                                'blocked_count' => $stats['blocked'],
-                                'success_count' => $stats['success'],
-                                'auto_detected' => $stats['blocked'] > 0,
-                                'trigger_count' => $stats['blocked'] > 0 ? 1 : 0,
-                                'trigger_rules' => $stats['blocked'] > 0 && $rule ? [$rule] : [],
-                            ]);
-                            $successCount++;
+                            if(security_config('ip_auto_detection.record_normal_visitor', false)) {
+                                // 记录不存在，创建新记录
+                                $threatScore = $stats['blocked'] > 0 ? min(100.00, $stats['blocked'] * 10) : 0.00;
+                                self::create([
+                                    'ip_address' => $ip,
+                                    'is_range' => false,
+                                    'type' => $threatScore >= 50 ? self::TYPE_SUSPICIOUS : self::TYPE_MONITORING,
+                                    'status' => self::STATUS_ACTIVE,
+                                    'reason' => $threatScore >= 50 ? '可疑监控' : '正常监控',
+                                    'first_seen_at' => now(),
+                                    'last_request_at' => now(),
+                                    'threat_score' => $threatScore,
+                                    'request_count' => $stats['blocked'] + $stats['success'],
+                                    'blocked_count' => $stats['blocked'],
+                                    'success_count' => $stats['success'],
+                                    'auto_detected' => $stats['blocked'] > 0,
+                                    'trigger_count' => $stats['blocked'] > 0 ? 1 : 0,
+                                    'trigger_rules' => $stats['blocked'] > 0 && $rule ? [$rule] : [],
+                                ]);
+                                $successCount++;
+                            }
                         }
                     }
                 }
@@ -582,7 +705,7 @@ class SecurityIp extends Model
                 return $successCount;
             });
 
-        } catch (Exception $e) {
+        } catch (Throwable $e) {
             Log::error('批量记录IP访问失败: ' . $e->getMessage(), [
                 'records_count' => count($records),
                 'exception' => $e
@@ -691,7 +814,7 @@ class SecurityIp extends Model
             self::clearIpCache($this->ip_address);
 
             // 触发类型变更事件（可用于集成其他系统）
-            event(new IpTypeChanged($this, $originalType, $this->type));
+            \Illuminate\Support\Facades\Event::dispatch(new IpTypeChanged($this, $originalType, $this->type));
 
             if ($debugLogging) {
                 Log::info("IP类型变更: {$originalType} -> {$this->type}");
@@ -804,19 +927,31 @@ class SecurityIp extends Model
             'last_request_at' => now(),
         ];
 
-        $ipRecord = self::updateOrCreate(
-            [
-                'ip_address' => $data['ip_address'],
-                'is_range' => $isRange,
-            ],
-            $data
-        );
+        // 检查记录是否已存在
+        $existing = self::where('ip_address', $data['ip_address'])
+            ->where('is_range', $isRange)
+            ->first();
+
+        if ($existing) {
+            // 更新现有记录
+            $existing->update($data);
+            $ipRecord = $existing->fresh();
+            // 触发更新事件
+            \Illuminate\Support\Facades\Event::dispatch(new \zxf\Security\Events\IpUpdated($ipRecord, $data));
+        } else {
+            if(security_config('ip_auto_detection.record_normal_visitor', false)){
+                // 创建新记录
+                $ipRecord = self::create($data);
+                // 触发创建事件
+                \Illuminate\Support\Facades\Event::dispatch(new \zxf\Security\Events\IpCreated($ipRecord));
+            }
+        }
 
         // 清除缓存
         self::clearIpCache($ip);
 
         // 触发添加事件
-        event(new IpAdded($ipRecord));
+        \Illuminate\Support\Facades\Event::dispatch(new \zxf\Security\Events\IpAdded($ipRecord));
 
         return $ipRecord;
     }
@@ -918,7 +1053,7 @@ class SecurityIp extends Model
 
             return $totalDeleted;
 
-        } catch (Exception $e) {
+        } catch (Throwable $e) {
             Log::error('清理IP记录失败', [
                 'error' => $e->getMessage(),
                 'exception' => $e

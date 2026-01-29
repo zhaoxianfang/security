@@ -446,16 +446,20 @@ class SecurityException extends Exception
      */
     public function getSuggestedAction(): string
     {
-        return match($this->type) {
-            self::TYPE_MALICIOUS_REQUEST => '记录攻击并考虑封禁IP',
-            self::TYPE_RATE_LIMIT => '建议用户等待后重试',
-            self::TYPE_IP_BLACKLIST => 'IP已在黑名单，无需额外处理',
-            self::TYPE_CONFIGURATION_ERROR => '检查并修复配置文件',
-            self::TYPE_DETECTION_ERROR => '检查安全检测组件',
-            self::TYPE_VALIDATION_ERROR => '验证用户输入并返回错误信息',
-            self::TYPE_SYSTEM_ERROR => '检查系统日志并联系管理员',
-            default => '记录异常并监控',
-        };
+        try {
+            return match($this->type) {
+                self::TYPE_MALICIOUS_REQUEST => '记录攻击并考虑封禁IP',
+                self::TYPE_RATE_LIMIT => '建议用户等待后重试',
+                self::TYPE_IP_BLACKLIST => 'IP已在黑名单，无需额外处理',
+                self::TYPE_CONFIGURATION_ERROR => '检查并修复配置文件',
+                self::TYPE_DETECTION_ERROR => '检查安全检测组件',
+                self::TYPE_VALIDATION_ERROR => '验证用户输入并返回错误信息',
+                self::TYPE_SYSTEM_ERROR => '检查系统日志并联系管理员',
+                default => '记录异常并监控',
+            };
+        } catch (Throwable $e) {
+            return '记录异常并监控';
+        }
     }
 
     /**

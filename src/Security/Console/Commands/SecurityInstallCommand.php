@@ -71,7 +71,7 @@ class SecurityInstallCommand extends Command
 
             return self::SUCCESS;
 
-        } catch (Exception $e) {
+        } catch (Throwable $e) {
             $this->error('安装过程中发生错误: ' . $e->getMessage());
 
             if (!$this->option('silently')) {
@@ -226,7 +226,7 @@ class SecurityInstallCommand extends Command
                 }
             }
 
-        } catch (Exception $e) {
+        } catch (Throwable $e) {
             $this->error('  ❌ 数据库迁移失败: ' . $e->getMessage());
 
             if (!$this->option('silently')) {

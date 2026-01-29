@@ -636,31 +636,57 @@ class ThreatDetectionService
      */
     protected function isSafeFile($file): bool
     {
-        if (!$file instanceof UploadedFile) {
+        try {
+            if (!$file instanceof UploadedFile) {
+                return true;
+            }
+
+            // 检查文件上传是否有错误
+            if ($file->getError() !== UPLOAD_ERR_OK) {
+                $this->logDetection('文件上传错误', [
+                    'filename' => $file->getClientOriginalName(),
+                    'error_code' => $file->getError(),
+                ]);
+                return false;
+            }
+
+            // 检查文件是否存在
+            if (!$file->isValid()) {
+                $this->logDetection('文件无效', [
+                    'filename' => $file->getClientOriginalName(),
+                ]);
+                return false;
+            }
+
+            // 检查文件扩展名
+            if (!$this->isSafeFileExtension($file)) {
+                return false;
+            }
+
+            // 检查文件大小
+            if (!$this->isSafeFileSize($file)) {
+                return false;
+            }
+
+            // 检查MIME类型
+            if (!$this->isSafeMimeType($file)) {
+                return false;
+            }
+
+            // 可选的文件内容检查
+            if ($this->config->get('enable_file_content_check', false)) {
+                return $this->isSafeFileContent($file);
+            }
+
+            return true;
+        } catch (Throwable $e) {
+            $this->logDetection('文件安全检查异常', [
+                'filename' => $file instanceof UploadedFile ? $file->getClientOriginalName() : 'unknown',
+                'error' => $e->getMessage(),
+            ]);
+            // 异常时放行，避免影响正常文件上传
             return true;
         }
-
-        // 检查文件扩展名
-        if (!$this->isSafeFileExtension($file)) {
-            return false;
-        }
-
-        // 检查文件大小
-        if (!$this->isSafeFileSize($file)) {
-            return false;
-        }
-
-        // 检查MIME类型
-        if (!$this->isSafeMimeType($file)) {
-            return false;
-        }
-
-        // 可选的文件内容检查
-        if ($this->config->get('enable_file_content_check', false)) {
-            return $this->isSafeFileContent($file);
-        }
-
-        return true;
     }
 
     /**
@@ -703,19 +729,36 @@ class ThreatDetectionService
      */
     protected function isSafeFileSize(UploadedFile $file): bool
     {
-        $maxSize = $this->config->get('max_file_size', 50 * 1024 * 1024);
-        $fileSize = $file->getSize();
+        try {
+            $maxSize = $this->config->get('max_file_size', 50 * 1024 * 1024);
+            $fileSize = $file->getSize();
 
-        if ($fileSize > $maxSize) {
-            $this->logDetection('文件大小超限', [
-                'size' => $fileSize,
-                'max_size' => $maxSize,
-                'filename' => $file->getClientOriginalName()
+            // 检查文件大小是否有效
+            if ($fileSize < 0) {
+                $this->logDetection('文件大小无效', [
+                    'size' => $fileSize,
+                    'filename' => $file->getClientOriginalName()
+                ]);
+                return false;
+            }
+
+            if ($fileSize > $maxSize) {
+                $this->logDetection('文件大小超限', [
+                    'size' => $fileSize,
+                    'max_size' => $maxSize,
+                    'filename' => $file->getClientOriginalName()
+                ]);
+                return false;
+            }
+
+            return true;
+        } catch (Throwable $e) {
+            $this->logDetection('文件大小检查异常', [
+                'filename' => $file->getClientOriginalName(),
+                'error' => $e->getMessage(),
             ]);
             return false;
         }
-
-        return true;
     }
 
     /**
@@ -726,21 +769,39 @@ class ThreatDetectionService
      */
     protected function isSafeMimeType(UploadedFile $file): bool
     {
-        $mimeType = $file->getMimeType();
+        try {
+            $mimeType = $file->getMimeType();
 
-        // 获取禁止的MIME类型（支持动态配置）
-        $disallowedConfig = $this->config->get('disallowed_mime_types', []);
-        $disallowed = $this->resolvePatterns($disallowedConfig, 'disallowed_mime_types');
+            // 检查MIME类型是否有效
+            if (empty($mimeType) || !is_string($mimeType)) {
+                $this->logDetection('MIME类型无效', [
+                    'mime_type' => $mimeType,
+                    'filename' => $file->getClientOriginalName()
+                ]);
+                return false;
+            }
 
-        if (in_array($mimeType, $disallowed, true)) {
-            $this->logDetection('危险MIME类型', [
-                'mime_type' => $mimeType,
-                'filename' => $file->getClientOriginalName()
+            // 获取禁止的MIME类型（支持动态配置）
+            $disallowedConfig = $this->config->get('disallowed_mime_types', []);
+            $disallowed = $this->resolvePatterns($disallowedConfig, 'disallowed_mime_types');
+
+            if (in_array($mimeType, $disallowed, true)) {
+                $this->logDetection('危险MIME类型', [
+                    'mime_type' => $mimeType,
+                    'filename' => $file->getClientOriginalName()
+                ]);
+                return false;
+            }
+
+            return true;
+        } catch (Throwable $e) {
+            $this->logDetection('MIME类型检查异常', [
+                'filename' => $file->getClientOriginalName(),
+                'error' => $e->getMessage(),
             ]);
-            return false;
+            // 异常时放行，避免影响正常文件上传
+            return true;
         }
-
-        return true;
     }
 
     /**
@@ -749,7 +810,37 @@ class ThreatDetectionService
     protected function isSafeFileContent(UploadedFile $file): bool
     {
         try {
-            $content = file_get_contents($file->getPathname());
+            $filePath = $file->getPathname();
+
+            // 检查文件是否存在
+            if (!file_exists($filePath) || !is_readable($filePath)) {
+                $this->logDetection('文件不存在或不可读', [
+                    'filename' => $file->getClientOriginalName(),
+                    'path' => $filePath
+                ]);
+                return false;
+            }
+
+            $content = file_get_contents($filePath);
+
+            // 检查内容是否为空
+            if ($content === false || empty($content)) {
+                // 空文件不一定是危险的，跳过检查
+                return true;
+            }
+
+            // 限制内容检查大小，避免内存问题
+            $maxContentCheckSize = 10 * 1024 * 1024; // 10MB
+            $contentLength = strlen($content);
+            if ($contentLength > $maxContentCheckSize) {
+                $this->logDetection('文件过大，跳过内容检查', [
+                    'filename' => $file->getClientOriginalName(),
+                    'size' => $contentLength,
+                    'max_size' => $maxContentCheckSize
+                ]);
+                return true;
+            }
+
             $patterns = $this->getCompiledPatterns('body_patterns');
 
             foreach ($patterns as $pattern) {
@@ -761,10 +852,10 @@ class ThreatDetectionService
                     return false;
                 }
             }
-        } catch (Exception $e) {
+        } catch (Throwable $e) {
             $this->logDetection('文件内容检查失败', [
                 'filename' => $file->getClientOriginalName(),
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
             ]);
         }
 
@@ -1238,47 +1329,47 @@ class ThreatDetectionService
      */
     protected function resolvePatterns(mixed $config, string $configKey): array
     {
-        // 如果是数组，直接返回
-        if (is_array($config)) {
-            return $config;
-        }
+        try {
+            // 如果是数组，直接返回
+            if (is_array($config)) {
+                return $config;
+            }
 
-        // 如果是可调用对象，执行调用
-        if (is_callable($config)) {
-            try {
+            // 如果是可调用对象，执行调用
+            if (is_callable($config)) {
                 $result = call_user_func($config);
                 return is_array($result) ? $result : [];
-            } catch (\Exception $e) {
-                $this->logDetection("配置项 {$configKey} 调用失败", [
-                    'error' => $e->getMessage(),
-                    'config_type' => gettype($config),
-                ]);
-                return [];
             }
-        }
 
-        // 如果是字符串，尝试解析类方法
-        if (is_string($config) && str_contains($config, '::')) {
-            try {
-                [$className, $methodName] = explode('::', $config, 2);
-                if (class_exists($className) && method_exists($className, $methodName)) {
-                    $result = call_user_func([$className, $methodName]);
-                    return is_array($result) ? $result : [];
+            // 如果是字符串，尝试解析类方法
+            if (is_string($config) && str_contains($config, '::')) {
+                try {
+                    [$className, $methodName] = explode('::', $config, 2);
+                    if (class_exists($className) && method_exists($className, $methodName)) {
+                        $result = call_user_func([$className, $methodName]);
+                        return is_array($result) ? $result : [];
+                    }
+                } catch (Throwable $e) {
+                    $this->logDetection("配置项 {$configKey} 解析失败", [
+                        'error' => $e->getMessage(),
+                        'config_value' => $config,
+                    ]);
+                    return [];
                 }
-            } catch (\Exception $e) {
-                $this->logDetection("配置项 {$configKey} 解析失败", [
-                    'error' => $e->getMessage(),
-                    'config_value' => $config,
-                ]);
-                return [];
             }
-        }
 
-        // 无法解析，返回空数组
-        $this->logDetection("配置项 {$configKey} 格式不支持", [
-            'config_type' => gettype($config),
-        ]);
-        return [];
+            // 无法解析，返回空数组
+            $this->logDetection("配置项 {$configKey} 格式不支持", [
+                'config_type' => gettype($config),
+            ]);
+            return [];
+        } catch (Throwable $e) {
+            $this->logDetection("配置项 {$configKey} 处理异常", [
+                'error' => $e->getMessage(),
+                'config_type' => gettype($config ?? 'null'),
+            ]);
+            return [];
+        }
     }
 
     /**

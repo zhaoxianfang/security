@@ -2,7 +2,7 @@
 
 namespace zxf\Security\Utils;
 
-use Exception;
+use Throwable;
 use Illuminate\Support\Facades\Log;
 use Throwable;
 

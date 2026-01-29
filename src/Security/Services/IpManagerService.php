@@ -131,7 +131,7 @@ class IpManagerService
 
             return null;
 
-        } catch (Exception $e) {
+        } catch (Throwable $e) {
             Log::error("记录IP访问异常: " . $e->getMessage(), [
                 'ip' => $clientIp ?? 'unknown',
                 'blocked' => $blocked,
@@ -202,7 +202,7 @@ class IpManagerService
 
             return true;
 
-        } catch (Exception $e) {
+        } catch (Throwable $e) {
             Log::error("封禁IP失败: " . $e->getMessage(), [
                 'ip' => $clientIp,
                 'type' => $type,
@@ -241,7 +241,7 @@ class IpManagerService
 
             return false;
 
-        } catch (Exception $e) {
+        } catch (Throwable $e) {
             Log::error("解除IP封禁失败: " . $e->getMessage(), [
                 'ip' => $ip,
                 'exception' => $e
@@ -255,29 +255,57 @@ class IpManagerService
      */
     public function getClientRealIp(Request $request): string
     {
-        $ip = $request->ip();
+        try {
+            $ip = $request->ip();
 
-        // 获取信任的代理配置
-        $trustedProxies = $this->config->get('trusted_proxies', []);
-        $trustedHeaders = $this->config->get('trusted_headers', self::TRUSTED_HEADERS);
+            // 验证基础IP有效性
+            if (empty($ip)) {
+                Log::warning('无法获取客户端IP地址');
+                return '0.0.0.0';
+            }
 
-        // 如果请求来自信任的代理，检查代理头
-        if (!empty($trustedProxies) && in_array($ip, $trustedProxies)) {
-            foreach ($trustedHeaders as $header) {
-                if ($request->headers->has($header)) {
-                    $ips = explode(',', $request->header($header));
-                    $candidate = trim($ips[0]);
+            // 获取信任的代理配置
+            $trustedProxies = $this->config->get('trusted_proxies', []);
+            $trustedHeaders = $this->config->get('trusted_headers', self::TRUSTED_HEADERS);
 
-                    // 验证IP地址
-                    if ($this->isValidIp($candidate) && !$this->isPrivateIp($candidate)) {
-                        $ip = $candidate;
-                        break;
+            // 如果请求来自信任的代理，检查代理头
+            if (!empty($trustedProxies) && is_array($trustedProxies) && in_array($ip, $trustedProxies, true)) {
+                foreach ($trustedHeaders as $header) {
+                    if ($request->headers->has($header)) {
+                        $headerValue = $request->header($header);
+                        if (empty($headerValue)) {
+                            continue;
+                        }
+
+                        $ips = explode(',', $headerValue);
+                        if (empty($ips) || !isset($ips[0])) {
+                            continue;
+                        }
+
+                        $candidate = trim($ips[0]);
+
+                        // 验证IP地址
+                        if ($this->isValidIp($candidate) && !$this->isPrivateIp($candidate)) {
+                            $ip = $candidate;
+                            break;
+                        }
                     }
                 }
             }
-        }
 
-        return filter_var($ip, FILTER_VALIDATE_IP) ? $ip : '0.0.0.0';
+            // 最终验证IP有效性
+            if (filter_var($ip, FILTER_VALIDATE_IP)) {
+                return $ip;
+            }
+
+            Log::warning('IP地址验证失败，使用默认IP', ['ip' => $ip]);
+            return '0.0.0.0';
+        } catch (Throwable $e) {
+            Log::error('获取客户端真实IP异常: ' . $e->getMessage(), [
+                'exception' => $e
+            ]);
+            return '0.0.0.0';
+        }
     }
 
     /**
@@ -297,7 +325,7 @@ class IpManagerService
 
             return is_bool($result) ? $result : false;
 
-        } catch (Exception $e) {
+        } catch (Throwable $e) {
             Log::error('自定义白名单检查失败: ' . $e->getMessage(), [
                 'handler' => $handler,
                 'ip' => $ip,
@@ -324,7 +352,7 @@ class IpManagerService
 
             return is_bool($result) ? $result : false;
 
-        } catch (Exception $e) {
+        } catch (Throwable $e) {
             Log::error('自定义黑名单检查失败: ' . $e->getMessage(), [
                 'handler' => $handler,
                 'ip' => $ip,
@@ -533,35 +561,45 @@ class IpManagerService
      */
     protected function resolveCallable($handler)
     {
-        if (is_callable($handler)) {
-            return $handler;
-        }
-
-        if (is_array($handler) && count($handler) === 2) {
-            $class = $handler[0];
-            $method = $handler[1];
-
-            if (is_string($class) && class_exists($class)) {
-                return [app($class), $method];
+        try {
+            if (is_callable($handler)) {
+                return $handler;
             }
 
-            return $handler;
-        }
+            if (is_array($handler) && count($handler) === 2) {
+                $class = $handler[0];
+                $method = $handler[1];
 
-        if (is_string($handler)) {
-            // 处理 Class::method 格式
-            if (str_contains($handler, '::')) {
-                [$class, $method] = explode('::', $handler, 2);
-                if (class_exists($class)) {
+                if (is_string($class) && class_exists($class)) {
                     return [app($class), $method];
                 }
+
+                return $handler;
             }
 
-            // 直接返回字符串（可能是函数名）
-            return $handler;
-        }
+            if (is_string($handler)) {
+                // 处理 Class::method 格式
+                if (str_contains($handler, '::')) {
+                    [$class, $method] = explode('::', $handler, 2);
+                    if (class_exists($class) && method_exists($class, $method)) {
+                        return [app($class), $method];
+                    }
+                }
 
-        throw new InvalidArgumentException('无法解析的可调用对象: ' . gettype($handler));
+                // 直接返回字符串（可能是函数名）
+                return $handler;
+            }
+
+            throw new InvalidArgumentException('无法解析的可调用对象: ' . gettype($handler));
+        } catch (Throwable $e) {
+            Log::error('解析可调用对象失败', [
+                'handler' => $handler,
+                'handler_type' => gettype($handler),
+                'error' => $e->getMessage(),
+                'exception' => $e
+            ]);
+            throw new InvalidArgumentException('无法解析的可调用对象: ' . gettype($handler), 0, $e);
+        }
     }
 
     /**
@@ -735,7 +773,7 @@ class IpManagerService
             SecurityIp::addToWhitelist($ip, $reason, $expiresAt);
             $this->clearIpCache($ip);
             return true;
-        } catch (Exception $e) {
+        } catch (Throwable $e) {
             Log::error('添加IP到白名单失败: ' . $e->getMessage(), [
                 'ip' => $ip,
                 'reason' => $reason,
@@ -754,7 +792,7 @@ class IpManagerService
             SecurityIp::addToBlacklist($ip, $reason, $expiresAt, $autoDetected);
             $this->clearIpCache($ip);
             return true;
-        } catch (Exception $e) {
+        } catch (Throwable $e) {
             Log::error('添加IP到黑名单失败: ' . $e->getMessage(), [
                 'ip' => $ip,
                 'reason' => $reason,

@@ -88,58 +88,83 @@ class RateLimiterService
      */
     public function check(Request $request): array
     {
-        // 快速失败：检查是否启用限流
-        if (!$this->config->get('enable_rate_limiting', true)) {
-            return $this->getAllowResponse();
-        }
-
-        // 白名单IP快速通道
-        if ($this->isWhitelisted($request)) {
-            return $this->getAllowResponse();
-        }
-
-        // 获取指纹和限制配置
-        $fingerprint = $this->getRequestFingerprint($request);
-        $limits = $this->config->get('rate_limits', $this->getDefaultLimits());
-
-        // 检查各时间窗口限制
-        foreach ($limits as $window => $limit) {
-            if (!$this->isValidWindow($window)) {
-                continue;
+        try {
+            // 快速失败：检查是否启用限流
+            if (!$this->config->get('enable_rate_limiting', true)) {
+                return $this->getAllowResponse();
             }
 
-            $count = $this->getRequestCount($fingerprint, $window);
-
-            // 触发限流
-            if ($count >= $limit) {
-                $this->recordBlockStats($window); // 记录统计
-
-                $response = [
-                    'blocked' => true,
-                    'type' => 'RateLimit',
-                    'reason' => "{$window}速率超限",
-                    'details' => [
-                        'window' => $window,
-                        'current' => $count,
-                        'limit' => $limit,
-                        'retry_after' => self::TIME_WINDOWS[$window],
-                        'fingerprint' => substr($fingerprint, 0, 12) . '...',
-                        'ip' => $request->ip(),
-                        'path' => $request->path(),
-                        'method' => $request->method(),
-                    ],
-                ];
-
-                $this->logRateLimitEvent($request, $window, $count, $limit);
-
-                return $response;
+            // 验证请求对象
+            if (!$request || !method_exists($request, 'ip')) {
+                Log::warning('无效的请求对象，跳过限流检查');
+                return $this->getAllowResponse();
             }
+
+            // 白名单IP快速通道
+            if ($this->isWhitelisted($request)) {
+                return $this->getAllowResponse();
+            }
+
+            // 获取指纹和限制配置
+            $fingerprint = $this->getRequestFingerprint($request);
+            if (empty($fingerprint)) {
+                Log::warning('无法生成请求指纹，跳过限流检查');
+                return $this->getAllowResponse();
+            }
+
+            $limits = $this->config->get('rate_limits', $this->getDefaultLimits());
+
+            // 检查各时间窗口限制
+            foreach ($limits as $window => $limit) {
+                if (!$this->isValidWindow($window)) {
+                    continue;
+                }
+
+                // 验证limit为正整数
+                if (!is_int($limit) || $limit <= 0) {
+                    Log::warning("无效的限流阈值: {$window}", ['limit' => $limit]);
+                    continue;
+                }
+
+                $count = $this->getRequestCount($fingerprint, $window);
+
+                // 触发限流
+                if ($count >= $limit) {
+                    $this->recordBlockStats($window); // 记录统计
+
+                    $response = [
+                        'blocked' => true,
+                        'type' => 'RateLimit',
+                        'reason' => "{$window}速率超限",
+                        'details' => [
+                            'window' => $window,
+                            'current' => $count,
+                            'limit' => $limit,
+                            'retry_after' => self::TIME_WINDOWS[$window] ?? 60,
+                            'fingerprint' => substr($fingerprint, 0, 12) . '...',
+                            'ip' => $request->ip() ?? 'unknown',
+                            'path' => $request->path() ?? 'unknown',
+                            'method' => $request->method() ?? 'unknown',
+                        ],
+                    ];
+
+                    $this->logRateLimitEvent($request, $window, $count, $limit);
+
+                    return $response;
+                }
+            }
+
+            // 增加计数器（异步）
+            $this->incrementCounters($fingerprint);
+
+            return $this->getAllowResponse();
+        } catch (Throwable $e) {
+            Log::error('速率限制检查异常: ' . $e->getMessage(), [
+                'exception' => $e
+            ]);
+            // 异常时放行，避免影响正常业务
+            return $this->getAllowResponse();
         }
-
-        // 增加计数器（异步）
-        $this->incrementCounters($fingerprint);
-
-        return $this->getAllowResponse();
     }
 
     /**
@@ -281,7 +306,7 @@ class RateLimiterService
                 if (is_string($result) && strlen($result) > 0) {
                     return $result;
                 }
-            } catch (Exception $e) {
+            } catch (Throwable $e) {
                 Log::error('自定义指纹生成失败: ' . $e->getMessage(), [
                     'handler' => $handler,
                     'exception' => $e,
@@ -356,7 +381,7 @@ class RateLimiterService
 
                 $redis->eval($script, 1, $key, $ttl);
             }
-        } catch (Exception $e) {
+        } catch (Throwable $e) {
             Log::error('Redis限流计数失败: ' . $e->getMessage());
             // 降级到通用实现
             $this->incrementWithGeneric($fingerprint);
@@ -396,7 +421,7 @@ class RateLimiterService
                     $redis->expire($key, $ttl);
                 }
             }
-        } catch (Exception $e) {
+        } catch (Throwable $e) {
             // 忽略TTL设置错误
         }
     }
@@ -413,7 +438,7 @@ class RateLimiterService
                 $redis = Cache::store()->connection();
                 $redis->incr($statsKey);
                 $redis->expire($statsKey, 86400); // 24小时过期
-            } catch (Exception $e) {
+            } catch (Throwable $e) {
                 // 忽略统计错误
             }
         }
@@ -461,7 +486,17 @@ class RateLimiterService
      */
     private function isRedisDriver(): bool
     {
-        return config('cache.default') === 'redis' && method_exists(Cache::store(), 'connection');
+        try {
+            $defaultDriver = config('cache.default');
+            if ($defaultDriver === 'redis') {
+                $cacheStore = Cache::store();
+                return $cacheStore && method_exists($cacheStore, 'connection');
+            }
+            return false;
+        } catch (Throwable $e) {
+            Log::error('检查Redis驱动失败: ' . $e->getMessage());
+            return false;
+        }
     }
 
     /**
@@ -470,14 +505,33 @@ class RateLimiterService
     private function executeRedisPipeline(array $commands): array
     {
         try {
-            $redis = Cache::store()->connection();
+            $cacheStore = Cache::store();
+            if (!$cacheStore || !method_exists($cacheStore, 'connection')) {
+                return [];
+            }
+
+            $redis = $cacheStore->connection();
+            if (!$redis) {
+                Log::warning('Redis连接不存在');
+                return [];
+            }
+
             return $redis->pipeline(function ($pipe) use ($commands) {
                 foreach ($commands as $cmd) {
-                    $pipe->{$cmd[0]}(...array_slice($cmd, 1));
+                    if (is_array($cmd) && count($cmd) > 0 && isset($cmd[0])) {
+                        $method = $cmd[0];
+                        $args = array_slice($cmd, 1);
+                        if (method_exists($pipe, $method)) {
+                            $pipe->$method(...$args);
+                        }
+                    }
                 }
             });
-        } catch (Exception $e) {
-            Log::error('Redis管道执行失败: ' . $e->getMessage());
+        } catch (Throwable $e) {
+            Log::error('Redis管道执行失败: ' . $e->getMessage(), [
+                'commands_count' => count($commands),
+                'exception' => $e
+            ]);
             return [];
         }
     }
@@ -563,7 +617,7 @@ class RateLimiterService
             $redis = Cache::store()->connection();
             $keys = $redis->keys($pattern);
             return count($keys);
-        } catch (Exception $e) {
+        } catch (Throwable $e) {
             return 0;
         }
     }
@@ -591,7 +645,7 @@ class RateLimiterService
             try {
                 $redis = Cache::store()->connection();
                 $redis->del(...$keys);
-            } catch (Exception $e) {
+            } catch (Throwable $e) {
                 // 降级到逐个删除
                 foreach ($keys as $key) {
                     Cache::forget($key);
@@ -618,7 +672,7 @@ class RateLimiterService
                 if (!empty($keys)) {
                     $redis->del(...$keys);
                 }
-            } catch (Exception $e) {
+            } catch (Throwable $e) {
                 // 忽略错误
             }
         }
@@ -638,7 +692,7 @@ class RateLimiterService
                 if (!empty($keys)) {
                     $redis->del(...$keys);
                 }
-            } catch (Exception $e) {
+            } catch (Throwable $e) {
                 Log::error('清除限流缓存失败: ' . $e->getMessage());
             }
         }
@@ -652,7 +706,7 @@ class RateLimiterService
                 if (!empty($keys)) {
                     $redis->del(...$keys);
                 }
-            } catch (Exception $e) {
+            } catch (Throwable $e) {
                 // 忽略错误
             }
         }
@@ -714,7 +768,7 @@ class RateLimiterService
             }
 
             return true;
-        } catch (Exception $e) {
+        } catch (Throwable $e) {
             Log::error('重置速率限制失败: ' . $e->getMessage(), [
                 'exception' => $e,
             ]);

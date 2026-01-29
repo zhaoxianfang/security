@@ -2,7 +2,7 @@
 
 namespace zxf\Security\Services;
 
-use Exception;
+use Throwable;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
@@ -692,7 +692,7 @@ class RuleEngineService
             }
 
             return true;
-        } catch (Exception $e) {
+        } catch (Throwable $e) {
             Log::error('添加规则失败: ' . $e->getMessage(), [
                 'rule' => $rule,
                 'exception' => $e,
@@ -723,7 +723,7 @@ class RuleEngineService
             }
 
             return true;
-        } catch (Exception $e) {
+        } catch (Throwable $e) {
             Log::error('删除规则失败: ' . $e->getMessage(), [
                 'rule_id' => $ruleId,
                 'exception' => $e,
@@ -768,7 +768,7 @@ class RuleEngineService
             }
 
             return true;
-        } catch (Exception $e) {
+        } catch (Throwable $e) {
             Log::error('更新规则失败: ' . $e->getMessage(), [
                 'rule_id' => $ruleId,
                 'updates' => $updates,
@@ -933,7 +933,7 @@ class RuleEngineService
             }
 
             return true;
-        } catch (Exception $e) {
+        } catch (Throwable $e) {
             Log::error('导入规则失败: ' . $e->getMessage(), [
                 'data' => $data,
                 'exception' => $e,

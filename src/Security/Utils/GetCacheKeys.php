@@ -13,7 +13,7 @@ use Illuminate\Cache\ArrayStore;
 use Illuminate\Cache\DynamoDbStore;
 use Illuminate\Cache\NullStore;
 use ReflectionClass;
-use Exception;
+use Throwable;
 
 /**
  * 获取 laravel 中的缓存键名工具类
@@ -157,7 +157,7 @@ class GetCacheKeys
             sort($keys);
             return array_unique($keys);
 
-        } catch (Exception $e) {
+        } catch (Throwable $e) {
             throw new \RuntimeException("Redis 缓存键获取失败: " . $e->getMessage());
         }
     }
@@ -209,7 +209,7 @@ class GetCacheKeys
 
             return array_unique($keys);
 
-        } catch (Exception $e) {
+        } catch (Throwable $e) {
             throw new \RuntimeException("Memcached 缓存键获取失败: " . $e->getMessage());
         }
     }
@@ -252,7 +252,7 @@ class GetCacheKeys
                 ->pluck('key')
                 ->toArray();
 
-        } catch (Exception $e) {
+        } catch (Throwable $e) {
             throw new \RuntimeException("数据库缓存键获取失败: " . $e->getMessage());
         }
     }
@@ -301,7 +301,7 @@ class GetCacheKeys
                             continue; // 跳过已过期的缓存
                         }
                     }
-                } catch (Exception $e) {
+                } catch (Throwable $e) {
                     // 读取文件失败，跳过
                     continue;
                 }
@@ -316,7 +316,7 @@ class GetCacheKeys
             sort($keys);
             return $keys;
 
-        } catch (Exception $e) {
+        } catch (Throwable $e) {
             throw new \RuntimeException("文件缓存键获取失败: " . $e->getMessage());
         }
     }
@@ -387,7 +387,7 @@ class GetCacheKeys
             sort($keys);
             return array_unique($keys);
 
-        } catch (Exception $e) {
+        } catch (Throwable $e) {
             throw new \RuntimeException("DynamoDB 缓存键获取失败: " . $e->getMessage());
         }
     }
@@ -433,7 +433,7 @@ class GetCacheKeys
             sort($keys);
             return array_unique($keys);
 
-        } catch (Exception $e) {
+        } catch (Throwable $e) {
             throw new \RuntimeException("APC/APCu 缓存键获取失败: " . $e->getMessage());
         }
     }
@@ -472,7 +472,7 @@ class GetCacheKeys
             sort($keys);
             return array_unique($keys);
 
-        } catch (Exception $e) {
+        } catch (Throwable $e) {
             throw new \RuntimeException("Array 缓存键获取失败: " . $e->getMessage());
         }
     }
@@ -511,7 +511,7 @@ class GetCacheKeys
             }
 
             return true;
-        } catch (Exception $e) {
+        } catch (Throwable $e) {
             return false;
         }
     }

@@ -142,6 +142,13 @@ return [
         'enabled' => env('SECURITY_IP_AUTO_DETECTION', true),
 
         /**
+         * 没有被记录过的ip,如果正常访问且不没有被拦截时，是否记录此ip到数据库中(默认不记录)；
+         *    false(默认): 没有被拦截时就不记录此ip到数据库中
+         *    true: 不管有没有被拦截都会把此ip记录到数据库中
+         */
+        'record_normal_visitor' => env('SECURITY_RECORD_NORMAL_VISITOR', false),
+
+        /**
          * 黑名单转换阈值
          *
          * 威胁评分达到此值时自动转为黑名单

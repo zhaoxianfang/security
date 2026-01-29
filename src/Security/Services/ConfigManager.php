@@ -176,7 +176,7 @@ class ConfigManager
         if ($value instanceof Closure) {
             try {
                 return call_user_func($value, $params);
-            } catch (Exception $e) {
+            } catch (Throwable $e) {
                 Log::error('配置闭包执行失败: ' . $e->getMessage(), [
                     'value_type' => gettype($value),
                     'exception' => $e
@@ -244,7 +244,7 @@ class ConfigManager
 
             return $instance->$method();
 
-        } catch (Exception $e) {
+        } catch (Throwable $e) {
             Log::error("配置方法调用失败: {$class}::{$method} - " . $e->getMessage(), [
                 'class' => $class,
                 'method' => $method,
@@ -260,9 +260,29 @@ class ConfigManager
      */
     protected function callClassMethodFromString(string $callable, mixed $params = null): mixed
     {
-        [$class, $method] = explode('::', $callable, 2);
-
         try {
+            if (empty($callable) || !str_contains($callable, '::')) {
+                Log::warning('无效的类方法调用格式', ['callable' => $callable]);
+                return null;
+            }
+
+            [$class, $method] = explode('::', $callable, 2);
+
+            if (empty($class) || empty($method)) {
+                Log::warning('类名或方法名为空', ['callable' => $callable]);
+                return null;
+            }
+
+            if (!class_exists($class)) {
+                Log::warning('类不存在', ['class' => $class]);
+                return null;
+            }
+
+            if (!method_exists($class, $method)) {
+                Log::warning('方法不存在', ['class' => $class, 'method' => $method]);
+                return null;
+            }
+
             $instance = App::make($class);
 
             if ($params !== null) {
@@ -271,7 +291,7 @@ class ConfigManager
 
             return $instance->$method();
 
-        } catch (Exception $e) {
+        } catch (Throwable $e) {
             Log::error("配置方法调用失败: {$callable} - " . $e->getMessage(), [
                 'callable' => $callable,
                 'params' => $params,
@@ -286,8 +306,17 @@ class ConfigManager
      */
     protected function getCacheKey(string $key, mixed $params = null): string
     {
-        $paramsHash = $params ? md5(serialize($params)) : 'null';
-        return self::CACHE_PREFIX . md5("{$key}:{$paramsHash}");
+        try {
+            $paramsHash = $params ? md5(serialize($params)) : 'null';
+            return self::CACHE_PREFIX . md5("{$key}:{$paramsHash}");
+        } catch (Throwable $e) {
+            Log::error('生成缓存键失败: ' . $e->getMessage(), [
+                'key' => $key,
+                'exception' => $e
+            ]);
+            // 返回一个简单的缓存键
+            return self::CACHE_PREFIX . md5($key);
+        }
     }
 
     /**
@@ -314,13 +343,25 @@ class ConfigManager
      */
     protected function cacheValue(string $key, string $cacheKey, mixed $value): void
     {
-        // 内存缓存
-        Arr::set($this->configCache, $cacheKey, $value);
+        try {
+            // 内存缓存
+            Arr::set($this->configCache, $cacheKey, $value);
 
-        // 持久化缓存
-        if ($this->shouldCache($key)) {
-            $cacheTtl = config('security.cache_ttl', self::CACHE_TTL);
-            Cache::put($cacheKey, $value, $cacheTtl);
+            // 持久化缓存
+            if ($this->shouldCache($key)) {
+                $cacheTtl = config('security.cache_ttl', self::CACHE_TTL);
+                // 验证cacheTtl为正数
+                if (!is_int($cacheTtl) || $cacheTtl <= 0) {
+                    $cacheTtl = self::CACHE_TTL;
+                }
+                Cache::put($cacheKey, $value, $cacheTtl);
+            }
+        } catch (Throwable $e) {
+            Log::error('缓存配置值失败: ' . $e->getMessage(), [
+                'key' => $key,
+                'cacheKey' => $cacheKey,
+                'exception' => $e
+            ]);
         }
     }
 

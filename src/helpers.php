@@ -413,47 +413,87 @@ if (! function_exists('security_check_rate_limit')) {
      */
     function security_check_rate_limit(string $identifier, array $limits = []): array
     {
-        if (empty($limits)) {
-            $limits = security_config('rate_limits', [
-                'minute' => 60,
-                'hour' => 1000,
-                'day' => 10000,
-            ]);
-        }
-
-        $results = [];
-
-        foreach ($limits as $window => $limit) {
-            $cacheKey = "security:rate_limit:{$window}:" . md5($identifier);
-            $count = Cache::get($cacheKey, 0);
-
-            $results[$window] = [
-                'current' => $count,
-                'limit' => $limit,
-                'blocked' => $count >= $limit,
-            ];
-
-            if ($count >= $limit) {
+        try {
+            // 验证identifier
+            if (empty($identifier)) {
+                Log::warning('速率限制检查失败：标识符为空');
                 return [
-                    'blocked' => true,
-                    'window' => $window,
-                    'current' => $count,
-                    'limit' => $limit,
-                    'retry_after' => match($window) {
-                        'minute' => 60,
-                        'hour' => 3600,
-                        'day' => 86400,
-                        default => 60,
-                    },
-                    'details' => $results,
+                    'blocked' => false,
+                    'details' => [],
                 ];
             }
-        }
 
-        return [
-            'blocked' => false,
-            'details' => $results,
-        ];
+            if (empty($limits)) {
+                $limits = security_config('rate_limits', [
+                    'minute' => 60,
+                    'hour' => 1000,
+                    'day' => 10000,
+                ]);
+            }
+
+            // 验证limits
+            if (!is_array($limits) || empty($limits)) {
+                Log::warning('速率限制配置无效');
+                return [
+                    'blocked' => false,
+                    'details' => [],
+                ];
+            }
+
+            $results = [];
+
+            foreach ($limits as $window => $limit) {
+                // 验证limit为正整数
+                if (!is_int($limit) || $limit <= 0) {
+                    Log::warning("无效的限流阈值: {$window}", ['limit' => $limit]);
+                    continue;
+                }
+
+                $cacheKey = "security:rate_limit:{$window}:" . md5($identifier);
+                $count = Cache::get($cacheKey, 0);
+
+                // 验证count为数值
+                if (!is_numeric($count)) {
+                    $count = 0;
+                }
+
+                $results[$window] = [
+                    'current' => $count,
+                    'limit' => $limit,
+                    'blocked' => $count >= $limit,
+                ];
+
+                if ($count >= $limit) {
+                    return [
+                        'blocked' => true,
+                        'window' => $window,
+                        'current' => $count,
+                        'limit' => $limit,
+                        'retry_after' => match($window) {
+                            'minute' => 60,
+                            'hour' => 3600,
+                            'day' => 86400,
+                            default => 60,
+                        },
+                        'details' => $results,
+                    ];
+                }
+            }
+
+            return [
+                'blocked' => false,
+                'details' => $results,
+            ];
+        } catch (Throwable $e) {
+            Log::error('速率限制检查异常: ' . $e->getMessage(), [
+                'identifier' => $identifier ?? 'unknown',
+                'exception' => $e
+            ]);
+            return [
+                'blocked' => false,
+                'details' => [],
+            ];
+        }
     }
 }
 
@@ -474,24 +514,47 @@ if (! function_exists('security_increment_rate_limit')) {
      */
     function security_increment_rate_limit(string $identifier): void
     {
-        $limits = security_config('rate_limits', [
-            'minute' => 60,
-            'hour' => 1000,
-            'day' => 10000,
-        ]);
+        try {
+            // 验证identifier
+            if (empty($identifier)) {
+                Log::warning('增加速率限制计数器失败：标识符为空');
+                return;
+            }
 
-        foreach ($limits as $window => $limit) {
-            $cacheKey = "security:rate_limit:{$window}:" . md5($identifier);
-            $count = Cache::get($cacheKey, 0);
-
-            $ttl = match($window) {
+            $limits = security_config('rate_limits', [
                 'minute' => 60,
-                'hour' => 3600,
-                'day' => 86400,
-                default => 60,
-            };
+                'hour' => 1000,
+                'day' => 10000,
+            ]);
 
-            Cache::put($cacheKey, $count + 1, $ttl);
+            // 验证limits
+            if (!is_array($limits) || empty($limits)) {
+                return;
+            }
+
+            foreach ($limits as $window => $limit) {
+                $cacheKey = "security:rate_limit:{$window}:" . md5($identifier);
+                $count = Cache::get($cacheKey, 0);
+
+                // 验证count为数值
+                if (!is_numeric($count)) {
+                    $count = 0;
+                }
+
+                $ttl = match($window) {
+                    'minute' => 60,
+                    'hour' => 3600,
+                    'day' => 86400,
+                    default => 60,
+                };
+
+                Cache::put($cacheKey, $count + 1, $ttl);
+            }
+        } catch (Throwable $e) {
+            Log::error('增加速率限制计数器异常: ' . $e->getMessage(), [
+                'identifier' => $identifier ?? 'unknown',
+                'exception' => $e
+            ]);
         }
     }
 }

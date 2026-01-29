@@ -208,7 +208,7 @@ class SecurityServiceProvider extends ServiceProvider
             'zxf/security' => function () {
                 try {
                     return InstalledVersions::getPrettyVersion('zxf/security') ?? 'unknown';
-                } catch (Exception $e) {
+                } catch (Throwable $e) {
                     return 'unknown';
                 }
             },

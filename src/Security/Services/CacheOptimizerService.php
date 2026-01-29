@@ -2,7 +2,7 @@
 
 namespace zxf\Security\Services;
 
-use Exception;
+use Throwable;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Collection;
@@ -118,7 +118,7 @@ class CacheOptimizerService
                     'stats' => $this->cacheStats,
                 ]);
             }
-        } catch (Exception $e) {
+        } catch (Throwable $e) {
             Log::error('缓存预热失败: ' . $e->getMessage(), [
                 'exception' => $e,
             ]);
@@ -237,7 +237,7 @@ class CacheOptimizerService
             $this->set($key, $value, $ttl, $options);
 
             return $value;
-        } catch (Exception $e) {
+        } catch (Throwable $e) {
             Log::error('缓存加载失败: ' . $e->getMessage(), [
                 'key' => $key,
                 'exception' => $e,
@@ -269,7 +269,7 @@ class CacheOptimizerService
             $this->cacheStats['sets']++;
 
             return true;
-        } catch (Exception $e) {
+        } catch (Throwable $e) {
             Log::error('缓存设置失败: ' . $e->getMessage(), [
                 'key' => $key,
                 'exception' => $e,
@@ -346,7 +346,7 @@ class CacheOptimizerService
             $this->cacheStats['deletes']++;
 
             return true;
-        } catch (Exception $e) {
+        } catch (Throwable $e) {
             Log::error('缓存删除失败: ' . $e->getMessage(), [
                 'key' => $key,
                 'exception' => $e,
@@ -395,7 +395,7 @@ class CacheOptimizerService
             }
 
             return true;
-        } catch (Exception $e) {
+        } catch (Throwable $e) {
             Log::error('缓存清除失败: ' . $e->getMessage(), [
                 'exception' => $e,
             ]);
@@ -435,7 +435,7 @@ class CacheOptimizerService
             }
 
             return true;
-        } catch (Exception $e) {
+        } catch (Throwable $e) {
             Log::error('缓存前缀清除失败: ' . $e->getMessage(), [
                 'prefix' => $prefix,
                 'exception' => $e,
@@ -639,7 +639,7 @@ class CacheOptimizerService
             }
 
             return true;
-        } catch (Exception $e) {
+        } catch (Throwable $e) {
             Log::error('缓存预热失败: ' . $e->getMessage(), [
                 'keys' => $keys,
                 'exception' => $e,

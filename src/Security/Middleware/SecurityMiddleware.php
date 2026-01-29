@@ -230,23 +230,34 @@ class SecurityMiddleware
      */
     protected function executeDefenseLayer(Request $request, string $layer): array
     {
-        return match ($layer) {
-            'ip_whitelist' => $this->checkIpWhitelist($request),
-            'ip_blacklist' => $this->checkIpBlacklist($request),
-            'method_check' => $this->checkHttpMethod($request),
-            'user_agent_check' => $this->checkUserAgent($request),
-            'header_check' => $this->checkHeaders($request),
-            'url_check' => $this->checkUrl($request),
-            'upload_check' => $this->checkUploads($request),
-            'body_check' => $this->checkRequestBody($request),
-            'anomaly_check' => $this->checkAnomalies($request),
-            'rate_limit' => $this->checkRateLimit($request),
-            'sql_check' => $this->checkSQLInjection($request),
-            'xss_check' => $this->checkXSSAttack($request),
-            'command_check' => $this->checkCommandInjection($request),
-            'custom_check' => $this->checkCustomRules($request),
-            default => ['blocked' => false],
-        };
+        try {
+            return match ($layer) {
+                'ip_whitelist' => $this->checkIpWhitelist($request),
+                'ip_blacklist' => $this->checkIpBlacklist($request),
+                'method_check' => $this->checkHttpMethod($request),
+                'user_agent_check' => $this->checkUserAgent($request),
+                'header_check' => $this->checkHeaders($request),
+                'url_check' => $this->checkUrl($request),
+                'upload_check' => $this->checkUploads($request),
+                'body_check' => $this->checkRequestBody($request),
+                'anomaly_check' => $this->checkAnomalies($request),
+                'rate_limit' => $this->checkRateLimit($request),
+                'sql_check' => $this->checkSQLInjection($request),
+                'xss_check' => $this->checkXSSAttack($request),
+                'command_check' => $this->checkCommandInjection($request),
+                'custom_check' => $this->checkCustomRules($request),
+                default => ['blocked' => false],
+            };
+        } catch (Throwable $e) {
+            Log::error("防御层检查异常: {$layer}", [
+                'error' => $e->getMessage(),
+                'layer' => $layer,
+                'request_path' => $request->path() ?? 'unknown',
+                'exception' => $e
+            ]);
+            // 异常时放行，避免影响系统运行
+            return ['blocked' => false];
+        }
     }
 
     /**
@@ -670,7 +681,7 @@ class SecurityMiddleware
                     'message' => $result['message'] ?? '自定义安全规则拦截',
                 ];
             }
-        } catch (Exception $e) {
+        } catch (Throwable $e) {
             Log::error('自定义安全逻辑执行失败: ' . $e->getMessage(), [
                 'custom_handler' => $customHandler,
                 'exception' => $e
@@ -886,7 +897,7 @@ class SecurityMiddleware
 
                 $this->logDebug('安全警报已发送: ' . $blockResult['type']);
             }
-        } catch (Exception $e) {
+        } catch (Throwable $e) {
             Log::error('发送安全警报失败: ' . $e->getMessage());
         }
     }
@@ -1030,44 +1041,54 @@ class SecurityMiddleware
      */
     protected function resolveCallable($handler)
     {
-        if (is_callable($handler)) {
-            return $handler;
-        }
-
-        if (is_array($handler) && count($handler) === 2) {
-            $class = $handler[0];
-            $method = $handler[1];
-
-            if (is_string($class) && class_exists($class)) {
-                return [App::make($class), $method];
+        try {
+            if (is_callable($handler)) {
+                return $handler;
             }
 
-            return $handler;
-        }
+            if (is_array($handler) && count($handler) === 2) {
+                $class = $handler[0];
+                $method = $handler[1];
 
-        if (is_string($handler)) {
-            // 处理 Class::method 格式
-            if (str_contains($handler, '::')) {
-                [$class, $method] = explode('::', $handler, 2);
-                if (class_exists($class)) {
+                if (is_string($class) && class_exists($class)) {
                     return [App::make($class), $method];
                 }
+
+                return $handler;
             }
 
-            // 处理 [Class,method] 格式
-            if (preg_match('/^\[(.+),(.+)\]$/', $handler, $matches)) {
-                $class = trim($matches[1]);
-                $method = trim($matches[2]);
-                if (class_exists($class)) {
-                    return [App::make($class), $method];
+            if (is_string($handler)) {
+                // 处理 Class::method 格式
+                if (str_contains($handler, '::')) {
+                    [$class, $method] = explode('::', $handler, 2);
+                    if (class_exists($class) && method_exists($class, $method)) {
+                        return [App::make($class), $method];
+                    }
                 }
+
+                // 处理 [Class,method] 格式
+                if (preg_match('/^\[(.+),(.+)\]$/', $handler, $matches)) {
+                    $class = trim($matches[1]);
+                    $method = trim($matches[2]);
+                    if (class_exists($class) && method_exists($class, $method)) {
+                        return [App::make($class), $method];
+                    }
+                }
+
+                // 直接返回字符串（可能是函数名）
+                return $handler;
             }
 
-            // 直接返回字符串（可能是函数名）
-            return $handler;
+            throw new InvalidArgumentException('无法解析的可调用对象: ' . gettype($handler));
+        } catch (Throwable $e) {
+            Log::error('解析可调用对象失败', [
+                'handler' => $handler,
+                'handler_type' => gettype($handler),
+                'error' => $e->getMessage(),
+                'exception' => $e
+            ]);
+            throw new InvalidArgumentException('无法解析的可调用对象: ' . gettype($handler), 0, $e);
         }
-
-        throw new InvalidArgumentException('无法解析的可调用对象: ' . gettype($handler));
     }
 
     /**
@@ -1137,17 +1158,27 @@ class SecurityMiddleware
      */
     protected function getRequestInfo(Request $request): array
     {
-        return [
-            'ip' => $request->ip(),
-            'method' => $request->method(),
-            'path' => $request->path(),
-            'full_url' => $this->truncateString($request->fullUrl(), 500),
-            'user_agent' => $this->truncateString($request->userAgent() ?? '', 100),
-            'content_type' => $request->header('Content-Type'),
-            'query_params' => count($request->query()),
-            'post_params' => count($request->post()),
-            'has_files' => !empty($request->allFiles()),
-        ];
+        try {
+            return [
+                'ip' => $request->ip() ?? 'unknown',
+                'method' => $request->method() ?? 'unknown',
+                'path' => $request->path() ?? 'unknown',
+                'full_url' => $this->truncateString($request->fullUrl() ?? '', 500),
+                'user_agent' => $this->truncateString($request->userAgent() ?? '', 100),
+                'content_type' => $request->header('Content-Type'),
+                'query_params' => count($request->query() ?? []),
+                'post_params' => count($request->post() ?? []),
+                'has_files' => !empty($request->allFiles()),
+            ];
+        } catch (Throwable $e) {
+            Log::error('获取请求信息失败: ' . $e->getMessage());
+            return [
+                'ip' => 'unknown',
+                'method' => 'unknown',
+                'path' => 'unknown',
+                'error' => 'Failed to get request info',
+            ];
+        }
     }
 
     /**
@@ -1166,11 +1197,26 @@ class SecurityMiddleware
      */
     protected function truncateString(string $string, int $length): string
     {
-        if (mb_strlen($string) <= $length) {
-            return $string;
-        }
+        try {
+            // 确保length为正数
+            if ($length <= 0) {
+                return '';
+            }
 
-        return mb_substr($string, 0, $length) . '...';
+            // 确保string不为null
+            if ($string === null) {
+                return '';
+            }
+
+            if (mb_strlen($string) <= $length) {
+                return $string;
+            }
+
+            return mb_substr($string, 0, $length) . '...';
+        } catch (Throwable $e) {
+            // 异常时返回空字符串或原始字符串
+            return is_string($string) ? substr($string, 0, $length) : '';
+        }
     }
 
     /**

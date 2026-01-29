@@ -2,7 +2,7 @@
 
 namespace zxf\Security\Services;
 
-use Exception;
+use Throwable;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;

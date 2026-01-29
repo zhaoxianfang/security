@@ -48,7 +48,7 @@ class SecurityCleanupCommand extends Command
 
             return self::SUCCESS;
 
-        } catch (Exception $e) {
+        } catch (Throwable $e) {
             $this->error('清理过程中发生错误: ' . $e->getMessage());
             return self::FAILURE;
         }
