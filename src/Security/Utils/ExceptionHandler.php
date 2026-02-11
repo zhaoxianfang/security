@@ -13,7 +13,7 @@ use Illuminate\Support\Facades\Log;
  * 2. 错误分类和级别判断
  * 3. 上下文信息收集
  * 4. 性能监控集成
- * 5. 调试信息输出
+ * 5. 调试信息输出.
  */
 class ExceptionHandler
 {
