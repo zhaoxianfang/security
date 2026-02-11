@@ -4,7 +4,6 @@ namespace zxf\Security\Utils;
 
 use Throwable;
 use Illuminate\Support\Facades\Log;
-use Throwable;
 
 /**
  * 安全异常处理工具类
