@@ -757,3 +757,164 @@ if (! function_exists('clean_security_cache')) {
     }
 }
 
+if (! function_exists('is_intranet_ip')) {
+    /**
+     * 检查IP地址是否为内网/私有地址
+     *
+     * 核心判定规则
+     *
+     * 1. 标准私有地址（永远是内网）：
+     *    ├─ IPv4：10.0.0.0/8（A类）、172.16.0.0/12（B类）、192.168.0.0/16（C类）
+     *    └─ IPv6：fc00::/7（唯一本地地址）
+     *
+     * 2. 回环地址（默认内网，可禁用）：
+     *    ├─ IPv4：127.0.0.0/8（整个127段都是回环）
+     *    └─ IPv6：::1/128（仅这一个地址）
+     *
+     * 3. 链路本地地址（默认内网，可禁用）：
+     *    ├─ IPv4：169.254.0.0/16（APIPA自动配置）
+     *    └─ IPv6：fe80::/10（本地链路通信）
+     *
+     * 4. 自定义范围（用户指定）：
+     *    └─ 任意CIDR格式，如：'10.0.0.0/8'、'192.168.0.0/16'、'fc00::/7'
+     *
+     * 配置选项
+     *
+     * @param array{
+     *     loopback?: bool,   // true=回环算内网(默认) false=回环算公网
+     *     linklocal?: bool,  // true=链路本地算内网(默认) false=链路本地算公网
+     *     custom?: string[]  // 自定义CIDR数组，如：['10.0.0.0/8', '172.16.0.0/12']
+     * } $opt
+     *
+     * @param string $ip 要检查的IP地址（支持IPv4和IPv6）
+     * @return bool true=内网IP，false=公网IP
+     * @throws InvalidArgumentException IP格式非法时抛出
+     */
+    function is_intranet_ip(string $ip, array $opt = []): bool {
+        // ========== 1. 配置解析 ==========
+        $loopback = $opt['loopback'] ?? true;   // 回环开关：127.x.x.x 和 ::1 是否算内网
+        $linklocal = $opt['linklocal'] ?? true; // 链路本地开关：169.254.x.x 和 fe80::/10 是否算内网
+        $custom = $opt['custom'] ?? [];         // 自定义CIDR数组
+
+        // ========== 2. IP格式验证 ==========
+        if (!filter_var($ip, FILTER_VALIDATE_IP)) {
+            throw new InvalidArgumentException("无效的IP地址: {$ip}");
+        }
+
+        // ========== 3. 二进制转换 ==========
+        $ipBin = inet_pton($ip);                    // 二进制IP：IPv4=4字节，IPv6=16字节
+        $isV4 = strlen($ipBin) === 4;               // IPv4标志
+        $isV6 = strlen($ipBin) === 16;              // IPv6标志
+
+        // ========== 4. CIDR匹配引擎 ==========
+        $match = function(string $cidr) use ($ipBin, $isV4): bool {
+            // ------------------------------------------------------------
+            // CIDR格式说明：
+            // - 带掩码：'192.168.1.0/24' 表示前24位是网络位，后8位是主机位
+            // - 不带掩码：'192.168.1.1' 表示单个IP，必须完全匹配
+            // ------------------------------------------------------------
+
+            // 4.1 处理单个IP（无掩码）
+            if (!str_contains($cidr, '/')) {
+                $target = inet_pton($cidr);
+                return $target !== false && $ipBin === $target;
+            }
+
+            // 4.2 解析CIDR：分离网络地址和掩码长度
+            [$network, $maskLen] = explode('/', $cidr);
+            $maskLen = (int)$maskLen;                // 掩码长度：IPv4范围0-32，IPv6范围0-128
+
+            // 4.3 网络地址转二进制
+            $netBin = inet_pton($network);
+            if ($netBin === false) return false;    // 防御性编程
+
+            // 4.4 构建网络掩码（这是CIDR匹配的核心）
+            $bytes = $isV4 ? 4 : 16;                 // 总字节数
+            $fullBytes = intdiv($maskLen, 8);        // 完整字节数：掩码中有几个完整的8位
+            $remBits = $maskLen % 8;                  // 剩余位数：不足8位的部分
+
+            // ------------------------------------------------------------
+            // 掩码构建原理：
+            // 以 192.168.1.0/27 为例，掩码长度27位：
+            // - 完整字节：27÷8=3个完整字节 → 3个\xff（11111111 11111111 11111111）
+            // - 剩余位：27%8=3位 → 1个字节的高3位为1 → 11100000 (\xE0)
+            // - 补齐：总共4字节，已有3+1=4字节，无需补齐
+            // 最终掩码：11111111.11111111.11111111.11100000
+            // ------------------------------------------------------------
+
+            $mask = '';                              // 初始化掩码
+
+            // 4.4.1 添加完整的字节（全1）
+            if ($fullBytes > 0) {
+                $mask .= str_repeat("\xff", $fullBytes);
+            }
+
+            // 4.4.2 处理剩余的位（如/27的3个剩余位，生成11100000）
+            if ($remBits > 0) {
+                // 0xff << (8 - 3) = 0xff << 5 = 0xE0 = 11100000
+                $mask .= chr(0xff << (8 - $remBits));
+                $fullBytes++;  // 消耗了一个字节
+            }
+
+            // 4.4.3 补全剩余的字节（全0）
+            if ($fullBytes < $bytes) {
+                $mask .= str_repeat("\x00", $bytes - $fullBytes);
+            }
+
+            // 4.5 执行位运算比较
+            // (&)是按位与：只有掩码为1的位才参与比较
+            return ($ipBin & $mask) === ($netBin & $mask);
+        };
+
+        // ========== 5. 预定义私有范围 ==========
+        // 格式：[CIDR, IP版本(4/6), 类型]
+        // 类型说明：
+        //   0 = 标准私有（永远内网，不受配置影响）
+        //   1 = 回环地址（受loopback开关控制）
+        //   2 = 链路本地（受linklocal开关控制）
+        $ranges = [
+            // 5.1 标准私有IPv4（RFC 1918）- 永远内网
+            ['10.0.0.0/8', 4, 0],      // 10.0.0.0 - 10.255.255.255
+            ['172.16.0.0/12', 4, 0],   // 172.16.0.0 - 172.31.255.255
+            ['192.168.0.0/16', 4, 0],  // 192.168.0.0 - 192.168.255.255
+
+            // 5.2 标准私有IPv6（RFC 4193）- 永远内网
+            ['fc00::/7', 6, 0],        // fc00:: - fdff:ffff:ffff:ffff:ffff:ffff:ffff:ffff
+
+            // 5.3 回环地址 - 受loopback控制
+            ['127.0.0.0/8', 4, 1],     // 127.0.0.0 - 127.255.255.255（整个127段）
+            ['::1/128', 6, 1],         // ::1（仅这一个地址）
+
+            // 5.4 链路本地地址 - 受linklocal控制
+            ['169.254.0.0/16', 4, 2],  // 169.254.0.0 - 169.254.255.255
+            ['fe80::/10', 6, 2]        // fe80:: - febf:ffff:ffff:ffff:ffff:ffff:ffff:ffff
+        ];
+
+        // ========== 6. 遍历检查内置范围 ==========
+        foreach ($ranges as [$cidr, $version, $type]) {
+            // 6.1 IP版本过滤：只检查同版本的范围
+            if (($version === 4 && !$isV4) || ($version === 6 && !$isV6)) {
+                continue;
+            }
+
+            // 6.2 类型过滤：根据配置决定是否检查
+            if ($type === 1 && !$loopback) continue;   // 回环被禁用，跳过
+            if ($type === 2 && !$linklocal) continue;  // 链路本地被禁用，跳过
+
+            // 6.3 执行CIDR匹配
+            if ($match($cidr)) {
+                return true;  // 匹配成功，是内网IP
+            }
+        }
+
+        // ========== 7. 检查自定义范围 ==========
+        foreach ($custom as $cidr) {
+            if ($match($cidr)) {
+                return true;  // 匹配自定义范围，也是内网IP
+            }
+        }
+
+        // ========== 8. 都不是，判定为公网IP ==========
+        return false;
+    }
+}
