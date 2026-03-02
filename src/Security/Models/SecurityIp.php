@@ -16,7 +16,7 @@ use zxf\Security\Events\IpAdded;
 use zxf\Security\Events\IpTypeChanged;
 
 /**
- * 安全IP管理模型 - PHP 8.2+ 优化版
+ * 安全IP管理模型 - PHP 8.2+
  *
  * 核心功能：
  * 1. 统一管理白名单、黑名单、可疑IP、监控IP四种类型
@@ -1150,7 +1150,7 @@ class SecurityIp extends Model
     }
 
     /**
-     * 获取IP统计信息 - 性能优化版本
+     * 获取IP统计信息
      *
      * 只查询需要的字段，减少数据传输
      *

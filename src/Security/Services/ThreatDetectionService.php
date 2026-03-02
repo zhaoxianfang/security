@@ -12,7 +12,7 @@ use zxf\Security\Config\SecurityConfig;
 use zxf\Security\Utils\ExceptionHandler;
 
 /**
- * 威胁检测服务 - 优化增强版
+ * 威胁检测服务
  *
  * 提供多层安全检测功能，包括：
  * 1. 请求内容检测
@@ -240,7 +240,7 @@ class ThreatDetectionService
     }
 
     /**
-     * 检查URL安全性 - 优化增强版
+     * 检查URL安全性
      *
      * 1. 先检查白名单，提高效率
      * 2. 再进行安全检测

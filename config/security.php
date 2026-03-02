@@ -49,7 +49,7 @@ return [
      * 支持：boolean | callable
      * 默认值：false
      */
-    'ignore_local' => env('SECURITY_IGNORE_LOCAL', false),
+    'ignore_local' => env('SECURITY_IGNORE_LOCAL', (bool) env('APP_DEBUG', false)),
 
     /**
      * 内网IP检查配置
@@ -809,7 +809,6 @@ return [
      */
     'enable_command_injection_detection' => env('SECURITY_COMMAND_INJECTION_DETECTION', true),
 
-
     /**
      * 命令注入检测正则表达式
      *
@@ -818,7 +817,6 @@ return [
      * 默认值：SecurityConfig::getCommandInjectionPatterns()
      */
     'command_injection_patterns' => [SecurityConfig::class, 'getCommandInjectionPatterns'],
-
 
     // ==================== 缓存配置 ====================
 

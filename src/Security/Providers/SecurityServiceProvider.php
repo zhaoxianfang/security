@@ -19,7 +19,7 @@ use Composer\InstalledVersions;
 
 
 /**
- * 安全服务提供者 - 优化增强版
+ * 安全服务提供者
  *
  * 注册安全中间件和相关服务到Laravel容器
  * 提供完整的配置发布和路由注册功能

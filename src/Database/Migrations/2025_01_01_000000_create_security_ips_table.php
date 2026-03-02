@@ -6,7 +6,7 @@ use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\DB;
 
 /**
- * 安全IP管理表迁移 - 优化增强版
+ * 安全IP管理表迁移
  *
  * 功能说明：
  * 1. 统一管理白名单、黑名单、可疑IP

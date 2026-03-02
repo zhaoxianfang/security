@@ -13,7 +13,7 @@ use zxf\Security\Constants\SecurityEvent;
 use zxf\Security\Models\SecurityIp;
 
 /**
- * IP管理服务 - 优化增强版
+ * IP管理服务
  *
  * 提供IP白名单、黑名单、封禁管理等功能
  * 支持动态IP列表和缓存优化
@@ -61,7 +61,7 @@ class IpManagerService
     }
 
     /**
-     * 检查IP是否在白名单 - 优化增强版
+     * 检查IP是否在白名单
      *
      * 支持内网配置选项，提高灵活性
      */
@@ -85,7 +85,7 @@ class IpManagerService
     }
 
     /**
-     * 检查IP是否在黑名单 - 优化增强版
+     * 检查IP是否在黑名单
      *
      * 支持内网配置选项，提高灵活性和安全性
      */
@@ -115,7 +115,7 @@ class IpManagerService
     }
 
     /**
-     * 记录IP访问 - 优化增强版
+     * 记录IP访问
      *
      * 支持内网配置，减少不必要的数据库写入
      */
@@ -183,7 +183,7 @@ class IpManagerService
     }
 
     /**
-     * 封禁IP - 优化增强版
+     * 封禁IP
      *
      * 支持威胁评分和动态封禁时长
      *
@@ -282,7 +282,7 @@ class IpManagerService
     }
 
     /**
-     * 获取客户端真实IP - 优化版
+     * 获取客户端真实IP
      */
     public function getClientRealIp(Request $request): string
     {
@@ -394,7 +394,7 @@ class IpManagerService
     }
 
     /**
-     * 判断是否为本地IP - 优化增强版
+     * 判断是否为本地IP
      *
      * 使用统一的 is_intranet_ip 函数进行判断，支持缓存
      */
@@ -472,7 +472,7 @@ class IpManagerService
     }
 
     /**
-     * 获取封禁时长 - 优化增强版
+     * 获取封禁时长
      *
      * 支持根据威胁评分动态调整封禁时长
      * 配置项：adaptive_ban_duration
@@ -523,7 +523,7 @@ class IpManagerService
     }
 
     /**
-     * 获取封禁原因 - 优化增强版
+     * 获取封禁原因
      *
      * 支持根据威胁评分动态生成更详细的封禁原因
      *

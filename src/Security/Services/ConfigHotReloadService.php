@@ -287,7 +287,7 @@ class ConfigHotReloadService
     }
 
     /**
-     * 清除服务缓存 - 优化增强版
+     * 清除服务缓存
      *
      * 添加内网IP缓存清除逻辑
      */

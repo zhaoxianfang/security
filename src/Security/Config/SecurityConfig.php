@@ -533,7 +533,7 @@ class SecurityConfig implements SecurityConfigInterface
     }
 
     /**
-     * 获取商业级禁止文件扩展名 - 全面防护优化版
+     * 获取商业级禁止文件扩展名
      *
      * 基于文件类型和真实威胁分析，覆盖可执行文件、脚本文件、配置文件等危险类型
      * 采用白名单+黑名单双重机制，在提供全面防护的同时确保业务文件正常上传
@@ -577,7 +577,7 @@ class SecurityConfig implements SecurityConfigInterface
     }
 
     /**
-     * 获取工业级禁止MIME类型 - 深度检测优化版
+     * 获取工业级禁止MIME类型
      *
      * 基于MIME类型真实分析，防止扩展名欺骗和文件类型混淆攻击
      * 覆盖可执行文件、脚本文件、宏文档等危险类型，提供深度文件安全检测

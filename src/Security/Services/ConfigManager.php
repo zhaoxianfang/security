@@ -10,7 +10,7 @@ use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 
 /**
- * 配置管理服务 - 优化增强版
+ * 配置管理服务
  *
  * 提供灵活的配置获取功能，支持：
  * 1. 静态配置值
