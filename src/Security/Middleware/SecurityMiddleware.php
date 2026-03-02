@@ -20,6 +20,7 @@ use zxf\Security\Services\WhitelistSecurityService;
 use zxf\Security\Services\ConfigHotReloadService;
 use zxf\Security\Exceptions\SecurityException;
 use zxf\Security\Constants\SecurityEvent;
+use zxf\Security\Constants\SecurityConstants;
 use zxf\Security\Utils\ExceptionHandler;
 
 /**
@@ -51,6 +52,11 @@ class SecurityMiddleware
      * 是否正在重载配置
      */
     protected bool $isReloadingConfig = false;
+
+    /**
+     * 上次配置重载时间
+     */
+    protected int $lastReloadTime = 0;
 
     /**
      * 检测统计信息
@@ -108,11 +114,14 @@ class SecurityMiddleware
         $this->detectionStats['start_time'] = microtime(true);
 
         try {
-            // 检查配置热重载（带异常保护）
-            if ($this->hotReloadService && !$this->isReloadingConfig) {
+            // 检查配置热重载（优化版：带时间窗口限制）
+            if ($this->hotReloadService &&
+                !$this->isReloadingConfig &&
+                $this->shouldReloadConfig()) {
                 $this->isReloadingConfig = true;
                 try {
                     $this->hotReloadService->reloadConfig();
+                    $this->lastReloadTime = time();
                 } catch (Throwable $e) {
                     // 记录但继续执行
                     Log::warning('配置热重载失败，继续执行安全检查', [
@@ -1240,6 +1249,24 @@ class SecurityMiddleware
         if ($this->threatDetector->getConfig('enable_debug_logging', false)) {
             Log::debug($message, $context);
         }
+    }
+
+    /**
+     * 判断是否应该重新加载配置
+     *
+     * 添加时间窗口检查，避免每次请求都检查配置变更
+     * 减少不必要的IO操作
+     */
+    protected function shouldReloadConfig(): bool
+    {
+        // 首次重载
+        if ($this->lastReloadTime === 0) {
+            return true;
+        }
+
+        // 检查是否超过重载间隔
+        $elapsed = time() - $this->lastReloadTime;
+        return $elapsed >= SecurityConstants::CONFIG_RELOAD_INTERVAL;
     }
 
     /**

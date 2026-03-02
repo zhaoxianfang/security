@@ -863,30 +863,76 @@ class ThreatDetectionService
     }
 
     /**
-     * 递归检查输入数据
+     * 递归检查输入数据（增强版）
+     *
+     * 优化点：
+     * 1. 超过深度限制时记录警告日志
+     * 2. 添加性能监控，记录耗时过长的检测
+     * 3. 防止恶意构造深层数据导致DoS
+     * 4. 数据大小限制，防止超大数组攻击
      */
     protected function checkInputDataRecursively(array $data, array $patterns, string $parentKey = '', int $depth = 0): bool
     {
         $maxDepth = $this->config->get('max_recursion_depth', 10);
+        $maxDataSize = $this->config->get('max_data_size', 1000); // 最大数组元素数量
+
+        // 超过深度限制
         if ($depth > $maxDepth) {
+            Log::warning('递归检测超过最大深度', [
+                'depth' => $depth,
+                'max_depth' => $maxDepth,
+                'parent_key' => $parentKey,
+                'data_size' => count($data),
+            ]);
             return false;
         }
 
-        foreach ($data as $key => $value) {
-            $currentKey = $parentKey ? "{$parentKey}.{$key}" : $key;
+        // 数据大小限制检查
+        if (count($data) > $maxDataSize) {
+            Log::warning('递归检测数据过大', [
+                'data_size' => count($data),
+                'max_size' => $maxDataSize,
+                'depth' => $depth,
+            ]);
+            return false;
+        }
 
-            if (is_array($value)) {
-                if ($this->checkInputDataRecursively($value, $patterns, $currentKey, $depth + 1)) {
-                    return true;
+        // 性能监控开始
+        $startTime = microtime(true);
+        $result = false;
+
+        try {
+            foreach ($data as $key => $value) {
+                $currentKey = $parentKey ? "{$parentKey}.{$key}" : $key;
+
+                if (is_array($value)) {
+                    if ($this->checkInputDataRecursively($value, $patterns, $currentKey, $depth + 1)) {
+                        $result = true;
+                        break;
+                    }
+                } else {
+                    if ($this->checkInputValue($currentKey, $value, $patterns)) {
+                        $result = true;
+                        break;
+                    }
                 }
-            } else {
-                if ($this->checkInputValue($currentKey, $value, $patterns)) {
-                    return true;
-                }
+            }
+        } finally {
+            // 性能监控结束
+            $elapsed = microtime(true) - $startTime;
+
+            // 超过100ms记录警告
+            if ($elapsed > 0.1) {
+                Log::warning('递归检测耗时过长', [
+                    'elapsed' => round($elapsed * 1000, 2) . 'ms',
+                    'depth' => $depth,
+                    'data_size' => count($data),
+                    'parent_key' => $parentKey,
+                ]);
             }
         }
 
-        return false;
+        return $result;
     }
 
     /**

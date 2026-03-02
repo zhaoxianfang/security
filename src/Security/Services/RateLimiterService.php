@@ -54,6 +54,11 @@ class RateLimiterService
     private const STATS_PREFIX = 'security:rate_stats:';
 
     /**
+     * 锁前缀
+     */
+    private const LOCK_PREFIX = 'security:rate_lock:';
+
+    /**
      * 时间窗口映射（秒）
      */
     private const TIME_WINDOWS = [
@@ -81,9 +86,19 @@ class RateLimiterService
     private static array $memoryCache = [];
 
     /**
-     * 文件锁目录
+     * 内存缓存最大大小（防止内存泄漏）
      */
-    private const LOCK_DIR = 'security_rate_locks';
+    private const MAX_MEMORY_CACHE_SIZE = 10000;
+
+    /**
+     * 锁等待超时时间（秒）
+     */
+    private const LOCK_TIMEOUT = 5;
+
+    /**
+     * 锁持有时间（秒）
+     */
+    private const LOCK_TTL = 10;
 
     /**
      * 构造函数 - 依赖注入
@@ -91,22 +106,6 @@ class RateLimiterService
     public function __construct(ConfigManager $config)
     {
         $this->config = $config;
-        $this->initLockDir();
-    }
-
-    /**
-     * 初始化文件锁目录
-     */
-    private function initLockDir(): void
-    {
-        try {
-            $lockDir = \storage_path('framework/cache/' . self::LOCK_DIR);
-            if (!is_dir($lockDir)) {
-                mkdir($lockDir, 0755, true);
-            }
-        } catch (\Throwable $e) {
-            Log::warning('初始化文件锁目录失败: ' . $e->getMessage());
-        }
     }
 
     /**
@@ -356,6 +355,7 @@ class RateLimiterService
      * 获取请求计数 - 文件缓存+内存缓存版本
      *
      * 优先使用内存缓存，其次使用文件缓存
+     * 包含LRU缓存清理机制，防止内存泄漏
      */
     private function getRequestCount(string $fingerprint, string $window): int
     {
@@ -365,6 +365,9 @@ class RateLimiterService
         if (isset(self::$memoryCache[$cacheKey])) {
             return (int) self::$memoryCache[$cacheKey];
         }
+
+        // 检查是否需要清理内存缓存
+        $this->evictMemoryCacheIfNeeded();
 
         // 再检查文件缓存
         $count = Cache::get($cacheKey, 0);
@@ -376,39 +379,82 @@ class RateLimiterService
     }
 
     /**
-     * 增加计数器 - 文件锁原子操作版本
+     * 需要时清理内存缓存（LRU策略）
      *
-     * 使用文件锁保证原子性，支持并发场景
+     * 当内存缓存超过最大大小时，移除最旧的20%缓存
+     */
+    private function evictMemoryCacheIfNeeded(): void
+    {
+        $cacheSize = count(self::$memoryCache);
+
+        if ($cacheSize > self::MAX_MEMORY_CACHE_SIZE) {
+            // 计算需要移除的数量（最旧的20%）
+            $evictCount = (int) ($cacheSize * 0.2);
+
+            // 获取所有键并移除前面的evictCount个
+            $keys = array_keys(self::$memoryCache);
+
+            for ($i = 0; $i < $evictCount; $i++) {
+                unset(self::$memoryCache[$keys[$i]]);
+            }
+
+            Log::debug('内存缓存LRU清理', [
+                'evicted' => $evictCount,
+                'remaining' => count(self::$memoryCache),
+            ]);
+        }
+    }
+
+    /**
+     * 增加计数器 - 使用Laravel原子锁
+     *
+     * 使用Laravel Cache::lock()保证原子性，支持并发场景
      */
     private function incrementCounters(string $fingerprint): void
     {
         try {
             foreach (self::TIME_WINDOWS as $window => $ttl) {
                 $key = $this->getCacheKey($fingerprint, $window);
+                $lockName = self::LOCK_PREFIX . $fingerprint . ':' . $window;
 
-                // 使用文件锁保证原子性
-                $lockFile = $this->getLockFile($key);
-                $lockHandle = fopen($lockFile, 'w');
+                // 使用Laravel原子锁保证原子性
+                $lock = Cache::lock($lockName, self::LOCK_TTL);
 
-                if (flock($lockHandle, LOCK_EX)) {
-                    try {
-                        // 获取当前值
-                        $count = Cache::get($key, 0);
+                try {
+                    // 尝试获取锁，最多等待LOCK_TIMEOUT秒
+                    if ($lock->block(self::LOCK_TIMEOUT)) {
+                        try {
+                            // 获取当前值
+                            $count = Cache::get($key, 0);
 
-                        // 增加计数
-                        $newCount = $count + 1;
+                            // 增加计数
+                            $newCount = $count + 1;
 
-                        // 设置缓存
-                        Cache::put($key, $newCount, $ttl);
+                            // 设置缓存
+                            Cache::put($key, $newCount, $ttl);
 
-                        // 更新内存缓存
-                        self::$memoryCache[$key] = $newCount;
-                    } finally {
-                        flock($lockHandle, LOCK_UN);
+                            // 更新内存缓存
+                            self::$memoryCache[$key] = $newCount;
+                        } finally {
+                            $lock->release();
+                        }
+                    } else {
+                        // 获取锁超时，降级处理
+                        Log::warning('获取限流锁超时，使用降级策略', [
+                            'fingerprint' => $fingerprint,
+                            'window' => $window,
+                        ]);
+                        $this->incrementWithoutLock($fingerprint);
+                        return;
                     }
+                } catch (\Throwable $e) {
+                    Log::error('限流计数锁异常: ' . $e->getMessage(), [
+                        'fingerprint' => $fingerprint,
+                        'window' => $window,
+                    ]);
+                    $this->incrementWithoutLock($fingerprint);
+                    return;
                 }
-
-                fclose($lockHandle);
             }
         } catch (\Throwable $e) {
             Log::error('限流计数失败: ' . $e->getMessage());
@@ -434,15 +480,6 @@ class RateLimiterService
             // 更新内存缓存
             self::$memoryCache[$key] = Cache::get($key, 0);
         }
-    }
-
-    /**
-     * 获取文件锁文件路径
-     */
-    private function getLockFile(string $key): string
-    {
-        $keyHash = md5($key);
-        return \storage_path('framework/cache/' . self::LOCK_DIR . '/' . $keyHash . '.lock');
     }
 
     /**

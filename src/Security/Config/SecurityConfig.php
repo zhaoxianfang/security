@@ -36,17 +36,20 @@ class SecurityConfig implements SecurityConfigInterface
     protected const CONFIG_LEVEL = 'commercial_industrial_plus';
 
     /**
-     * 获取优化的恶意请求体检测模式
+     * 获取优化的恶意请求体检测模式（增强版）
      *
      * 采用智能合并和分层策略，将相似攻击向量合并为高性能正则表达式
      * 通过优化回溯和分组匹配，在保持检测精度的同时大幅提升匹配效率
      * 支持多层级威胁检测，从基础攻击到高级持久化威胁全面覆盖
+     *
+     * 新增：编码绕过检测、Base64 payload检测、Unicode变体检测
      *
      * @return array 优化后的正则表达式模式数组
      */
     public static function getMaliciousBodyPatterns(): array
     {
         return array_merge(
+            self::getEncodingBypassPatterns(),    // 编码绕过检测（新增）
             self::getCriticalThreatPatterns(),     // 关键威胁检测 - 最高优先级
             self::getCommonAttackPatterns(),       // 常见攻击检测 - 高性能
             self::getAdvancedThreatPatterns(),     // 高级威胁检测 - 全面覆盖
@@ -55,6 +58,58 @@ class SecurityConfig implements SecurityConfigInterface
             self::getXSSAttackPatterns(),          // XSS攻击专项检测
             self::getCommandInjectionPatterns()    // 命令注入专项检测
         );
+    }
+
+    /**
+     * 编码绕过检测模式（新增）
+     *
+     * 检测各种编码绕过技术：
+     * 1. Base64编码的恶意payload
+     * 2. Unicode变体绕过（如：<scrīpt>）
+     * 3. URL编码多层绕过
+     * 4. 十六进制编码绕过
+     * 5. 混合编码绕过
+     */
+    protected static function getEncodingBypassPatterns(): array
+    {
+        return [
+            /**
+             * Base64编码检测
+             * 检测常见的Base64编码payload
+             */
+            '/data:(?:application|text)\/(?:javascript|ecmascript|html|x-shockwave-flash);base64,[a-zA-Z0-9+\/=]{20,}/i',
+
+            /**
+             * Unicode变体绕过检测
+             * 检测Unicode字符绕过XSS过滤
+             * 如：<scrīpt>、<scr\u0131pt>等
+             */
+            '/<scr[\\u0131\\u0300-\\u036f\\u1e80-\\u1eff][^>]*>/i',
+
+            /**
+             * URL编码多层绕过检测
+             * 检测双重URL编码
+             */
+            '/%25[0-9a-f]{2}/i',
+
+            /**
+             * 混合编码检测
+             * 检测混合了多种编码的payload
+             */
+            '/(?:%[0-9a-f]{2}|&#[0-9]+;|&#[xX][0-9a-fA-F]+;|\\[uU][0-9a-fA-F]{4}){3,}/i',
+
+            /**
+             * HTML实体编码绕过检测
+             * 检测HTML实体编码的脚本标签
+             */
+            '/&(?:lt|gt|quot|amp|#(?:x[0-9a-f]+|[0-9]+);)+(?:script|on\w+)/i',
+
+            /**
+             * JavaScript Unicode转义检测
+             * 检测JavaScript中的Unicode转义序列
+             */
+            '/\\u[0-9a-fA-F]{4}(?:\\u[0-9a-fA-F]{4}){2,}/i',
+        ];
     }
 
     /**
