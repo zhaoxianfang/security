@@ -36,7 +36,7 @@ class SecurityConfig implements SecurityConfigInterface
     protected const CONFIG_LEVEL = 'commercial_industrial_plus';
 
     /**
-     * 获取优化的恶意请求体检测模式 - 商业级最终优化版
+     * 获取优化的恶意请求体检测模式
      *
      * 采用智能合并和分层策略，将相似攻击向量合并为高性能正则表达式
      * 通过优化回溯和分组匹配，在保持检测精度的同时大幅提升匹配效率
