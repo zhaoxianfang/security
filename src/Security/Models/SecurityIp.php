@@ -242,7 +242,7 @@ class SecurityIp extends Model
             ->where(function (Builder $query) {
                 // 检查过期时间
                 $query->whereNull('expires_at')
-                      ->orWhere('expires_at', '>', now());
+                      ->orWhere('expires_at', '>', \now());
             })
             ->exists(); // 使用 EXISTS 比 COUNT 更高效
     }
@@ -299,7 +299,7 @@ class SecurityIp extends Model
             ->where(function (Builder $query) {
                 // 检查过期时间
                 $query->whereNull('expires_at')
-                      ->orWhere('expires_at', '>', now());
+                      ->orWhere('expires_at', '>', \now());
             })
             ->exists();
     }
@@ -441,7 +441,7 @@ class SecurityIp extends Model
                 ->where('status', self::STATUS_ACTIVE)
                 ->where(function (Builder $query) {
                     $query->whereNull('expires_at')
-                          ->orWhere('expires_at', '>', now());
+                          ->orWhere('expires_at', '>', \now());
                 })
                 ->limit($maxBatchSize)
                 ->get();
@@ -588,6 +588,7 @@ class SecurityIp extends Model
      * 批量记录IP访问 - 高性能批量操作
      *
      * 使用批量更新减少数据库连接，大幅提升性能
+     * 支持采样机制,避免记录过多正常访问
      *
      * @param array $records 记录数组，格式: [['ip' => '...', 'blocked' => true, 'rule' => '...'], ...]
      * @return int 成功记录的数量
@@ -599,6 +600,23 @@ class SecurityIp extends Model
         }
 
         $debugLogging = security_config('enable_debug_logging', false);
+        $recordNormalVisitor = security_config('ip_auto_detection.record_normal_visitor', false);
+
+        // 如果配置为不记录正常访客,则过滤掉未拦截的记录
+        if (!$recordNormalVisitor) {
+            $records = array_filter($records, fn($record) => ($record['blocked'] ?? false));
+            
+            if (empty($records)) {
+                return 0; // 所有记录都是正常访问,不记录
+            }
+        }
+
+        // 采样机制:对正常请求进行采样,只记录10%
+        $records = self::applySampling($records);
+
+        if (empty($records)) {
+            return 0; // 采样后无记录
+        }
 
         try {
             return DB::transaction(function () use ($records, $debugLogging) {
@@ -673,27 +691,25 @@ class SecurityIp extends Model
                                 }
                             }
                         } else {
-                            if(security_config('ip_auto_detection.record_normal_visitor', false)) {
-                                // 记录不存在，创建新记录
-                                $threatScore = $stats['blocked'] > 0 ? min(100.00, $stats['blocked'] * 10) : 0.00;
-                                self::create([
-                                    'ip_address' => $ip,
-                                    'is_range' => false,
-                                    'type' => $threatScore >= 50 ? self::TYPE_SUSPICIOUS : self::TYPE_MONITORING,
-                                    'status' => self::STATUS_ACTIVE,
-                                    'reason' => $threatScore >= 50 ? '可疑监控' : '正常监控',
-                                    'first_seen_at' => now(),
-                                    'last_request_at' => now(),
-                                    'threat_score' => $threatScore,
-                                    'request_count' => $stats['blocked'] + $stats['success'],
-                                    'blocked_count' => $stats['blocked'],
-                                    'success_count' => $stats['success'],
-                                    'auto_detected' => $stats['blocked'] > 0,
-                                    'trigger_count' => $stats['blocked'] > 0 ? 1 : 0,
-                                    'trigger_rules' => $stats['blocked'] > 0 && $rule ? [$rule] : [],
-                                ]);
-                                $successCount++;
-                            }
+                            // 记录不存在,创建新记录
+                            $threatScore = $stats['blocked'] > 0 ? min(100.00, $stats['blocked'] * 10) : 0.00;
+                            self::create([
+                                'ip_address' => $ip,
+                                'is_range' => false,
+                                'type' => $threatScore >= 50 ? self::TYPE_SUSPICIOUS : self::TYPE_MONITORING,
+                                'status' => self::STATUS_ACTIVE,
+                                'reason' => $threatScore >= 50 ? '可疑监控' : '正常监控',
+                                'first_seen_at' => now(),
+                                'last_request_at' => now(),
+                                'threat_score' => $threatScore,
+                                'request_count' => $stats['blocked'] + $stats['success'],
+                                'blocked_count' => $stats['blocked'],
+                                'success_count' => $stats['success'],
+                                'auto_detected' => $stats['blocked'] > 0,
+                                'trigger_count' => $stats['blocked'] > 0 ? 1 : 0,
+                                'trigger_rules' => $stats['blocked'] > 0 && $rule ? [$rule] : [],
+                            ]);
+                            $successCount++;
                         }
                     }
                 }
@@ -705,13 +721,45 @@ class SecurityIp extends Model
                 return $successCount;
             });
 
-        } catch (Throwable $e) {
+        } catch (\Throwable $e) {
             Log::error('批量记录IP访问失败: ' . $e->getMessage(), [
                 'records_count' => count($records),
                 'exception' => $e
             ]);
             return 0;
         }
+    }
+
+    /**
+     * 应用采样机制 - 减少数据库写入
+     *
+     * 对正常请求进行采样,只记录10%
+     * 被拦截的请求100%记录
+     *
+     * @param array $records 记录数组
+     * @return array 采样后的记录数组
+     */
+    private static function applySampling(array $records): array
+    {
+        if (empty($records)) {
+            return [];
+        }
+
+        $sampledRecords = [];
+        
+        foreach ($records as $record) {
+            // 被拦截的请求全部记录
+            if ($record['blocked'] ?? false) {
+                $sampledRecords[] = $record;
+            } else {
+                // 正常请求按10%采样
+                if (rand(1, 10) === 1) {
+                    $sampledRecords[] = $record;
+                }
+            }
+        }
+        
+        return $sampledRecords;
     }
 
     /**

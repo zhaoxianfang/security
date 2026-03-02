@@ -8,6 +8,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use InvalidArgumentException;
+use Throwable;
 use zxf\Security\Constants\SecurityEvent;
 use zxf\Security\Models\SecurityIp;
 
@@ -60,49 +61,63 @@ class IpManagerService
     }
 
     /**
-     * 检查IP是否在白名单
+     * 检查IP是否在白名单 - 优化增强版
+     *
+     * 支持内网配置选项，提高灵活性
      */
     public function isWhitelisted(Request $request): bool
     {
         $clientIp = $this->getClientRealIp($request);
 
-        // 首先检查本地IP
+        // 1. 首先检查是否为内网IP且配置了忽略
         if ($this->shouldIgnoreLocal() && $this->isLocalIp($clientIp)) {
+            $this->logDebug('内网IP自动通过白名单检查', ['ip' => $clientIp]);
             return true;
         }
 
-        // 检查自定义白名单处理器
+        // 2. 检查自定义白名单处理器
         if ($this->checkCustomWhitelist($request, $clientIp)) {
             return true;
         }
 
-        // 检查数据库白名单
+        // 3. 检查数据库白名单
         return SecurityIp::isWhitelisted($clientIp);
     }
 
     /**
-     * 检查IP是否在黑名单
+     * 检查IP是否在黑名单 - 优化增强版
+     *
+     * 支持内网配置选项，提高灵活性和安全性
      */
     public function isBlacklisted(Request $request): bool
     {
         $clientIp = $this->getClientRealIp($request);
 
-        // 本地IP不检查黑名单
+        // 1. 检查内网IP是否跳过黑名单检查
+        $skipBlacklist = $this->config->get('intranet.skip_blacklist_check', false);
+        if ($this->isLocalIp($clientIp) && $skipBlacklist) {
+            $this->logDebug('内网IP跳过黑名单检查', ['ip' => $clientIp]);
+            return false;
+        }
+
+        // 2. 如果配置了 ignore_local，内网IP直接返回 false
         if ($this->shouldIgnoreLocal() && $this->isLocalIp($clientIp)) {
             return false;
         }
 
-        // 检查自定义黑名单处理器
+        // 3. 检查自定义黑名单处理器
         if ($this->checkCustomBlacklist($request, $clientIp)) {
             return true;
         }
 
-        // 检查数据库黑名单
+        // 4. 检查数据库黑名单
         return SecurityIp::isBlacklisted($clientIp);
     }
 
     /**
-     * 记录IP访问
+     * 记录IP访问 - 优化增强版
+     *
+     * 支持内网配置，减少不必要的数据库写入
      */
     public function recordAccess(Request $request, bool $blocked = false, ?string $rule = null): ?array
     {
@@ -110,8 +125,24 @@ class IpManagerService
             $clientIp = $this->getClientRealIp($request);
             $debugLogging = $this->config->get('enable_debug_logging', false);
 
+            // 检查内网IP是否需要记录
+            $isIntranet = $this->isLocalIp($clientIp);
+            $logIntranetAccess = $this->config->get('intranet.log_access', true);
+
+            if ($isIntranet && !$logIntranetAccess && !$blocked) {
+                // 内网IP且配置不记录且未拦截，跳过记录
+                if ($debugLogging) {
+                    $this->logDebug("内网IP跳过访问记录", [
+                        'ip' => $clientIp,
+                        'blocked' => $blocked,
+                        'rule' => $rule
+                    ]);
+                }
+                return null;
+            }
+
             if ($debugLogging) {
-                Log::info("记录IP访问: {$clientIp}, 拦截: " . ($blocked ? '是' : '否') . ", 规则: " . ($rule ?? '无'));
+                $this->logDebug("记录IP访问: {$clientIp}, 拦截: " . ($blocked ? '是' : '否') . ", 规则: " . ($rule ?? '无'));
             }
 
             $ipRecord = SecurityIp::recordRequest($clientIp, $blocked, $rule);
@@ -184,7 +215,7 @@ class IpManagerService
             SecurityIp::addToBlacklist(
                 $clientIp,
                 $reason,
-                now()->addSeconds($duration),
+                \now()->addSeconds($duration),
                 true // 自动检测
             );
 
@@ -363,75 +394,57 @@ class IpManagerService
     }
 
     /**
-     * 判断是否为本地IP
+     * 判断是否为本地IP - 优化增强版
+     *
+     * 使用统一的 is_intranet_ip 函数进行判断，支持缓存
      */
     protected function isLocalIp(string $ip): bool
     {
-        // 检查是否为本地回环地址
-        if (in_array($ip, self::LOCAL_IPS)) {
-            return true;
+        // 如果禁用缓存，直接判断
+        if (!$this->config->get('intranet.enable_cache', true)) {
+            return $this->checkIntranetIp($ip);
         }
 
-        // 检查是否为私有IP
-        return $this->isPrivateIp($ip);
+        // 使用缓存减少判断开销
+        $cacheKey = self::CACHE_PREFIX . 'intranet:' . md5($ip);
+        $cacheTtl = $this->config->get('intranet.cache_ttl', 300);
+
+        return Cache::remember($cacheKey, $cacheTtl, function () use ($ip) {
+            return $this->checkIntranetIp($ip);
+        });
     }
 
     /**
-     * 判断是否为私有IP
+     * 检查内网IP - 核心判断逻辑
+     *
+     * 使用 is_intranet_ip 函数，确保判断逻辑统一
      */
-    protected function isPrivateIp(string $ip): bool
+    protected function checkIntranetIp(string $ip): bool
     {
-        // IPv4 检查
-        if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
-            foreach (self::PRIVATE_RANGES as $range) {
-                if ($this->ipInRange($ip, $range)) {
-                    return true;
-                }
-            }
+        try {
+            // 获取内网配置
+            $checkLoopback = $this->config->get('intranet.check_loopback', true);
+            $checkLinklocal = $this->config->get('intranet.check_linklocal', true);
+            $customRanges = $this->config->get('intranet.custom_ranges', []);
+
+            // 构建 is_intranet_ip 参数
+            $opt = [
+                'loopback' => $checkLoopback,
+                'linklocal' => $checkLinklocal,
+                'custom' => is_array($customRanges) ? $customRanges : [],
+            ];
+
+            // 使用 is_intranet_ip 函数判断
+            return is_intranet_ip($ip, $opt);
+
+        } catch (Throwable $e) {
+            Log::error('内网IP判断失败: ' . $e->getMessage(), [
+                'ip' => $ip,
+                'exception' => $e
+            ]);
+            // 异常时返回false，避免影响正常业务
+            return false;
         }
-
-        // IPv6 检查
-        if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6)) {
-            foreach (self::PRIVATE_RANGES as $range) {
-                if ($this->ipv6InRange($ip, $range)) {
-                    return true;
-                }
-            }
-        }
-
-        return false;
-    }
-
-    /**
-     * 检查IPv4地址是否在范围内
-     */
-    protected function ipInRange(string $ip, string $range): bool
-    {
-        if (!str_contains($range, '/')) {
-            return $ip === $range;
-        }
-
-        list($subnet, $bits) = explode('/', $range);
-        $ip = ip2long($ip);
-        $subnet = ip2long($subnet);
-        $mask = -1 << (32 - $bits);
-
-        return ($ip & $mask) === ($subnet & $mask);
-    }
-
-    /**
-     * 检查IPv6地址是否在范围内
-     */
-    protected function ipv6InRange(string $ip, string $range): bool
-    {
-        // 简化实现，实际生产环境可能需要更复杂的IPv6范围检查
-        if (!str_contains($range, '/')) {
-            return $ip === $range;
-        }
-
-        // 这里可以使用专门的IPv6库进行精确检查
-        // 为了简化，我们只进行基本检查
-        return true;
     }
 
     /**
@@ -557,6 +570,16 @@ class IpManagerService
     }
 
     /**
+     * 记录调试日志
+     */
+    protected function logDebug(string $message, array $context = []): void
+    {
+        if ($this->config->get('enable_debug_logging', false)) {
+            Log::debug($message, $context);
+        }
+    }
+
+    /**
      * 解析可调用对象
      */
     protected function resolveCallable($handler)
@@ -571,7 +594,7 @@ class IpManagerService
                 $method = $handler[1];
 
                 if (is_string($class) && class_exists($class)) {
-                    return [app($class), $method];
+                    return [\app($class), $method];
                 }
 
                 return $handler;
@@ -582,7 +605,7 @@ class IpManagerService
                 if (str_contains($handler, '::')) {
                     [$class, $method] = explode('::', $handler, 2);
                     if (class_exists($class) && method_exists($class, $method)) {
-                        return [app($class), $method];
+                        return [\app($class), $method];
                     }
                 }
 
@@ -685,7 +708,7 @@ class IpManagerService
                 ->where('status', SecurityIp::STATUS_ACTIVE)
                 ->where(function ($query) {
                     $query->whereNull('expires_at')
-                        ->orWhere('expires_at', '>', now());
+                        ->orWhere('expires_at', '>', \now());
                 })
                 ->get();
 
@@ -749,6 +772,16 @@ class IpManagerService
         if ($this->config->get('enable_debug_logging', false)) {
             Log::info('IP管理服务缓存已清除');
         }
+    }
+
+    /**
+     * 清除所有缓存（别名方法）
+     *
+     * 提供多种方法名以便不同场景调用
+     */
+    public function clearAllCache(): void
+    {
+        $this->clearCache();
     }
 
     /**

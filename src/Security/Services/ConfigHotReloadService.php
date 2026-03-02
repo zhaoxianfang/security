@@ -287,7 +287,9 @@ class ConfigHotReloadService
     }
 
     /**
-     * 清除服务缓存
+     * 清除服务缓存 - 优化增强版
+     *
+     * 添加内网IP缓存清除逻辑
      */
     protected function clearServiceCaches(): void
     {
@@ -304,11 +306,7 @@ class ConfigHotReloadService
                 $ruleEngine->clearCache();
             }
 
-            // 清除威胁评分缓存
-            if (class_exists(ThreatScoringService::class)) {
-                $threatScoring = app(ThreatScoringService::class);
-                $threatScoring->clearCache();
-            }
+            // 威胁评分缓存已集成到RuleEngineService中，不需要单独清除
 
             // 清除IP缓存
             if (class_exists(IpManagerService::class)) {
@@ -316,10 +314,37 @@ class ConfigHotReloadService
                 $ipManager->clearAllCache();
             }
 
+            // 清除内网IP判断缓存
+            $this->clearIntranetCache();
+
             Log::debug('服务缓存已清除');
 
         } catch (\Exception $e) {
             Log::warning('清除服务缓存时出错', [
+                'error' => $e->getMessage(),
+            ]);
+        }
+    }
+
+    /**
+     * 清除内网IP判断缓存
+     *
+     * 当内网配置变更时，清除所有内网IP判断缓存
+     */
+    protected function clearIntranetCache(): void
+    {
+        try {
+            // 清除所有内网IP判断缓存
+            $pattern = 'security:ip:intranet:*';
+
+            if (function_exists('clean_security_cache')) {
+                clean_security_cache();
+            }
+
+            Log::debug('内网IP判断缓存已清除');
+
+        } catch (\Exception $e) {
+            Log::warning('清除内网IP缓存时出错', [
                 'error' => $e->getMessage(),
             ]);
         }

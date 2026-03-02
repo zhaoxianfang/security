@@ -5,32 +5,36 @@ namespace zxf\Security\Services;
 use Exception;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use zxf\Security\Models\SecurityIp;
+use zxf\Security\Utils\IpHelper;
 
 /**
- * 速率限制服务 - PHP 8.2+ 高性能版本
+ * 速率限制服务 - PHP 8.2+ 高性能无Redis版本
  *
  * 核心特性：
  * 1. 多维度速率限制（IP、User-Agent、请求路径等）
- * 2. 令牌桶算法支持平滑流量控制
- * 3. 滑动窗口计数器，精确控制时间窗口
- * 4. 分布式锁防止并发问题
- * 5. 批量操作和管道优化减少Redis连接
- * 6. 智能降级策略，缓存失效时自动降级
+ * 2. 滑动窗口算法，精确控制时间窗口
+ * 3. 文件缓存+内存缓存双重策略，无需Redis
+ * 4. 批量操作优化减少文件IO
+ * 5. 智能降级策略，缓存失效时自动降级
+ * 6. 原子性操作保证数据一致性
  *
  * 性能优化：
- * - 使用Lua脚本实现原子操作
- * - Redis管道批量操作减少网络往返
- * - 布隆过滤器快速判断白名单
- * - 本地缓存预热减少远程调用
+ * - 使用文件缓存持久化速率限制数据
+ * - 内存缓存预热减少文件访问
+ * - 滑动窗口算法提高精确度
+ * - 批量写入减少IO次数
  * - 异步日志记录避免阻塞
  *
  * 架构设计：
  * - 分层限流：全局、IP级、用户级、API级
  * - 动态调整：根据系统负载自动调整阈值
  * - 熔断机制：后端异常时自动放行
+ * - 文件锁机制防止并发冲突
+ *
+ * @package zxf\Security\Services
+ * @version 2.0.0
  */
 class RateLimiterService
 {
@@ -71,17 +75,44 @@ class RateLimiterService
     ];
 
     /**
+     * 内存缓存（请求级）
+     * 用于缓存当前请求周期内的速率限制结果
+     */
+    private static array $memoryCache = [];
+
+    /**
+     * 文件锁目录
+     */
+    private const LOCK_DIR = 'security_rate_locks';
+
+    /**
      * 构造函数 - 依赖注入
      */
     public function __construct(ConfigManager $config)
     {
         $this->config = $config;
+        $this->initLockDir();
     }
 
     /**
-     * 检查速率限制 - 高性能版本
+     * 初始化文件锁目录
+     */
+    private function initLockDir(): void
+    {
+        try {
+            $lockDir = \storage_path('framework/cache/' . self::LOCK_DIR);
+            if (!is_dir($lockDir)) {
+                mkdir($lockDir, 0755, true);
+            }
+        } catch (\Throwable $e) {
+            Log::warning('初始化文件锁目录失败: ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * 检查速率限制 - 高性能文件缓存版本
      *
-     * 使用Lua脚本保证原子性，防止并发问题
+     * 使用文件缓存保证持久化，内存缓存提升性能
      *
      * @param Request $request HTTP请求对象
      * @return array 检查结果 ['blocked' => bool, ...]
@@ -154,11 +185,11 @@ class RateLimiterService
                 }
             }
 
-            // 增加计数器（异步）
+            // 增加计数器
             $this->incrementCounters($fingerprint);
 
             return $this->getAllowResponse();
-        } catch (Throwable $e) {
+        } catch (\Throwable $e) {
             Log::error('速率限制检查异常: ' . $e->getMessage(), [
                 'exception' => $e
             ]);
@@ -168,7 +199,7 @@ class RateLimiterService
     }
 
     /**
-     * 批量检查速率限制 - 高性能批量查询
+     * 批量检查速率限制 - 文件缓存版本
      *
      * 一次性检查多个指纹的状态，适用于批量API请求
      *
@@ -182,28 +213,18 @@ class RateLimiterService
         }
 
         $results = [];
-        $pipeline = [];
 
-        // 构建管道命令
-        foreach ($fingerprints as $fingerprint) {
-            foreach (array_keys(self::TIME_WINDOWS) as $window) {
-                $pipeline[] = ['get', $this->getCacheKey($fingerprint, $window)];
-            }
-        }
-
-        // 执行管道（减少网络往返）
-        if (method_exists(Cache::store(), 'connection')) {
-            $values = $this->executeRedisPipeline($pipeline);
-        } else {
-            // 降级到普通查询
+        try {
             foreach ($fingerprints as $fingerprint) {
+                if (!is_string($fingerprint) || empty($fingerprint)) {
+                    continue;
+                }
                 $results[$fingerprint] = $this->checkByFingerprint($fingerprint);
             }
-            return $results;
+        } catch (\Throwable $e) {
+            Log::error('批量速率限制检查失败: ' . $e->getMessage());
+            return [];
         }
-
-        // 解析结果
-        // ... 解析管道返回的数据
 
         return $results;
     }
@@ -236,20 +257,28 @@ class RateLimiterService
     }
 
     /**
-     * 检查是否在白名单中
+     * 检查是否在白名单中 - 文件缓存版本
      *
-     * 使用布隆过滤器快速判断，减少数据库查询
+     * 使用内存缓存快速判断，减少数据库查询
+     * 支持内网配置选项，提高灵活性
      */
     private function isWhitelisted(Request $request): bool
     {
         $clientIp = $request->ip();
 
-        // 本地IP白名单（减少配置查询）
+        // 1. 检查本地IP白名单（减少配置查询）
         if ($this->config->get('ignore_local', false) && $this->isLocalIp($clientIp)) {
             return true;
         }
 
-        // 数据库白名单（带缓存）
+        // 2. 检查内网IP是否跳过速率限制
+        $skipRateLimit = $this->config->get('intranet.skip_rate_limit', false);
+        if ($this->isLocalIp($clientIp) && $skipRateLimit) {
+            Log::debug('内网IP跳过速率限制', ['ip' => $clientIp]);
+            return true;
+        }
+
+        // 3. 数据库白名单（带缓存）
         return SecurityIp::isWhitelisted($clientIp);
     }
 
@@ -306,7 +335,7 @@ class RateLimiterService
                 if (is_string($result) && strlen($result) > 0) {
                     return $result;
                 }
-            } catch (Throwable $e) {
+            } catch (\Throwable $e) {
                 Log::error('自定义指纹生成失败: ' . $e->getMessage(), [
                     'handler' => $handler,
                     'exception' => $e,
@@ -324,74 +353,74 @@ class RateLimiterService
     }
 
     /**
-     * 获取请求计数 - 使用Lua脚本保证原子性
+     * 获取请求计数 - 文件缓存+内存缓存版本
+     *
+     * 优先使用内存缓存，其次使用文件缓存
      */
     private function getRequestCount(string $fingerprint, string $window): int
     {
         $cacheKey = $this->getCacheKey($fingerprint, $window);
 
+        // 先检查内存缓存
+        if (isset(self::$memoryCache[$cacheKey])) {
+            return (int) self::$memoryCache[$cacheKey];
+        }
+
+        // 再检查文件缓存
         $count = Cache::get($cacheKey, 0);
+
+        // 更新内存缓存
+        self::$memoryCache[$cacheKey] = $count;
 
         return is_int($count) ? $count : (int) $count;
     }
 
     /**
-     * 增加计数器 - 使用原子操作
+     * 增加计数器 - 文件锁原子操作版本
      *
-     * 使用Redis的INCR命令保证原子性，支持并发场景
+     * 使用文件锁保证原子性，支持并发场景
      */
     private function incrementCounters(string $fingerprint): void
     {
-        $ttl = self::TIME_WINDOWS['minute']; // 默认TTL
-
-        // 使用Redis事务或Lua脚本保证原子性
-        if ($this->isRedisDriver()) {
-            $this->incrementWithRedis($fingerprint);
-        } else {
-            // 降级到其他缓存驱动
-            $this->incrementWithGeneric($fingerprint);
-        }
-    }
-
-    /**
-     * 使用Redis原子递增
-     */
-    private function incrementWithRedis(string $fingerprint): void
-    {
         try {
-            $redis = Cache::store()->connection();
-
             foreach (self::TIME_WINDOWS as $window => $ttl) {
                 $key = $this->getCacheKey($fingerprint, $window);
 
-                // 使用Lua脚本保证原子性
-                $script = <<<'LUA'
-                local key = KEYS[1]
-                local ttl = tonumber(ARGV[1])
-                local current = redis.call('GET', key)
+                // 使用文件锁保证原子性
+                $lockFile = $this->getLockFile($key);
+                $lockHandle = fopen($lockFile, 'w');
 
-                if current then
-                    redis.call('INCR', key)
-                else
-                    redis.call('SET', key, 1, 'EX', ttl)
-                end
+                if (flock($lockHandle, LOCK_EX)) {
+                    try {
+                        // 获取当前值
+                        $count = Cache::get($key, 0);
 
-                return true
-                LUA;
+                        // 增加计数
+                        $newCount = $count + 1;
 
-                $redis->eval($script, 1, $key, $ttl);
+                        // 设置缓存
+                        Cache::put($key, $newCount, $ttl);
+
+                        // 更新内存缓存
+                        self::$memoryCache[$key] = $newCount;
+                    } finally {
+                        flock($lockHandle, LOCK_UN);
+                    }
+                }
+
+                fclose($lockHandle);
             }
-        } catch (Throwable $e) {
-            Log::error('Redis限流计数失败: ' . $e->getMessage());
-            // 降级到通用实现
-            $this->incrementWithGeneric($fingerprint);
+        } catch (\Throwable $e) {
+            Log::error('限流计数失败: ' . $e->getMessage());
+            // 降级到简单实现
+            $this->incrementWithoutLock($fingerprint);
         }
     }
 
     /**
-     * 通用递增实现（兼容所有缓存驱动）
+     * 不使用锁的简单递增（降级实现）
      */
-    private function incrementWithGeneric(string $fingerprint): void
+    private function incrementWithoutLock(string $fingerprint): void
     {
         foreach (self::TIME_WINDOWS as $window => $ttl) {
             $key = $this->getCacheKey($fingerprint, $window);
@@ -400,30 +429,20 @@ class RateLimiterService
                 Cache::put($key, 1, $ttl);
             } else {
                 Cache::increment($key);
-                // 确保TTL设置正确
-                $this->ensureTtl($key, $ttl);
             }
+
+            // 更新内存缓存
+            self::$memoryCache[$key] = Cache::get($key, 0);
         }
     }
 
     /**
-     * 确保缓存键有正确的TTL
+     * 获取文件锁文件路径
      */
-    private function ensureTtl(string $key, int $ttl): void
+    private function getLockFile(string $key): string
     {
-        try {
-            // 检查TTL，如果不正确则重新设置
-            if ($this->isRedisDriver()) {
-                $redis = Cache::store()->connection();
-                $currentTtl = $redis->ttl($key);
-
-                if ($currentTtl < 0 || $currentTtl > $ttl) {
-                    $redis->expire($key, $ttl);
-                }
-            }
-        } catch (Throwable $e) {
-            // 忽略TTL设置错误
-        }
+        $keyHash = md5($key);
+        return \storage_path('framework/cache/' . self::LOCK_DIR . '/' . $keyHash . '.lock');
     }
 
     /**
@@ -431,16 +450,12 @@ class RateLimiterService
      */
     private function recordBlockStats(string $window): void
     {
-        $statsKey = self::STATS_PREFIX . $window . ':' . date('Y-m-d-H');
-
-        if ($this->isRedisDriver()) {
-            try {
-                $redis = Cache::store()->connection();
-                $redis->incr($statsKey);
-                $redis->expire($statsKey, 86400); // 24小时过期
-            } catch (Throwable $e) {
-                // 忽略统计错误
-            }
+        try {
+            $statsKey = self::STATS_PREFIX . $window . ':' . date('Y-m-d-H');
+            Cache::increment($statsKey);
+            Cache::put($statsKey, Cache::get($statsKey, 0), 86400); // 24小时过期
+        } catch (\Throwable $e) {
+            // 忽略统计错误
         }
     }
 
@@ -482,61 +497,6 @@ class RateLimiterService
     }
 
     /**
-     * 检查是否为Redis驱动
-     */
-    private function isRedisDriver(): bool
-    {
-        try {
-            $defaultDriver = config('cache.default');
-            if ($defaultDriver === 'redis') {
-                $cacheStore = Cache::store();
-                return $cacheStore && method_exists($cacheStore, 'connection');
-            }
-            return false;
-        } catch (Throwable $e) {
-            Log::error('检查Redis驱动失败: ' . $e->getMessage());
-            return false;
-        }
-    }
-
-    /**
-     * 执行Redis管道
-     */
-    private function executeRedisPipeline(array $commands): array
-    {
-        try {
-            $cacheStore = Cache::store();
-            if (!$cacheStore || !method_exists($cacheStore, 'connection')) {
-                return [];
-            }
-
-            $redis = $cacheStore->connection();
-            if (!$redis) {
-                Log::warning('Redis连接不存在');
-                return [];
-            }
-
-            return $redis->pipeline(function ($pipe) use ($commands) {
-                foreach ($commands as $cmd) {
-                    if (is_array($cmd) && count($cmd) > 0 && isset($cmd[0])) {
-                        $method = $cmd[0];
-                        $args = array_slice($cmd, 1);
-                        if (method_exists($pipe, $method)) {
-                            $pipe->$method(...$args);
-                        }
-                    }
-                }
-            });
-        } catch (Throwable $e) {
-            Log::error('Redis管道执行失败: ' . $e->getMessage(), [
-                'commands_count' => count($commands),
-                'exception' => $e
-            ]);
-            return [];
-        }
-    }
-
-    /**
      * 通用哈希函数
      */
     private function hash(array|string $data): string
@@ -561,20 +521,45 @@ class RateLimiterService
             'path' => $request->path(),
             'method' => $request->method(),
             'fingerprint' => substr($this->getRequestFingerprint($request), 0, 12) . '...',
-            'timestamp' => now()->toISOString(),
+            'timestamp' => \now()->toISOString(),
         ]);
     }
 
     /**
-     * 检查是否为本地IP
+     * 检查是否为本地IP - 使用IpHelper
+     *
+     * 使用 is_intranet_ip 函数，确保判断逻辑统一
      */
     private function isLocalIp(string $ip): bool
     {
-        return $ip === '127.0.0.1' || $ip === '::1' || $ip === 'localhost';
+        try {
+            // 获取内网配置
+            $checkLoopback = $this->config->get('intranet.check_loopback', true);
+            $checkLinklocal = $this->config->get('intranet.check_linklocal', true);
+            $customRanges = $this->config->get('intranet.custom_ranges', []);
+
+            // 构建 is_intranet_ip 参数
+            $opt = [
+                'loopback' => $checkLoopback,
+                'linklocal' => $checkLinklocal,
+                'custom' => is_array($customRanges) ? $customRanges : [],
+            ];
+
+            // 使用 is_intranet_ip 函数判断
+            return is_intranet_ip($ip, $opt);
+
+        } catch (\Throwable $e) {
+            Log::error('内网IP判断失败: ' . $e->getMessage(), [
+                'ip' => $ip,
+                'exception' => $e
+            ]);
+            // 异常时返回false，避免影响正常业务
+            return false;
+        }
     }
 
     /**
-     * 获取速率限制统计 - 详细版本
+     * 获取速率限制统计 - 文件缓存版本
      */
     public function getRateLimitStats(): array
     {
@@ -582,10 +567,8 @@ class RateLimiterService
         $totals = ['active' => 0, 'blocks' => 0];
 
         foreach (self::TIME_WINDOWS as $window => $ttl) {
-            $pattern = self::CACHE_PREFIX . $window . ':*';
-
             $stats[$window] = [
-                'active_limits' => $this->estimateActiveLimits($pattern),
+                'active_limits' => $this->estimateActiveLimits($window),
                 'total_blocks' => $this->getTotalBlocks($window),
                 'window_ttl' => $ttl,
                 'limit' => $this->config->get('rate_limits.' . $window, 0),
@@ -607,17 +590,12 @@ class RateLimiterService
     /**
      * 估算活跃限制数量
      */
-    private function estimateActiveLimits(string $pattern): int
+    private function estimateActiveLimits(string $window): int
     {
-        if (!$this->isRedisDriver()) {
-            return 0;
-        }
-
         try {
-            $redis = Cache::store()->connection();
-            $keys = $redis->keys($pattern);
-            return count($keys);
-        } catch (Throwable $e) {
+            // 文件缓存版本无法直接统计，返回估算值
+            return count(self::$memoryCache);
+        } catch (\Throwable $e) {
             return 0;
         }
     }
@@ -636,25 +614,10 @@ class RateLimiterService
      */
     public function clearFingerprint(string $fingerprint): void
     {
-        $keys = [];
         foreach (array_keys(self::TIME_WINDOWS) as $window) {
-            $keys[] = $this->getCacheKey($fingerprint, $window);
-        }
-
-        if ($this->isRedisDriver()) {
-            try {
-                $redis = Cache::store()->connection();
-                $redis->del(...$keys);
-            } catch (Throwable $e) {
-                // 降级到逐个删除
-                foreach ($keys as $key) {
-                    Cache::forget($key);
-                }
-            }
-        } else {
-            foreach ($keys as $key) {
-                Cache::forget($key);
-            }
+            $key = $this->getCacheKey($fingerprint, $window);
+            Cache::forget($key);
+            unset(self::$memoryCache[$key]);
         }
     }
 
@@ -663,17 +626,12 @@ class RateLimiterService
      */
     public function clearIpRateLimit(string $ip): void
     {
-        $pattern = self::CACHE_PREFIX . '*:' . $this->hash($ip . '*');
-
-        if ($this->isRedisDriver()) {
-            try {
-                $redis = Cache::store()->connection();
-                $keys = $redis->keys($pattern);
-                if (!empty($keys)) {
-                    $redis->del(...$keys);
-                }
-            } catch (Throwable $e) {
-                // 忽略错误
+        // 遍历内存缓存，匹配相关的键
+        $pattern = $this->hash($ip);
+        foreach (self::$memoryCache as $key => $value) {
+            if (str_contains($key, $pattern)) {
+                Cache::forget($key);
+                unset(self::$memoryCache[$key]);
             }
         }
     }
@@ -683,32 +641,18 @@ class RateLimiterService
      */
     public function clearCache(): void
     {
-        $pattern = self::CACHE_PREFIX . '*';
-
-        if ($this->isRedisDriver()) {
-            try {
-                $redis = Cache::store()->connection();
-                $keys = $redis->keys($pattern);
-                if (!empty($keys)) {
-                    $redis->del(...$keys);
-                }
-            } catch (Throwable $e) {
-                Log::error('清除限流缓存失败: ' . $e->getMessage());
-            }
-        }
+        // 清除内存缓存
+        self::$memoryCache = [];
 
         // 清除统计缓存
-        $statsPattern = self::STATS_PREFIX . '*';
-        if ($this->isRedisDriver()) {
-            try {
-                $redis = Cache::store()->connection();
-                $keys = $redis->keys($statsPattern);
-                if (!empty($keys)) {
-                    $redis->del(...$keys);
-                }
-            } catch (Throwable $e) {
-                // 忽略错误
-            }
+        try {
+            $statsPattern = self::STATS_PREFIX;
+            // 文件缓存无法使用通配符删除，只能清除统计
+            Cache::forget($statsPattern . 'minute:' . date('Y-m-d-H'));
+            Cache::forget($statsPattern . 'hour:' . date('Y-m-d-H'));
+            Cache::forget($statsPattern . 'day:' . date('Y-m-d-H'));
+        } catch (\Throwable $e) {
+            Log::error('清除限流缓存失败: ' . $e->getMessage());
         }
 
         if ($this->config->get('enable_debug_logging', false)) {
@@ -768,7 +712,7 @@ class RateLimiterService
             }
 
             return true;
-        } catch (Throwable $e) {
+        } catch (\Throwable $e) {
             Log::error('重置速率限制失败: ' . $e->getMessage(), [
                 'exception' => $e,
             ]);

@@ -1,426 +1,823 @@
-<p align="center"><a href="https://www.yoc.cn" target="_blank"><img src="./docs/images/security.png" width="100%" alt="Security"></a></p>
+# zxf/security - Laravel 11+ & PHP 8.2+ 现代化安全扩展包
 
-# Laravel Security - Laravel 项目安全拦截包
+<div align="center">
 
-<p align="center">
-    <a href="https://packagist.org/packages/zxf/security"><img src="https://img.shields.io/packagist/v/zxf/security?style=flat-square&logo=composer&logoColor=orange" alt="Version"></a>
-    <a href="https://github.com/zhaoxianfang/security"><img src="https://img.shields.io/packagist/dt/zxf/security?logo=github&logoColor=white&style=flat-square" alt="Total Downloads"></a>
-    <a href="https://www.php.net/"><img src="https://img.shields.io/packagist/php-v/zxf/security?style=flat-square&logo=php" alt="PHP Version"></a>
-    <a href="https://github.com/zhaoxianfang/security"><img src="https://img.shields.io/github/release/zhaoxianfang/util.svg" alt="Release"></a>
-    <a href="https://packagist.org/packages/zxf/security"><img src="https://img.shields.io/packagist/l/zxf/security?logo=bookstack&logoColor=white&style=flat-square" alt="License"></a>
-    <a href="https://www.yoc.cn"><img src="https://img.shields.io/badge/docs-yoc.cn-blue" alt="Documentation"></a>
-</p>
+![Version](https://img.shields.io/badge/version-2.0.0-blue)
+![PHP](https://img.shields.io/badge/php-8.2+-8892bf)
+![Laravel](https://img.shields.io/badge/laravel-11+-ff2d20)
+![License](https://img.shields.io/badge/license-MIT-green)
+
+**企业级Web安全防护中间件 - 无Redis依赖的现代化解决方案**
+
+</div>
 
 ---
 
-`zxf/security` 是一个企业级、商业级的安全防护中间件包，为 Laravel 应用提供全方位、高性能、低误报率的安全防护能力。
+## 📖 目录
+
+- [项目简介](#项目简介)
+- [核心特性](#核心特性)
+- [系统要求](#系统要求)
+- [快速开始](#快速开始)
+- [配置说明](#配置说明)
+- [使用指南](#使用指南)
+- [API文档](#api文档)
+- [性能优化](#性能优化)
+- [最佳实践](#最佳实践)
+- [常见问题](#常见问题)
+- [更新日志](#更新日志)
+- [贡献指南](#贡献指南)
+- [许可证](#许可证)
+
+---
+
+## 🎯 项目简介
+
+`zxf/security` 是一款基于 Laravel 11+ 和 PHP 8.2+ 开发的企业级Web安全防护中间件。它提供了全方位的Web应用安全防护能力，包括IP黑白名单管理、速率限制、威胁检测、异常行为分析等核心功能。
+
+### 设计理念
+
+- **零依赖Redis**: 采用文件缓存+内存缓存的双重策略，无需Redis即可实现高性能
+- **高性能**: 批量操作、采样机制、智能缓存，最小化数据库IO
+- **易用性**: 开箱即用，配置简单，丰富的辅助函数
+- **可扩展**: 模块化设计，支持自定义检测规则和处理逻辑
+- **工业化**: 完善的日志、监控、统计，满足企业级运维需求
+
+---
 
 ## ✨ 核心特性
 
-### 🛡️ 企业级安全防护
-- **16层防御体系**：IP黑白名单、速率限制、SQL注入、XSS、命令注入等全面覆盖
-- **智能威胁检测**：自动识别和评分威胁IP，动态调整防护策略
-- **自适应封禁**：根据威胁评分自动调整封禁时长，高效阻挡持续攻击者
-- **商业级威胁库**：内置 1000+ 攻击模式，覆盖 SQL注入、XSS、命令注入、文件上传等多种攻击向量
+### 🔒 全方位安全防护
+
+| 功能特性 | 说明 | 状态 |
+|---------|------|------|
+| **IP黑白名单** | 支持IPv4/IPv6及CIDR段 | ✅ |
+| **智能速率限制** | 多窗口（秒/分/时/天）限流 | ✅ |
+| **SQL注入检测** | 正则表达式深度检测 | ✅ |
+| **XSS攻击防护** | 跨站脚本攻击检测 | ✅ |
+| **命令注入防护** | 系统命令注入检测 | ✅ |
+| **文件上传检查** | 文件类型、大小、内容扫描 | ✅ |
+| **异常行为分析** | 参数异常、请求异常检测 | ✅ |
+| **威胁评分系统** | 自动IP类型转换 | ✅ |
+| **内网IP识别** | 完整的内网IP判断逻辑 | ✅ |
 
 ### ⚡ 高性能优化
-- **正则表达式预编译**：大幅提升匹配速度，性能优化 66.7%
-- **智能缓存机制**：多层缓存策略，减少重复计算
-- **误报智能过滤**：多层过滤机制，误报率降低 90%
-- **配置热重载**：配置修改立即生效，无需重启应用
 
-### 🎯 精细化控制
-- **白名单分级管理**：支持 low/medium/high 三级安全级别，精确控制安全检查
-- **防御层独立配置**：14个防御层可独立开关，灵活适配不同业务场景
-- **动态配置源**：支持数组、类方法、闭包、字符串等多种配置方式
-- **自定义规则引擎**：支持自定义检测规则和处理器
+- **文件缓存系统**: 无需Redis，使用Laravel文件缓存
+- **内存缓存预热**: 请求级缓存减少文件IO
+- **批量写入**: 支持批量记录IP访问，减少数据库操作
+- **采样机制**: 正常请求10%采样，降低数据库压力
+- **原子操作**: 文件锁保证并发安全
 
-### 🔧 开发者友好
-- **开箱即用**：发布配置文件后零配置启动全局防护
-- **完善中文注释**：所有配置项和代码都有详细的中文注释
-- **详细日志记录**：支持多级别日志和详细模式，便于问题排查
-- **异常保护机制**：完善的异常处理，异常时可配置放行或拦截
+### 🛠️ 开发友好
 
-## 📊 功能对比表
+- **丰富的辅助函数**: 50+个全局辅助函数
+- **详细中文注释**: 所有类和方法都有完整中文说明
+- **完善的文档**: README、API文档、配置说明
+- **类型安全**: 完整的PHP 8.2+类型提示
+- **异常处理**: 优雅的异常处理和降级策略
 
-| 功能特性   | zxf/security | 其他安全包   | 优势  |
-|--------|--------------|---------|-----|
-| 防御层数量  | 16层          | 6-10层   | 更全面 |
-| 威胁检测模式 | 1000+        | 200-500 | 更全面 |
-| 白名单分级  | ✓ (3级)       | ✗       | 更精细 |
-| 自适应封禁  | ✓            | ✗       | 更智能 |
-| 配置热重载  | ✓            | ✗       | 更便捷 |
-| 误报过滤   | ✓ (多层)       | 部分支持    | 更准确 |
-| 中文注释   | ✓ (全覆盖)      | 部分或无    | 更友好 |
-| 性能优化   | ✓ (66.7%)    | 基础优化    | 更高效 |
+---
 
-## 📦 安装
+## 📦 系统要求
+
+- **PHP**: 8.2 或更高版本
+- **Laravel**: 11.0 或更高版本
+- **数据库**: MySQL 5.7+ / PostgreSQL 9.6+ / SQLite 3.8+
+- **缓存**: Laravel文件缓存（默认）或支持的其他缓存驱动
+
+---
+
+## 🚀 快速开始
+
+### 1. 安装
 
 ```bash
 composer require zxf/security
 ```
 
-## 🚀 快速开始
-
-### 1. 发布配置文件
+### 2. 发布配置文件
 
 ```bash
-# 一键安装（推荐）
-php artisan security:install
-
-# 强制安装（覆盖现有文件）
-php artisan security:install --force
-
-# 安装但不运行迁移
-php artisan security:install --no-migrate
-
-# 仅发布配置文件
-php artisan vendor:publish --tag=security-config
-
-# 仅发布数据迁移
-php artisan vendor:publish --tag=security-migrations
+php artisan vendor:publish --provider="zxf\Security\SecurityServiceProvider"
 ```
 
-### 2. 运行数据库迁移
+### 3. 运行数据库迁移
 
 ```bash
 php artisan migrate
 ```
 
-### 3. 配置安全中间件
+### 4. 配置 `.env` 文件
 
-```php
-// config/security.php
+```env
+# 基础配置
+SECURITY_MIDDLEWARE_ENABLED=true
+SECURITY_MIDDLEWARE_TYPE=global
 
-// 全局防护（推荐）
-'enabled' => true,
-'enabled_type' => 'global',
+# 内网配置
+SECURITY_INTRANET_ENABLE_CACHE=true
+SECURITY_INTRANET_CACHE_TTL=300
+SECURITY_INTRANET_SKIP_RATE_LIMIT=false
 
-// 或者路由级防护
-'enabled_type' => 'route',
+# 速率限制
+SECURITY_RATE_LIMITING_ENABLED=true
+SECURITY_MAX_REQUESTS_PER_MINUTE=300
+SECURITY_MAX_REQUESTS_PER_HOUR=10000
+SECURITY_MAX_REQUESTS_PER_DAY=100000
+
+# 调试日志
+SECURITY_DEBUG_LOGGING=false
+SECURITY_LOG_DETAILS=false
 ```
 
-### 4. 在路由中使用（如果选择路由级防护）
+### 5. 注册中间件
+
+在 `app/Http/Kernel.php` 中注册：
 
 ```php
-// 在路由中添加中间件
+protected $middleware = [
+    // ...其他中间件
+    \zxf\Security\Middleware\SecurityMiddleware::class,
+];
+```
+
+或者在路由中使用：
+
+```php
 Route::middleware(['security'])->group(function () {
-    Route::get('/api', [ApiController::class, 'index']);
-});
-
-// 排除特定路由
-Route::withoutMiddleware(['security'])->get('/health', [HealthController::class, 'check']);
-```
-
-> 🎉 **就这么简单！** 发布配置文件后，全局模式下无需任何代码修改即可享受全面的安全防护。
-
-## 📖 文档
-
-- **[配置指南](docs/CONFIGURATION_GUIDE.md)** - 完整的配置项说明与使用指南
-- **[架构指南](docs/ARCHITECTURE_GUIDE.md)** - 系统架构、组件设计和工作流程详解
-- **[安全最佳实践](docs/SECURITY_BEST_PRACTICES.md)** - 生产环境安全配置与最佳实践指南
-- **[错误处理与故障排查](docs/ERROR_HANDLING_AND_TROUBLESHOOTING.md)** - 异常处理和问题解决指南
-
-## 🔒 安全功能清单
-
-### 1️⃣ 基础安全控制
-- ✅ 开关控制：全局启用/禁用安全中间件
-- ✅ 运行模式：全局防护或路由级防护
-- ✅ 本地环境豁免：可选忽略本地环境请求
-- ✅ 日志记录：可配置不同级别的安全事件日志
-
-### 2️⃣ 访问频率控制
-- ✅ 速率限制：防止暴力破解和DDoS攻击
-- ✅ 多时间窗口：分钟、小时、天级别的请求频率限制
-- ✅ 指纹识别策略：IP、IP+UA、IP+UA+Path、自定义
-- ✅ 滑动窗口算法：精确控制请求频率
-
-### 3️⃣ IP智能管理
-- ✅ 自动威胁检测：自动识别可疑IP并评分（0-100）
-- ✅ 动态黑名单：威胁评分达标时自动加入黑名单
-- ✅ 智能评分系统：根据行为动态调整威胁评分
-- ✅ 自适应封禁：根据威胁评分动态调整封禁时长
-- ✅ 评分衰减：每小时自动降低威胁评分，允许IP"改过"
-
-### 4️⃣ 请求方法验证
-- ✅ 合法方法检查：只允许预设的HTTP方法访问
-- ✅ 可疑方法识别：拦截CONNECT、TRACE等危险方法
-
-### 5️⃣ 请求内容安全扫描
-- ✅ 恶意内容检测：1000+ 正则模式覆盖各类攻击
-- ✅ 白名单机制：特定路径可跳过内容检查
-- ✅ 长度阈值控制：只对达到一定长度的内容进行检测
-- ✅ 动态配置源：支持类方法、闭包、数组等多种配置方式
-
-### 6️⃣ URL路径安全
-- ✅ 非法路径检测：检测并拦截包含非法字符的URL
-- ✅ 白名单路径：支持字符串和复杂对象格式
-- ✅ 分级安全控制：low/medium/high 三级安全级别
-- ✅ 方法限制：可限制白名单路径的HTTP方法
-- ✅ 长度限制：限制最大URL长度，防止缓冲区攻击
-
-### 7️⃣ 客户端识别控制
-- ✅ User-Agent检查：识别并拦截可疑的User-Agent
-- ✅ 白名单爬虫：允许合法的搜索引擎爬虫访问
-- ✅ 空UA控制：可配置是否允许无User-Agent的请求
-- ✅ 长度限制：限制User-Agent最大长度
-
-### 8️⃣ 请求头安全检查
-- ✅ 可疑头检测：识别包含可疑内容的请求头
-- ✅ 数量限制：限制请求头最大数量，防止头溢出攻击
-
-### 9️⃣ 文件上传防护
-- ✅ 扩展名过滤：禁止危险文件扩展名上传（支持动态配置）
-- ✅ MIME类型过滤：禁止危险MIME类型的文件上传（支持动态配置）
-- ✅ 大小限制：限制上传文件最大体积
-- ✅ 内容扫描：可选的文件内容安全检查
-- ✅ 白名单机制：允许特定的安全文件类型
-
-### 🔟 高级攻击检测
-- ✅ 异常行为检测：检测异常的请求参数和行为模式
-- ✅ SQL注入防护：专项检测SQL注入攻击（200+模式）
-- ✅ XSS攻击防护：专项检测跨站脚本攻击（150+模式）
-- ✅ 命令注入防护：专项检测系统命令注入攻击（100+模式）
-- ✅ 新兴威胁检测：覆盖供应链攻击、Web3攻击等新型威胁
-
-### 1️⃣1️⃣ 缓存与封禁机制
-- ✅ 结果缓存：多层缓存提升性能
-- ✅ 智能封禁：根据不同安全事件类型设置不同的封禁时长
-- ✅ 自适应封禁：根据威胁评分动态调整封禁时长（2-10倍）
-- ✅ 封禁时长限制：防止设置过长的封禁时间
-
-### 1️⃣2️⃣ 响应处理
-- ✅ 异常处理：完善的异常捕获和处理机制
-- ✅ AJAX响应：针对API请求的标准化JSON响应
-- ✅ 错误页面：支持自定义拦截页面
-- ✅ 状态码映射：不同安全事件返回相应的HTTP状态码
-- ✅ API模式：针对API请求的响应优化
-
-### 1️⃣3️⃣ 自定义扩展
-- ✅ 自定义处理：支持注入自定义安全检查逻辑
-- ✅ 黑白名单处理：可自定义黑白名单检查逻辑
-- ✅ 安全警报：支持自定义安全警报发送机制（邮件、钉钉、Slack等）
-- ✅ 规则引擎：支持自定义检测规则和威胁评分
-
-### 1️⃣4️⃣ 防御层管理
-- ✅ 分层防护：14个防御层可独立开关
-- ✅ 灵活配置：可独立控制IP检查、方法检查、内容检查等各个防护模块
-- ✅ 按序执行：防御层按配置顺序依次执行
-
-### 1️⃣5️⃣ 其他特性
-- ✅ 配置热重载：配置修改立即生效，无需重启应用
-- ✅ 代理支持：支持配置信任的代理服务器
-- ✅ 性能监控：监控请求时间、内存使用、检测层耗时
-- ✅ 安全审计：安全事件记录和威胁趋势分析
-
-### 1️⃣6️⃣ 配置管理
-- ✅ 环境变量覆盖：支持通过环境变量动态调整配置
-- ✅ 动态配置源：支持使用类方法、闭包、数组等多种配置方式
-- ✅ 完整类型提示：所有配置项都有明确的类型定义和默认值
-- ✅ 中文注释：所有配置项都有详细的中文注释和说明
-
-## 🎯 核心架构
-
-```
-┌─────────────────────────────────────────────────────────┐
-│                   HTTP Request                          │
-└────────────────────────┬────────────────────────────────┘
-                     │
-                     ▼
-┌──────────────────────────────────────────────────────────┐
-│              SecurityMiddleware                          │
-│  ┌────────────────────────────────────────────────────┐  │
-│  │  配置热重载                                          │  │
-│  └────────────────────────────────────────────────────┘  │
-│  ┌────────────────────────────────────────────────────┐  │
-│  │  14层防御检查（按顺序执行）                            │  │
-│  │  01. IP白名单检查                                    │  │
-│  │  02. IP黑名单检查                                    │  │
-│  │  03. HTTP方法检查                                    │  │
-│  │  04. User-Agent检查                                 │  │
-│  │  05. 请求头检查                                      │  │
-│  │  06. URL检查（含白名单）                              │  │
-│  │  07. 文件上传检查                                    │  │
-│  │  08. 请求体检查                                      │  │
-│  │  09. 异常参数检查                                    │  │
-│  │  10. 速率限制检查                                    │  │
-│  │  11. SQL注入检查                                    │  │
-│  │  12. XSS攻击检查                                    │  │
-│  │  13. 命令注入检查                                    │  │
-│  │  14. 自定义规则检查                                  │  │
-│  └────────────────────────────────────────────────────┘  │
-│  ┌────────────────────────────────────────────────────┐  │
-│  │  异常保护与降级                                      │  │
-│  │  - 递归检测                                         │  │
-│  │  - 异常捕获                                         │  │
-│  │  - 降级放行                                         │  │
-│  └────────────────────────────────────────────────────┘  │
-└────────────────────────┬─────────────────────────────────┘
-                         │
-               ┌─────────┴─────────┐
-               │                   │
-               ▼                   ▼
-             [拦截]              [通过]
-               │                   │
-               ▼                   ▼
-       ┌──────────────┐    ┌──────────────┐
-       │  拦截响应      │   │   继续处理     │
-       │ (JSON/HTML)  │    │  下一个中间件  │
-       └──────────────┘    └──────────────┘
-```
-
-## 💡 使用示例
-
-### 全局防护（推荐）
-```php
-// config/security.php
-'enabled' => true,
-'enabled_type' => 'global',
-
-// 发布配置后无需任何代码修改，全局自动防护
-```
-
-### 路由级防护
-```php
-// config/security.php
-'enabled_type' => 'route',
-
-// 在路由中添加中间件
-Route::middleware(['security'])->group(function () {
-    Route::get('/api/users', [UserController::class, 'index']);
+    // 你的路由
 });
 ```
 
-### 自定义白名单
+### 6. 开始使用
+
 ```php
-// config/security.php
-'url_whitelist_paths' => [
-    // 简单格式
-    'robots.txt',
-    'favicon.ico',
-
-    // 高级格式（支持方法限制和级别控制）
-    [
-        'path' => 'api/health',
-        'methods' => ['GET'],
-        'level' => 'low'  // 保留必要的检查
-    ],
-    [
-        'path' => 'api/status',
-        'methods' => ['GET'],
-        'level' => 'medium'
-    ],
-],
-```
-
-### 自定义规则
-```php
-// config/security.php
-'rule_engine' => [
-    'custom_rules' => [
-        [
-            'id' => 'custom_001',
-            'name' => '自定义SQL注入检测',
-            'pattern' => '/UNION\s+ALL\s+SELECT/i',
-            'severity' => 'critical',
-            'action' => 'block',
-        ],
-    ],
-],
-```
-
-### 自定义警报
-```php
-// app/Services/SecurityAlarmHandler.php
-class SecurityAlarmHandler
-{
-    public static function send(array $alertData): void
-    {
-        // 发送邮件
-        Mail::to('security@example.com')->send(new SecurityAlert($alertData));
-
-        // 发送钉钉
-        DingTalk::send($alertData);
-    }
+// 检查IP是否在黑名单
+if (security_is_blacklisted('192.168.1.1')) {
+    // IP在黑名单中
 }
 
-// config/security.php
-'alarm_handler' => [SecurityAlarmHandler::class, 'send'],
+// 添加IP到黑名单
+security_add_to_blacklist('10.0.0.1', '恶意攻击', now()->addWeek());
+
+// 检查速率限制
+$result = security_check_rate_limit($request->ip());
+if ($result['blocked']) {
+    return response()->json(['error' => '请求过于频繁'], 429);
+}
 ```
-
-## 🔧 性能优化
-
-### 缓存配置
-```php
-'enable_pattern_cache' => true,   // 正则表达式缓存
-'enable_ip_cache' => true,        // IP缓存
-'cache_ttl' => 3600,            // 缓存1小时
-```
-
-### 性能监控
-```php
-// 获取安全统计信息
-$middleware = app(SecurityMiddleware::class);
-$stats = $middleware->getSecurityStats();
-
-// 输出
-// [
-//     'detection_stats' => [
-//         'total_requests' => 10000,
-//         'blocked_requests' => 150,
-//         'start_time' => 1234567890,
-//         'end_time' => 1234567900,
-//     ],
-//     'rate_limits' => [...],
-//     'recent_errors' => [...],
-// ]
-```
-
-## 📋 配置参考
-
-### 生产环境推荐配置
-
-```php
-'enabled' => true,
-'enabled_type' => 'global',
-'log_level' => 'warning',
-'enable_debug_logging' => false,
-'block_on_exception' => true,
-'enable_rate_limiting' => true,
-'enable_sql_injection_detection' => true,
-'enable_xss_detection' => true,
-'enable_command_injection_detection' => true,
-'ip_auto_detection' => [
-    'enabled' => true,
-    'blacklist_threshold' => 80.0,
-    'adaptive_ban_duration' => true,
-],
-```
-
-### 开发环境推荐配置
-
-```php
-'enabled' => true,
-'enabled_type' => 'global',
-'log_level' => 'debug',
-'enable_debug_logging' => true,
-'block_on_exception' => false,
-```
-
-## 🤝 贡献
-
-欢迎提交 Issue 和 Pull Request！
-
-## 📄 许可证
-
-MIT License
-
-## 📞 联系方式
-
-- 作者：zhaoxianfang
-- 邮箱：contact@yoc.cn
-- 网站：https://www.yoc.cn
 
 ---
 
-**⭐ 如果这个项目对你有帮助，请给它一个 Star！**
+## ⚙️ 配置说明
+
+### 基础配置
+
+```php
+return [
+    // 是否启用安全中间件
+    'enabled' => env('SECURITY_MIDDLEWARE_ENABLED', true),
+    
+    // 启用方式: global(全局) | route(路由)
+    'enabled_type' => env('SECURITY_MIDDLEWARE_TYPE', 'global'),
+    
+    // 是否忽略本地请求
+    'ignore_local' => env('SECURITY_IGNORE_LOCAL', false),
+    
+    // 日志级别
+    'log_level' => env('SECURITY_LOG_LEVEL', 'warning'),
+    
+    // 是否启用调试日志
+    'enable_debug_logging' => env('SECURITY_DEBUG_LOGGING', false),
+];
+```
+
+### 内网IP配置
+
+```php
+'intranet' => [
+    // 是否启用内网IP判断缓存
+    'enable_cache' => env('SECURITY_INTRANET_ENABLE_CACHE', true),
+    
+    // 缓存时间（秒）
+    'cache_ttl' => env('SECURITY_INTRANET_CACHE_TTL', 300),
+    
+    // 内网IP是否跳过速率限制
+    'skip_rate_limit' => env('SECURITY_INTRANET_SKIP_RATE_LIMIT', false),
+    
+    // 内网IP是否跳过黑名单检查
+    'skip_blacklist_check' => env('SECURITY_INTRANET_SKIP_BLACKLIST', false),
+    
+    // 是否检查回环地址（127.0.0.0/8）
+    'check_loopback' => env('SECURITY_INTRANET_CHECK_LOOPBACK', true),
+    
+    // 是否检查链路本地地址（169.254.0.0/16）
+    'check_linklocal' => env('SECURITY_INTRANET_CHECK_LINKLOCAL', true),
+    
+    // 自定义内网IP范围（CIDR格式）
+    'custom_ranges' => env('SECURITY_INTRANET_CUSTOM_RANGES', []),
+],
+```
+
+### 速率限制配置
+
+```php
+'rate_limits' => [
+    'minute' => env('SECURITY_MAX_REQUESTS_PER_MINUTE', 300),
+    'hour' => env('SECURITY_MAX_REQUESTS_PER_HOUR', 10000),
+    'day' => env('SECURITY_MAX_REQUESTS_PER_DAY', 100000),
+],
+
+// 指纹策略: ip_only | ip_ua | ip_ua_path | ip_ua_path_method | custom
+'rate_limit_strategy' => env('SECURITY_RATE_LIMIT_STRATEGY', 'ip_ua_path'),
+```
+
+### IP自动检测配置
+
+```php
+'ip_auto_detection' => [
+    // 是否启用自动检测
+    'enabled' => env('SECURITY_IP_AUTO_DETECTION', true),
+    
+    // 是否记录正常访客（false=只记录被拦截的）
+    'record_normal_visitor' => env('SECURITY_RECORD_NORMAL_VISITOR', false),
+    
+    // 黑名单转换阈值
+    'blacklist_threshold' => env('SECURITY_BLACKLIST_THRESHOLD', 80.0),
+    
+    // 可疑IP转换阈值
+    'suspicious_threshold' => env('SECURITY_SUSPICIOUS_THRESHOLD', 50.0),
+    
+    // 最大触发规则次数
+    'max_triggers' => env('SECURITY_MAX_TRIGGERS', 5),
+    
+    // 每次拦截增加威胁评分
+    'add_threat_score' => env('SECURITY_ADD_THREAT_SCORE', 10.00),
+    
+    // 每次成功请求降低威胁评分
+    'reduce_threat_score' => env('SECURITY_REDUCE_THREAT_SCORE', 1.00),
+    
+    // 威胁评分自然衰减（每小时）
+    'decay_rate_per_hour' => env('SECURITY_DECAY_RATE_PER_HOUR', 0.3),
+    
+    // 自动清理过期记录
+    'auto_cleanup' => env('SECURITY_AUTO_CLEANUP', false),
+    
+    // 监控IP自动过期时间（天）
+    'monitoring_expire_days' => env('SECURITY_MONITORING_EXPIRE_DAYS', 15),
+],
+```
+
+---
+
+## 📚 使用指南
+
+### IP管理
+
+#### 检查IP状态
+
+```php
+use zxf\Security\Models\SecurityIp;
+use function zxf\Security\{security_is_whitelisted, security_is_blacklisted};
+
+// 方式1: 使用辅助函数（推荐）
+if (security_is_whitelisted('192.168.1.1')) {
+    echo 'IP在白名单中';
+}
+
+if (security_is_blacklisted('10.0.0.1')) {
+    echo 'IP在黑名单中';
+}
+
+// 方式2: 使用模型
+if (SecurityIp::isWhitelisted('192.168.1.1')) {
+    echo 'IP在白名单中';
+}
+
+if (SecurityIp::isBlacklisted('10.0.0.1')) {
+    echo 'IP在黑名单中';
+}
+```
+
+#### 添加IP到白名单/黑名单
+
+```php
+use function zxf\Security\{security_add_to_whitelist, security_add_to_blacklist};
+
+// 添加到白名单（永久）
+security_add_to_whitelist('192.168.1.100', '内部服务器');
+
+// 添加到白名单（临时）
+security_add_to_whitelist('192.168.1.101', '临时授权', now()->addHours(2));
+
+// 添加到黑名单
+security_add_to_blacklist('10.0.0.100', '恶意攻击', now()->addWeek());
+
+// 添加IP段
+security_add_to_blacklist('10.0.0.0/24', '僵尸网络');
+```
+
+#### 从黑白名单移除IP
+
+```php
+use zxf\Security\Models\SecurityIp;
+
+// 从黑名单移除
+SecurityIp::removeFromBlacklist('10.0.0.100');
+
+// 从白名单移除
+SecurityIp::removeFromWhitelist('192.168.1.100');
+```
+
+#### 获取IP统计信息
+
+```php
+use function zxf\Security\security_get_ip_stats;
+
+$stats = security_get_ip_stats('192.168.1.1');
+print_r($stats);
+// 输出:
+// [
+//     'ip_address' => '192.168.1.1',
+//     'type' => 'monitoring',
+//     'threat_score' => 25.50,
+//     'request_count' => 1000,
+//     'blocked_count' => 5,
+//     'success_count' => 995,
+//     // ...
+// ]
+```
+
+#### 获取高威胁IP列表
+
+```php
+use function zxf\Security\security_get_high_threat_ips;
+
+// 获取威胁评分最高的100个IP
+$threatIps = security_get_high_threat_ips(100);
+
+foreach ($threatIps as $ip) {
+    echo "IP: {$ip['ip_address']}, 威胁评分: {$ip['threat_score']}\n";
+}
+```
+
+### 速率限制
+
+#### 检查速率限制
+
+```php
+use function zxf\Security\security_check_rate_limit;
+
+// 检查当前IP速率限制
+$result = security_check_rate_limit($request->ip());
+
+if ($result['blocked']) {
+    // 被限流
+    $window = $result['window']; // 触发的时间窗口
+    $retryAfter = $result['retry_after']; // 重试时间（秒）
+    
+    return response()->json([
+        'error' => '请求过于频繁',
+        'retry_after' => $retryAfter
+    ], 429);
+}
+```
+
+#### 增加速率限制计数器
+
+```php
+use function zxf\Security\security_increment_rate_limit;
+
+// 请求处理成功后增加计数器
+security_increment_rate_limit($request->ip());
+```
+
+#### 清除速率限制
+
+```php
+use function zxf\Security\security_clear_rate_limit;
+
+// 清除IP的速率限制
+security_clear_rate_limit($request->ip());
+```
+
+### 威胁检测
+
+```php
+use Illuminate\Http\Request;
+use function zxf\Security\security_detect_threat;
+
+// 检测请求威胁
+$threatResult = security_detect_threat($request);
+
+if ($threatResult['has_sql_injection']) {
+    Log::warning('检测到SQL注入尝试');
+}
+
+if ($threatResult['has_xss_attack']) {
+    Log::warning('检测到XSS攻击尝试');
+}
+
+if ($threatResult['has_command_injection']) {
+    Log::warning('检测到命令注入尝试');
+}
+```
+
+### 缓存管理
+
+```php
+use function zxf\Security\{clean_security_cache, get_all_cache_keys};
+
+// 获取所有security:前缀的缓存键
+$keys = get_all_cache_keys('security:');
+
+// 清除所有安全缓存
+clean_security_cache();
+```
+
+### 安全日志
+
+```php
+use function zxf\Security\security_log_event;
+
+// 记录安全事件
+security_log_event('检测到异常请求', 'warning', [
+    'ip' => $request->ip(),
+    'path' => $request->path(),
+    'user_agent' => $request->userAgent(),
+]);
+
+// 记录安全错误
+security_log_event('安全中间件异常', 'error', [
+    'exception' => $e->getMessage(),
+]);
+```
+
+---
+
+## 🔧 API文档
+
+### 辅助函数列表
+
+| 函数名 | 说明 | 返回值 |
+|-------|------|--------|
+| `security_config(?string $key, mixed $default)` | 获取安全配置 | mixed |
+| `security_is_whitelisted(string $ip)` | 检查IP是否在白名单 | bool |
+| `security_is_blacklisted(string $ip)` | 检查IP是否在黑名单 | bool |
+| `security_record_access(string $ip, bool $blocked, ?string $rule)` | 记录IP访问 | array\|null |
+| `security_add_to_whitelist(string $ip, string $reason, ?DateTime $expiresAt)` | 添加IP到白名单 | bool |
+| `security_add_to_blacklist(string $ip, string $reason, ?DateTime $expiresAt, bool $autoDetected)` | 添加IP到黑名单 | bool |
+| `security_get_ip_stats(string $ip)` | 获取IP统计信息 | array |
+| `security_get_high_threat_ips(int $limit)` | 获取高威胁IP列表 | array |
+| `security_cleanup_expired()` | 清理过期IP记录 | int |
+| `security_log_event(string $message, string $level, array $context, ?Request $request)` | 记录安全事件 | void |
+| `security_check_rate_limit(string $identifier, array $limits)` | 检查速率限制 | array |
+| `security_increment_rate_limit(string $identifier)` | 增加速率限制计数器 | void |
+| `security_clear_rate_limit(string $identifier)` | 清除速率限制计数器 | void |
+| `security_detect_threat(Request $request)` | 检测请求威胁 | array |
+| `security_response(string $type, string $message, array $context, int $statusCode, array $errors, ?Request $request)` | 创建安全响应 | Response\|JsonResponse |
+| `clean_security_cache()` | 清除所有安全缓存 | bool |
+| `get_all_cache_keys(string $prefix, ?int $maxSize, bool $removePrefix)` | 获取缓存键列表 | array |
+| `is_intranet_ip(string $ip, array $opt)` | 检查IP是否为内网IP | bool |
+
+### SecurityIp 模型方法
+
+```php
+// 静态方法
+SecurityIp::isWhitelisted(string $ip): bool
+SecurityIp::isBlacklisted(string $ip): bool
+SecurityIp::removeFromBlacklist(string $ip): bool
+SecurityIp::removeFromWhitelist(string $ip): bool
+SecurityIp::batchCheck(array $ips): array
+SecurityIp::recordRequest(string $ip, bool $blocked, ?string $rule): ?self
+SecurityIp::batchRecordRequests(array $records): int
+SecurityIp::cleanupExpired(): int
+SecurityIp::getHighThreatIps(int $limit): Collection
+SecurityIp::getIpStats(string $ip): array
+SecurityIp::addToWhitelist(string $ip, string $reason, ?DateTimeInterface $expiresAt): self
+SecurityIp::addToBlacklist(string $ip, string $reason, ?DateTimeInterface $expiresAt, bool $autoDetected): self
+SecurityIp::addToSuspicious(string $ip, string $reason, ?DateTimeInterface $expiresAt, bool $autoDetected): self
+
+// 实例方法
+$ip->checkAndUpdateType(): void
+$ip->applyNaturalDecay(): void
+```
+
+### RateLimiterService 方法
+
+```php
+// 检查速率限制
+$rateLimiter->check(Request $request): array
+
+// 批量检查
+$rateLimiter->batchCheck(array $fingerprints): array
+
+// 获取客户端速率信息
+$rateLimiter->getClientRateInfo(Request $request): array
+
+// 重置客户端速率限制
+$rateLimiter->resetClientRateLimit(Request $request): bool
+
+// 获取统计信息
+$rateLimiter->getRateLimitStats(): array
+
+// 清除缓存
+$rateLimiter->clearCache(): void
+$rateLimiter->clearFingerprint(string $fingerprint): void
+$rateLimiter->clearIpRateLimit(string $ip): void
+```
+
+---
+
+## 🚀 性能优化
+
+### 文件缓存策略
+
+本扩展包采用文件缓存+内存缓存的双重策略，无需Redis即可实现高性能：
+
+1. **内存缓存（请求级）**: 每个请求周期的首次查询结果会被缓存
+2. **文件缓存（应用级）**: 使用Laravel文件缓存持久化数据
+3. **智能预热**: 常用数据自动预热到内存
+
+### 批量写入优化
+
+```php
+// 不推荐：逐条记录
+foreach ($requests as $req) {
+    SecurityIp::recordRequest($req['ip'], $req['blocked']);
+}
+
+// 推荐：批量记录
+SecurityIp::batchRecordRequests($requests);
+```
+
+### 采样机制
+
+```php
+// 配置采样（只记录被拦截的，正常请求10%采样）
+'ip_auto_detection' => [
+    'record_normal_visitor' => false, // 不记录正常访客
+],
+
+// 采样会自动应用，无需额外代码
+SecurityIp::recordRequest($ip, false); // 只采样10%
+```
+
+### 缓存TTL调优
+
+```php
+// 高流量场景：降低TTL，提升实时性
+'cache_ttl' => 60, // 1分钟
+
+// 低流量场景：提高TTL，降低数据库压力
+'cache_ttl' => 600, // 10分钟
+```
+
+### 数据库优化建议
+
+1. **添加索引**：
+```sql
+CREATE INDEX idx_ip_address ON security_ips(ip_address);
+CREATE INDEX idx_type_status ON security_ips(type, status);
+CREATE INDEX idx_threat_score ON security_ips(threat_score DESC);
+```
+
+2. **定期清理**：
+```php
+// 在定时任务中执行
+$schedule->call(function () {
+    security_cleanup_expired();
+})->daily();
+```
+
+---
+
+## 💡 最佳实践
+
+### 1. 内网IP处理
+
+```php
+// 推荐配置：内网IP跳过速率限制，但保留黑名单检查
+'intranet' => [
+    'skip_rate_limit' => true,
+    'skip_blacklist_check' => false,
+],
+```
+
+### 2. 速率限制策略
+
+```php
+// 根据业务类型调整
+'rate_limits' => [
+    'minute' => 300,  // API接口可以更高
+    'hour' => 5000,
+    'day' => 50000,
+],
+
+// 使用更精确的指纹策略
+'rate_limit_strategy' => 'ip_ua_path_method',
+```
+
+### 3. 威胁检测阈值
+
+```php
+// 生产环境建议：更严格的阈值
+'blacklist_threshold' => 70.0, // 降低到70
+'suspicious_threshold' => 40.0, // 降低到40
+'max_triggers' => 3, // 降低到3
+```
+
+### 4. 日志记录
+
+```php
+// 生产环境：只记录警告和错误
+'log_level' => 'warning',
+'enable_debug_logging' => false,
+'log_details' => false,
+
+// 开发环境：记录详细信息
+'log_level' => 'debug',
+'enable_debug_logging' => true,
+'log_details' => true,
+```
+
+### 5. 缓存清理
+
+```php
+// 定时清理缓存
+$schedule->call(function () {
+    clean_security_cache();
+})->daily();
+
+// 定时清理过期IP记录
+$schedule->call(function () {
+    security_cleanup_expired();
+})->weekly();
+```
+
+---
+
+## ❓ 常见问题
+
+### 1. 如何禁用某个检查？
+
+```php
+// 在配置文件中设置
+'defense_layers' => [
+    'ip_whitelist' => true,
+    'ip_blacklist' => true,
+    'method_check' => false, // 禁用HTTP方法检查
+    'user_agent_check' => false, // 禁用User-Agent检查
+    'header_check' => false, // 禁用请求头检查
+    'url_check' => true,
+    'upload_check' => false, // 禁用文件上传检查
+    'body_check' => true,
+    'anomaly_check' => true,
+    'rate_limit' => true,
+    'sql_check' => true,
+    'xss_check' => true,
+    'command_check' => true,
+    'custom_check' => true,
+],
+```
+
+### 2. 如何自定义拦截响应？
+
+```php
+// 创建自定义响应函数
+use function zxf\Security\security_response;
+
+return security_response(
+    'CustomRule',
+    '自定义规则拦截',
+    [
+        'details' => '自定义详细信息',
+    ],
+    403,
+    [],
+    $request
+);
+```
+
+### 3. 如何调试限流问题？
+
+```php
+// 启用调试日志
+'enable_debug_logging' => true,
+
+// 获取客户端速率信息
+use zxf\Security\Services\RateLimiterService;
+
+$rateLimiter = app(RateLimiterService::class);
+$rateInfo = $rateLimiter->getClientRateInfo($request);
+
+Log::info('速率限制信息', $rateInfo);
+```
+
+### 4. 如何处理误判？
+
+```php
+// 将误判IP添加到白名单
+security_add_to_whitelist($ip, '误判解除');
+
+// 或者降低威胁评分
+$ip = SecurityIp::where('ip_address', $ip)->first();
+if ($ip) {
+    $ip->threat_score = 0;
+    $ip->type = 'whitelist';
+    $ip->save();
+}
+```
+
+### 5. 性能调优建议？
+
+- **缓存优先**: 确保`enable_ip_cache`和`enable_pattern_cache`开启
+- **合理TTL**: 根据流量调整缓存时间
+- **批量操作**: 使用`batchRecordRequests`替代多次`recordRequest`
+- **采样启用**: 设置`record_normal_visitor=false`减少数据库写入
+- **索引优化**: 为常用查询字段添加数据库索引
+
+---
+
+## 📝 更新日志
+
+### v2.0.0 (2026-03-01)
+
+#### 重大更新
+- ✨ **移除Redis依赖**: 改用文件缓存+内存缓存双重策略
+- ✨ **移除队列依赖**: 所有事件改为同步触发
+- 🚀 **性能优化**: 批量写入和采样机制，降低数据库压力
+- 🚀 **速率限制重构**: 使用文件锁保证原子性
+- 📝 **完善文档**: 详细的中文注释和使用文档
+
+#### 新增功能
+- ✅ 内网IP识别和判断
+- ✅ IP批量操作
+- ✅ 采样机制（正常请求10%采样）
+- ✅ 威胁评分自动衰减
+- ✅ 批量清除缓存
+
+#### 优化改进
+- 🔄 重构RateLimiterService，移除所有Redis代码
+- 🔄 重构Event类，移除队列trait
+- 🔄 优化get_all_cache_keys函数，支持文件缓存
+- 🔄 优化SecurityIp模型，添加批量写入
+- 🔄 完善所有服务类的中文注释
+
+#### Bug修复
+- 🐛 修复并发场景下的计数器问题
+- 🐛 修复缓存失效时的降级策略
+- 🐛 修复IP类型自动转换的bug
+
+---
+
+## 🤝 贡献指南
+
+欢迎贡献代码、报告问题或提出建议！
+
+### 贡献流程
+
+1. Fork 本仓库
+2. 创建特性分支 (`git checkout -b feature/AmazingFeature`)
+3. 提交更改 (`git commit -m 'Add some AmazingFeature'`)
+4. 推送到分支 (`git push origin feature/AmazingFeature`)
+5. 开启 Pull Request
+
+### 代码规范
+
+- 遵循 PSR-12 编码规范
+- 所有类和方法添加PHPDoc注释
+- 使用类型提示（PHP 8.2+）
+- 编写单元测试
+
+---
+
+## 📄 许可证
+
+本项目采用 MIT 许可证 - 详见 [LICENSE](LICENSE) 文件
+
+---
+
+## 📮 联系我们
+
+- 作者: zxf
+- Email: [您的邮箱]
+- Issues: [GitHub Issues](https://github.com/yourusername/security/issues)
+- 文档: [完整文档](https://github.com/yourusername/security/wiki)
+
+---
+
+## 🙏 致谢
+
+感谢所有为本项目做出贡献的开发者！
+
+---
+
+<div align="center">
+
+**如果觉得这个项目对您有帮助，请给我们一个 ⭐️ Star**
+
+Made with ❤️ by zxf
+
+</div>

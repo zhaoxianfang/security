@@ -52,6 +52,82 @@ return [
     'ignore_local' => env('SECURITY_IGNORE_LOCAL', false),
 
     /**
+     * 内网IP检查配置
+     *
+     * 增强版内网IP控制，提供更灵活的内网请求处理
+     */
+    'intranet' => [
+        /**
+         * 是否启用内网IP判断缓存
+         *
+         * 启用后将缓存内网IP判断结果，提升性能
+         * 类型：boolean
+         * 默认值：true
+         */
+        'enable_cache' => env('SECURITY_INTRANET_ENABLE_CACHE', true),
+
+        /**
+         * 内网IP判断缓存时间（秒）
+         *
+         * 类型：integer
+         * 默认值：300（5分钟）
+         */
+        'cache_ttl' => env('SECURITY_INTRANET_CACHE_TTL', 300),
+
+        /**
+         * 内网IP是否跳过速率限制
+         *
+         * 启用后，内网IP将不受速率限制限制
+         * 类型：boolean
+         * 默认值：false
+         */
+        'skip_rate_limit' => env('SECURITY_INTRANET_SKIP_RATE_LIMIT', false),
+
+        /**
+         * 内网IP是否跳过黑名单检查
+         *
+         * 启用后，内网IP将不会被黑名单拦截（不推荐在生产环境使用）
+         * 类型：boolean
+         * 默认值：false
+         */
+        'skip_blacklist_check' => env('SECURITY_INTRANET_SKIP_BLACKLIST', false),
+
+        /**
+         * 内网IP是否记录访问日志
+         *
+         * 启用后，内网IP的访问将被记录到数据库
+         * 类型：boolean
+         * 默认值：true
+         */
+        'log_access' => env('SECURITY_INTRANET_LOG_ACCESS', true),
+
+        /**
+         * 是否检查回环地址（127.0.0.0/8 和 ::1）
+         *
+         * 类型：boolean
+         * 默认值：true
+         */
+        'check_loopback' => env('SECURITY_INTRANET_CHECK_LOOPBACK', true),
+
+        /**
+         * 是否检查链路本地地址（169.254.0.0/16 和 fe80::/10）
+         *
+         * 类型：boolean
+         * 默认值：true
+         */
+        'check_linklocal' => env('SECURITY_INTRANET_CHECK_LINKLOCAL', true),
+
+        /**
+         * 自定义内网IP范围（CIDR格式）
+         *
+         * 类型：array
+         * 默认值：[]
+         * 示例：['10.0.0.0/8', '192.168.0.0/16', '172.16.0.0/12']
+         */
+        'custom_ranges' => env('SECURITY_INTRANET_CUSTOM_RANGES', []),
+    ],
+
+    /**
      * 日志记录级别
      *
      * 安全事件的日志记录级别
@@ -511,6 +587,7 @@ return [
             'rate_limits',
             'ban_duration',
             'rule_engine',
+            'intranet',
         ],
 
         // 不应缓存的配置项（实时读取）
@@ -518,6 +595,8 @@ return [
             'url_whitelist_paths',
             'enabled',
             'defense_layers',
+            'ignore_local',
+            'intranet',
         ],
     ],
 

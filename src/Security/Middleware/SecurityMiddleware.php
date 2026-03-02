@@ -81,14 +81,14 @@ class SecurityMiddleware
 
         // 懒加载白名单服务（使用异常处理）
         $this->whitelistService = ExceptionHandler::safeExecute(
-            fn() => app(WhitelistSecurityService::class),
+            fn() => \app(WhitelistSecurityService::class),
             null,
             'WhitelistService initialization'
         );
 
         // 懒加载热重载服务（使用异常处理）
         $this->hotReloadService = ExceptionHandler::safeExecute(
-            fn() => app(ConfigHotReloadService::class),
+            fn() => \app(ConfigHotReloadService::class),
             null,
             'ConfigHotReloadService initialization'
         );
@@ -185,15 +185,28 @@ class SecurityMiddleware
     }
 
     /**
-     * 检查是否应该忽略本地请求
+     * 检查是否应该忽略本地请求 - 优化增强版
+     *
+     * 支持更灵活的内网请求控制，提前返回减少不必要的检查
      */
     protected function shouldIgnoreLocalRequest(Request $request): bool
     {
+        // 检查是否启用忽略本地请求
         if (!$this->threatDetector->getConfig('ignore_local', false)) {
             return false;
         }
 
-        return $this->ipManager->isLocalRequest($request);
+        // 使用 IpManagerService 判断
+        $isLocal = $this->ipManager->isLocalRequest($request);
+
+        if ($isLocal) {
+            $this->logDebug('本地环境请求，跳过安全检查', [
+                'ip' => $request->ip(),
+                'path' => $request->path(),
+            ]);
+        }
+
+        return $isLocal;
     }
 
     /**
@@ -746,7 +759,7 @@ class SecurityMiddleware
             'exception' => get_class($e),
             'file' => $e->getFile(),
             'line' => $e->getLine(),
-            'trace' => config('app.debug') ? $e->getTraceAsString() : null,
+            'trace' => \config('app.debug') ? $e->getTraceAsString() : null,
             'context' => $e->getContext(),
         ]);
 
@@ -760,7 +773,7 @@ class SecurityMiddleware
                     'blocked' => true,
                     'type' => SecurityEvent::ERROR,
                     'reason' => '安全系统异常',
-                    'message' => config('app.debug')
+                    'message' => \config('app.debug')
                         ? '安全检查时发生异常: ' . $e->getMessage()
                         : '系统进行安全检查时出现异常，请稍后重试',
                     'details' => [
@@ -802,7 +815,7 @@ class SecurityMiddleware
             'exception_type' => get_class($e),
             'file' => $e->getFile(),
             'line' => $e->getLine(),
-            'trace' => config('app.debug') ? $e->getTraceAsString() : null,
+            'trace' => \config('app.debug') ? $e->getTraceAsString() : null,
             'request' => $this->getRequestInfo($request),
         ]);
 
@@ -823,7 +836,7 @@ class SecurityMiddleware
                     'blocked' => true,
                     'type' => SecurityEvent::ERROR,
                     'reason' => '系统暂时不可用',
-                    'message' => config('app.debug')
+                    'message' => \config('app.debug')
                         ? '系统异常: ' . $e->getMessage()
                         : '系统暂时不可用，请稍后重试',
                     'details' => [
@@ -887,7 +900,7 @@ class SecurityMiddleware
                     'url' => $request->fullUrl(),
                     'method' => $request->method(),
                     'user_agent' => $request->userAgent(),
-                    'timestamp' => now()->toISOString(),
+                    'timestamp' => \now()->toISOString(),
                     'details' => $blockResult['details'] ?? [],
                     'request_info' => $this->getRequestInfo($request),
                 ];
@@ -930,7 +943,7 @@ class SecurityMiddleware
             'type' => $blockResult['type'],
             'reason' => $blockResult['reason'],
             'request_id' => Str::uuid()->toString(),
-            'timestamp' => now()->toISOString(),
+            'timestamp' => \now()->toISOString(),
             'details' => $blockResult['details'] ?? [],
             'errors' => $this->errorList,
         ];
@@ -987,12 +1000,12 @@ class SecurityMiddleware
         ];
 
         // 调试模式下包含更多信息
-        if (config('app.debug')) {
+        if (\config('app.debug')) {
             $responseData[$format['data']]['details'] = $data['details'];
             $responseData[$format['data']]['errors'] = $data['errors'];
         }
 
-        return response()->json($responseData, $statusCode, [], JSON_UNESCAPED_UNICODE)
+        return \response()->json($responseData, $statusCode, [], JSON_UNESCAPED_UNICODE)
             ->header('X-Security-Blocked', 'true')
             ->header('X-Security-Type', $data['type'])
             ->header('X-Request-ID', $data['request_id']);
@@ -1012,7 +1025,7 @@ class SecurityMiddleware
         !empty($viewData['context']) && ($viewData['context'] = array_to_pretty_json($viewData['context']));
         !empty($viewData['errors']) && ($viewData['errors'] = array_to_pretty_json($viewData['errors']));
 
-        return response()->view($view, $viewData, $statusCode)
+        return \response()->view($view, $viewData, $statusCode)
             ->header('X-Security-Blocked', 'true')
             ->header('X-Security-Type', $data['type'])
             ->header('X-Request-ID', $data['request_id']);
@@ -1106,7 +1119,7 @@ class SecurityMiddleware
             'url' => $request->fullUrl(),
             'user_agent' => $this->truncateString($request->userAgent() ?? '', 200),
             'referer' => $request->header('referer'),
-            'timestamp' => now()->toISOString(),
+            'timestamp' => \now()->toISOString(),
             'execution_time' => $this->getExecutionTime(),
             'request_info' => $this->getRequestInfo($request),
         ];
@@ -1237,7 +1250,7 @@ class SecurityMiddleware
         $this->errorList[] = [
             'message' => $message,
             'context' => $context,
-            'timestamp' => now()->toISOString(),
+            'timestamp' => \now()->toISOString(),
         ];
     }
 

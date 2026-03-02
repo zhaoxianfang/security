@@ -1,5 +1,7 @@
 <?php
 
+use DateTimeInterface;
+use Exception;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
@@ -344,11 +346,11 @@ if (! function_exists('security_log_event')) {
     function security_log_event(string $message, string $level = 'info', array $context = [], ?Request $request = null): void
     {
         if (is_null($request) && function_exists('request')) {
-            $request = request();
+            $request = \request();
         }
 
         $logData = [
-            'timestamp' => now()->toISOString(),
+            'timestamp' => \now()->toISOString(),
             'message' => $message,
             'level' => $level,
             'context' => $context,
@@ -611,7 +613,7 @@ if (! function_exists('security_detect_threat')) {
     function security_detect_threat(Request $request): array
     {
         /** @var ThreatDetectionService $threatDetector */
-        $threatDetector = app(ThreatDetectionService::class);
+        $threatDetector = \app(ThreatDetectionService::class);
 
         return [
             'blocked' => false, // 需要调用具体检测方法
@@ -660,7 +662,7 @@ if (! function_exists('security_response')) {
     function security_response(string $type, string $message, array $context = [], int $statusCode = 403, array $errors = [], ?Request $request = null)
     {
         if (is_null($request) && function_exists('request')) {
-            $request = request();
+            $request = \request();
         }
 
         $title = \zxf\Security\Constants\SecurityEvent::getEventName($type, $message);
@@ -671,7 +673,7 @@ if (! function_exists('security_response')) {
             'message' => $message,
             'reason' => $title,
             'request_id' => Str::uuid()->toString(),
-            'timestamp' => now()->toISOString(),
+            'timestamp' => \now()->toISOString(),
             'details' => $context['details'] ?? [],
             'errors' => $errors,
             'context' => $context,
@@ -685,7 +687,7 @@ if (! function_exists('security_response')) {
                 'data' => 'data',
             ]);
 
-            return response()->json([
+            return \response()->json([
                 $format['code'] => $statusCode,
                 $format['message'] => $message,
                 $format['data'] => array_merge( $responseData, security_config('error_view_data', []) ),
@@ -727,7 +729,10 @@ if (! function_exists('array_to_pretty_json')) {
 
 if (! function_exists('get_all_cache_keys')) {
     /**
-     * 获取 Laravel 的所有缓存键
+     * 获取所有安全包的缓存键 - 文件缓存版本
+     *
+     * 使用文件缓存驱动获取所有security:前缀的缓存键
+     * 注意：此功能仅适用于文件缓存驱动
      *
      * @param string $prefix 键名前缀
      * @param int|null $maxSize 最大返回数量限制
@@ -741,8 +746,59 @@ if (! function_exists('get_all_cache_keys')) {
      */
     function get_all_cache_keys(string $prefix = '', ?int $maxSize = null, bool $removePrefix = true): array
     {
-        $cacheKeys = new \zxf\Security\Utils\GetCacheKeys();
-        return $cacheKeys->getAll($prefix, $maxSize, $removePrefix);
+        try {
+            // 获取缓存存储实例
+            $store = Cache::getStore();
+            
+            // 检查是否为文件缓存驱动
+            if ($store instanceof \Illuminate\Cache\FileStore) {
+                $cachePath = \storage_path('framework/cache/data');
+
+                $keys = [];
+                $iterator = new \RecursiveIteratorIterator(
+                    new \RecursiveDirectoryIterator($cachePath, \RecursiveDirectoryIterator::SKIP_DOTS),
+                    \RecursiveIteratorIterator::SELF_FIRST
+                );
+
+                foreach ($iterator as $file) {
+                    if ($file->isFile()) {
+                        $key = $file->getFilename();
+
+                        // Laravel文件缓存的文件名会进行base64编码
+                        // 需要解码才能获取原始键名
+                        try {
+                            $decodedKey = base64_decode(str_replace('.php', '', $key), true);
+
+                            // 只返回security:前缀的键
+                            if (empty($prefix) || str_starts_with($decodedKey, $prefix)) {
+                                if ($removePrefix && !empty($prefix)) {
+                                    $decodedKey = substr($decodedKey, strlen($prefix));
+                                }
+                                $keys[] = $decodedKey;
+
+                                // 限制返回数量
+                                if ($maxSize && count($keys) >= $maxSize) {
+                                    break; // 修复：移除break 2，只跳出当前循环
+                                }
+                            }
+                        } catch (\Exception) {
+                            // 忽略解码失败的文件
+                            continue;
+                        }
+                    }
+                }
+
+                return $keys;
+            }
+            
+            // 非文件缓存驱动，返回空数组
+            Log::warning('get_all_cache_keys函数仅支持文件缓存驱动');
+            return [];
+            
+        } catch (\Throwable $e) {
+            Log::error('获取缓存键失败: ' . $e->getMessage());
+            return [];
+        }
     }
 }
 
@@ -752,8 +808,47 @@ if (! function_exists('clean_security_cache')) {
      */
     function clean_security_cache(): bool
     {
-        $cacheKeys = new \zxf\Security\Utils\GetCacheKeys();
-        return $cacheKeys->clearByPrefix('security:');
+        try {
+            // 获取所有security:前缀的缓存键
+            $keys = get_all_cache_keys('security:', null, false);
+            
+            if (empty($keys)) {
+                return true;
+            }
+            
+            // 批量删除
+            foreach ($keys as $key) {
+                Cache::forget($key);
+            }
+            
+            // 清除服务层缓存
+            if (class_exists(\zxf\Security\Services\IpManagerService::class)) {
+                $ipManager = \app(\zxf\Security\Services\IpManagerService::class);
+                if (method_exists($ipManager, 'clearCache')) {
+                    $ipManager->clearCache();
+                }
+            }
+
+            if (class_exists(\zxf\Security\Services\ThreatDetectionService::class)) {
+                $threatDetector = \app(\zxf\Security\Services\ThreatDetectionService::class);
+                if (method_exists($threatDetector, 'clearCache')) {
+                    $threatDetector->clearCache();
+                }
+            }
+
+            if (class_exists(\zxf\Security\Services\RateLimiterService::class)) {
+                $rateLimiter = \app(\zxf\Security\Services\RateLimiterService::class);
+                if (method_exists($rateLimiter, 'clearCache')) {
+                    $rateLimiter->clearCache();
+                }
+            }
+            
+            return true;
+            
+        } catch (Throwable $e) {
+            Log::error('清除安全缓存失败: ' . $e->getMessage());
+            return false;
+        }
     }
 }
 
