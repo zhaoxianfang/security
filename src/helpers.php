@@ -140,24 +140,34 @@ if (! function_exists('security_record_access')) {
      */
     function security_record_access(string $ip, bool $blocked = false, ?string $rule = null): ?array
     {
-        $record = SecurityIp::recordRequest($ip, $blocked, $rule);
+        try {
+            $record = SecurityIp::recordRequest($ip, $blocked, $rule);
 
-        if ($record) {
-            return [
-                'id' => $record->id,
-                'ip_address' => $record->ip_address,
-                'type' => $record->type,
-                'threat_score' => $record->threat_score,
-                'request_count' => $record->request_count,
-                'blocked_count' => $record->blocked_count,
-                'success_count' => $record->success_count,
-                'trigger_count' => $record->trigger_count,
-                'last_request_at' => $record->last_request_at,
-                'first_seen_at' => $record->first_seen_at,
-            ];
+            if ($record) {
+                return [
+                    'id' => $record->id,
+                    'ip_address' => $record->ip_address,
+                    'type' => $record->type,
+                    'threat_score' => $record->threat_score,
+                    'request_count' => $record->request_count,
+                    'blocked_count' => $record->blocked_count,
+                    'success_count' => $record->success_count,
+                    'trigger_count' => $record->trigger_count,
+                    'last_request_at' => $record->last_request_at,
+                    'first_seen_at' => $record->first_seen_at,
+                ];
+            }
+
+            return null;
+        } catch (Throwable $e) {
+            Log::error('记录IP访问失败: ' . $e->getMessage(), [
+                'ip' => $ip,
+                'blocked' => $blocked,
+                'rule' => $rule,
+                'exception' => $e
+            ]);
+            return null;
         }
-
-        return null;
     }
 }
 
@@ -282,8 +292,16 @@ if (! function_exists('security_get_high_threat_ips')) {
      */
     function security_get_high_threat_ips(int $limit = 100): array
     {
-        $ips = SecurityIp::getHighThreatIps($limit);
-        return $ips->toArray();
+        try {
+            $ips = SecurityIp::getHighThreatIps($limit);
+            return $ips->toArray();
+        } catch (Throwable $e) {
+            Log::error('获取高威胁IP列表失败: ' . $e->getMessage(), [
+                'limit' => $limit,
+                'exception' => $e
+            ]);
+            return [];
+        }
     }
 }
 
@@ -807,23 +825,34 @@ if (! function_exists('clean_security_cache')) {
     function clean_security_cache(): bool
     {
         try {
-            // 获取所有security:前缀的缓存键
-            $keys = get_all_cache_keys('security:', null, false);
-            
-            if (empty($keys)) {
-                return true;
+            // 1. 使用新的缓存适配器清除缓存
+            $cacheDriver = security_config('cache_driver', 'file');
+            if ($cacheDriver === 'file') {
+                $adapter = new \zxf\Security\Cache\CacheAdapter('file');
+                $adapter->clear();
+            } else {
+                // 获取所有security:前缀的缓存键
+                $keys = get_all_cache_keys('security:', null, false);
+
+                if (!empty($keys)) {
+                    // 批量删除
+                    foreach ($keys as $key) {
+                        Cache::forget($key);
+                    }
+                }
             }
-            
-            // 批量删除
-            foreach ($keys as $key) {
-                Cache::forget($key);
-            }
-            
+
+            // 清除内存缓存
+            \zxf\Security\Cache\FileCacheDriver::clearMemoryBuffer();
+
             // 清除服务层缓存
             if (class_exists(\zxf\Security\Services\IpManagerService::class)) {
                 $ipManager = \app(\zxf\Security\Services\IpManagerService::class);
                 if (method_exists($ipManager, 'clearCache')) {
                     $ipManager->clearCache();
+                }
+                if (method_exists($ipManager, 'clearRequestCache')) {
+                    $ipManager::clearRequestCache();
                 }
             }
 
@@ -840,12 +869,79 @@ if (! function_exists('clean_security_cache')) {
                     $rateLimiter->clearCache();
                 }
             }
-            
+
+            // 清除IP模型请求缓存
+            if (class_exists(\zxf\Security\Models\SecurityIp::class)) {
+                \zxf\Security\Models\SecurityIp::clearRequestCache();
+            }
+
             return true;
-            
+
         } catch (Throwable $e) {
             Log::error('清除安全缓存失败: ' . $e->getMessage());
             return false;
+        }
+    }
+}
+
+if (! function_exists('security_cache')) {
+    /**
+     * 获取安全缓存实例
+     *
+     * 提供统一的缓存接口，支持文件缓存和Laravel缓存
+     *
+     * @return \zxf\Security\Cache\CacheAdapter
+     *
+     * @example
+     * // 获取缓存值
+     * $value = security_cache()->get('key', 'default');
+     *
+     * // 设置缓存值
+     * security_cache()->set('key', $value, 300);
+     *
+     * // 使用remember
+     * $value = security_cache()->remember('key', fn() => computeValue(), 300);
+     */
+    function security_cache(): \zxf\Security\Cache\CacheAdapter
+    {
+        static $instance = null;
+
+        if ($instance === null) {
+            $driver = security_config('cache_driver', 'file');
+            $prefix = security_config('cache_prefix', 'security:');
+            $ttl = security_config('cache_ttl', 300);
+
+            $instance = new \zxf\Security\Cache\CacheAdapter($driver, $prefix, $ttl);
+        }
+
+        return $instance;
+    }
+}
+
+if (! function_exists('security_cache_stats')) {
+    /**
+     * 获取安全缓存统计信息
+     *
+     * @return array 缓存统计信息
+     *
+     * @example
+     * $stats = security_cache_stats();
+     * // [
+     * //   'driver' => 'file',
+     * //   'hits' => 100,
+     * //   'misses' => 10,
+     * //   'hit_rate' => '90.9%',
+     * //   'disk_size_mb' => 5.2,
+     * //   'file_count' => 1250
+     * // ]
+     */
+    function security_cache_stats(): array
+    {
+        try {
+            return security_cache()->getStats();
+        } catch (Throwable $e) {
+            Log::error('获取缓存统计失败: ' . $e->getMessage());
+            return [];
         }
     }
 }
@@ -873,13 +969,11 @@ if (! function_exists('is_intranet_ip')) {
      *
      * 配置选项
      *
-     * @param array{
-     *     loopback?: bool,   // true=回环算内网(默认) false=回环算公网
-     *     linklocal?: bool,  // true=链路本地算内网(默认) false=链路本地算公网
-     *     custom?: string[]  // 自定义CIDR数组，如：['10.0.0.0/8', '172.16.0.0/12']
-     * } $opt
-     *
      * @param string $ip 要检查的IP地址（支持IPv4和IPv6）
+     * @param array<string, mixed> $opt 配置选项
+     *        - loopback: bool, true=回环算内网(默认) false=回环算公网
+     *        - linklocal: bool, true=链路本地算内网(默认) false=链路本地算公网
+     *        - custom: string[], 自定义CIDR数组，如：['10.0.0.0/8', '172.16.0.0/12']
      * @return bool true=内网IP，false=公网IP
      * @throws InvalidArgumentException IP格式非法时抛出
      */

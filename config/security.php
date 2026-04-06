@@ -980,6 +980,57 @@ return [
      */
     'alarm_handler' => env('SECURITY_ALARM_HANDLE', null),
 
+    // ==================== 缓存配置 ====================
+
+    /**
+     * 缓存驱动类型
+     *
+     * 可选值：
+     * - 'auto': 自动选择（优先Laravel配置，回退到文件缓存）
+     * - 'file': 独立文件缓存（零外部依赖，推荐）
+     * - 'laravel': 使用Laravel Cache配置
+     *
+     * 类型：string
+     * 默认值：'file'
+     */
+    'cache_driver' => env('SECURITY_CACHE_DRIVER', 'auto'),
+
+    /**
+     * 缓存前缀
+     *
+     * 用于区分不同应用的缓存数据
+     * 类型：string
+     * 默认值：'security:'
+     */
+    'cache_prefix' => env('SECURITY_CACHE_PREFIX', 'security:'),
+
+    /**
+     * 默认缓存TTL（秒）
+     *
+     * 缓存数据的默认过期时间
+     * 类型：integer
+     * 默认值：300
+     */
+    'cache_ttl' => env('SECURITY_CACHE_TTL', 300),
+
+    /**
+     * 文件缓存路径
+     *
+     * 仅当cache_driver为file时有效
+     * 类型：string
+     * 默认值：storage_path('security-cache')
+     */
+    'file_cache_path' => env('SECURITY_FILE_CACHE_PATH', storage_path('security-cache')),
+
+    /**
+     * 是否启用文件缓存自动清理
+     *
+     * 自动清理过期缓存文件
+     * 类型：boolean
+     * 默认值：true
+     */
+    'file_cache_auto_cleanup' => env('SECURITY_FILE_CACHE_AUTO_CLEANUP', true),
+
     // ==================== 性能优化配置 ====================
 
     /**
@@ -990,6 +1041,60 @@ return [
      * 默认值：10
      */
     'max_recursion_depth' => env('SECURITY_MAX_RECURSION_DEPTH', 10),
+
+    /**
+     * 是否启用延迟写入
+     *
+     * 启用后将IP记录批量写入数据库，减少IO 90%+
+     * 类型：boolean
+     * 默认值：true
+     */
+    'enable_deferred_write' => env('SECURITY_DEFERRED_WRITE', true),
+
+    /**
+     * 延迟写入队列大小阈值
+     *
+     * 队列达到此大小时触发批量写入
+     * 类型：integer
+     * 默认值：50
+     */
+    'deferred_write_threshold' => env('SECURITY_DEFERRED_WRITE_THRESHOLD', 50),
+
+    /**
+     * 是否启用滑动窗口算法
+     *
+     * 启用后使用滑动窗口替代固定窗口，避免临界突发
+     * 类型：boolean
+     * 默认值：true
+     */
+    'enable_sliding_window' => env('SECURITY_SLIDING_WINDOW', true),
+
+    /**
+     * 滑动窗口分片数
+     *
+     * 每个时间窗口分成多少个子窗口
+     * 类型：integer
+     * 默认值：6
+     */
+    'sliding_window_subdivisions' => env('SECURITY_SLIDING_SUBDIVISIONS', 6),
+
+    /**
+     * 是否启用配置预加载
+     *
+     * 启用后在启动时预加载高频率配置项
+     * 类型：boolean
+     * 默认值：true
+     */
+    'enable_config_preload' => env('SECURITY_CONFIG_PRELOAD', true),
+
+    /**
+     * 是否启用异步处理
+     *
+     * 启用后将耗时操作放入队列异步处理
+     * 类型：boolean
+     * 默认值：true
+     */
+    'enable_async_processing' => env('SECURITY_ASYNC_PROCESSING', true),
 
     // ==================== 防御层配置 ====================
 

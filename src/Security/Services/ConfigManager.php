@@ -10,15 +10,16 @@ use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 
 /**
- * 配置管理服务
+ * 配置管理服务 - 高性能预加载版本
  *
  * 提供灵活的配置获取功能，支持：
  * 1. 静态配置值
  * 2. 闭包/回调函数
  * 3. 类方法调用
- * 4. 缓存优化
+ * 4. 多级缓存优化
  * 5. 智能类型识别
  * 6. 配置验证和回退
+ * 7. 配置预加载，减少运行时开销
  */
 class ConfigManager
 {
@@ -33,6 +34,16 @@ class ConfigManager
     protected array $configCache = [];
 
     /**
+     * 预加载配置缓存
+     */
+    protected static array $preloadedConfig = [];
+
+    /**
+     * 是否已预加载
+     */
+    protected static bool $isPreloaded = false;
+
+    /**
      * 缓存键前缀
      */
     protected const CACHE_PREFIX = 'security:config:';
@@ -41,6 +52,21 @@ class ConfigManager
      * 缓存时间（秒）
      */
     protected const CACHE_TTL = 3600;
+
+    /**
+     * 高频率访问的配置键（预加载）
+     */
+    protected const HIGH_FREQUENCY_KEYS = [
+        'enabled',
+        'ignore_local',
+        'enable_debug_logging',
+        'enable_rate_limiting',
+        'rate_limits',
+        'rate_limit_strategy',
+        'defense_layers',
+        'enable_ip_cache',
+        'ip_auto_detection',
+    ];
 
     /**
      * 不应该解析为可调用对象的配置键名
@@ -63,47 +89,117 @@ class ConfigManager
     public static function instance(bool $refresh = false): self
     {
         if (!isset(self::$instance) || $refresh) {
-            self::$instance = new static;
+            self::$instance = new self();
+            // 自动预加载高频率配置
+            if (!self::$isPreloaded || $refresh) {
+                self::$instance->preload();
+            }
         }
         return self::$instance;
     }
 
     /**
-     * 获取配置值 - 支持热重载
+     * 预加载高频率配置 - 减少运行时开销
+     */
+    public function preload(): void
+    {
+        if (self::$isPreloaded) {
+            return;
+        }
+
+        foreach (self::HIGH_FREQUENCY_KEYS as $key) {
+            $value = $this->getFromSource($key);
+            self::$preloadedConfig[$key] = $value;
+        }
+
+        self::$isPreloaded = true;
+
+        if (config('security.enable_debug_logging', false)) {
+            Log::debug('配置预加载完成', ['keys' => self::HIGH_FREQUENCY_KEYS]);
+        }
+    }
+
+    /**
+     * 从源获取配置（不经过缓存）
+     */
+    protected function getFromSource(string $key): mixed
+    {
+        $rawValue = config("security.{$key}");
+
+        if ($rawValue === null) {
+            return $this->getDefaultValue($key);
+        }
+
+        return $this->shouldProcessAsCallable($key)
+            ? $this->processDynamicValue($rawValue)
+            : $rawValue;
+    }
+
+    /**
+     * 获取默认值
+     */
+    protected function getDefaultValue(string $key): mixed
+    {
+        return match($key) {
+            'enabled' => true,
+            'enable_rate_limiting' => true,
+            'rate_limits' => ['minute' => 60, 'hour' => 1000],
+            'rate_limit_strategy' => 'ip_ua_path',
+            'enable_ip_cache' => true,
+            'enable_debug_logging' => false,
+            'ignore_local' => false,
+            'defense_layers' => [],
+            'ip_auto_detection' => ['enabled' => true],
+            default => null,
+        };
+    }
+
+    /**
+     * 获取配置值 - 支持热重载和高性能缓存
      */
     public function get(string $key, mixed $default = null, mixed $params = null): mixed
     {
-        // 检查是否应该实时读取（不使用缓存）
+        // 1. 检查预加载配置（最快路径）
+        if ($params === null && isset(self::$preloadedConfig[$key])) {
+            return self::$preloadedConfig[$key];
+        }
+
+        // 2. 检查是否应该实时读取
         if ($this->shouldReadRealtime($key)) {
             return $this->getRealtime($key, $default, $params);
         }
 
-        // 构建完整缓存键
+        // 3. 构建完整缓存键
         $cacheKey = $this->getCacheKey($key, $params);
 
-        // 检查内存缓存
-        if (Arr::has($this->configCache, $cacheKey)) {
-            return Arr::get($this->configCache, $cacheKey, $default);
+        // 4. 检查实例内存缓存
+        if (array_key_exists($cacheKey, $this->configCache)) {
+            return $this->configCache[$cacheKey] ?? $default;
         }
 
-        // 检查持久化缓存
+        // 5. 检查持久化缓存
         if ($this->shouldCache($key)) {
             $cachedValue = Cache::get($cacheKey);
             if ($cachedValue !== null) {
-                Arr::set($this->configCache, $cacheKey, $cachedValue);
+                $this->configCache[$cacheKey] = $cachedValue;
                 return $cachedValue;
             }
         }
 
-        // 从配置文件获取原始值
-        $rawValue = config("security.{$key}", $default);
+        // 6. 从源获取配置
+        $processedValue = $this->getFromSource($key);
 
-        // 处理动态配置
-        $processedValue = $this->shouldProcessAsCallable($key)
-            ? $this->processDynamicValue($rawValue, $params)
-            : $rawValue;
+        // 7. 处理动态配置参数
+        if ($params !== null && $this->shouldProcessAsCallable($key)) {
+            $processedValue = $this->processDynamicValue($processedValue, $params);
+        }
 
-        // 缓存处理结果
+        // 8. 使用默认值
+        if ($processedValue === null) {
+            $processedValue = $default;
+        }
+
+        // 9. 缓存处理结果
         $this->cacheValue($key, $cacheKey, $processedValue);
 
         return $processedValue;
@@ -345,7 +441,7 @@ class ConfigManager
     {
         try {
             // 内存缓存
-            Arr::set($this->configCache, $cacheKey, $value);
+            $this->configCache[$cacheKey] = $value;
 
             // 持久化缓存
             if ($this->shouldCache($key)) {
@@ -465,6 +561,21 @@ class ConfigManager
     public function reload(): void
     {
         $this->clearCache();
+        self::$preloadedConfig = [];
+        self::$isPreloaded = false;
+        $this->preload();
+    }
+
+    /**
+     * 获取预加载配置统计
+     */
+    public function getPreloadStats(): array
+    {
+        return [
+            'is_preloaded' => self::$isPreloaded,
+            'preloaded_keys' => array_keys(self::$preloadedConfig),
+            'memory_cache_size' => count($this->configCache),
+        ];
     }
 
     /**

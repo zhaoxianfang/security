@@ -13,10 +13,15 @@ use zxf\Security\Constants\SecurityEvent;
 use zxf\Security\Models\SecurityIp;
 
 /**
- * IP管理服务
+ * IP管理服务 - 高性能版本
  *
  * 提供IP白名单、黑名单、封禁管理等功能
  * 支持动态IP列表和缓存优化
+ * 特性：
+ * - 请求级内存缓存
+ * - 批量缓存预热
+ * - 智能缓存失效
+ * - 异步批处理
  */
 class IpManagerService
 {
@@ -51,6 +56,29 @@ class IpManagerService
         'fc00::/7',        // 唯一本地地址
         'fe80::/10',       // 链路本地地址
     ];
+
+    /**
+     * 请求级缓存
+     */
+    private static array $requestCache = [];
+
+    /**
+     * 缓存命中统计
+     */
+    private static array $cacheStats = [
+        'hits' => 0,
+        'misses' => 0,
+    ];
+
+    /**
+     * 批量查询缓冲区
+     */
+    private array $batchQueryBuffer = [];
+
+    /**
+     * 批量查询阈值
+     */
+    private const BATCH_QUERY_THRESHOLD = 10;
 
     /**
      * 构造函数
@@ -456,6 +484,14 @@ class IpManagerService
     }
 
     /**
+     * 检查是否为私有IP地址
+     */
+    protected function isPrivateIp(string $ip): bool
+    {
+        return filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE) === false;
+    }
+
+    /**
      * 检查是否应该忽略本地请求
      */
     protected function shouldIgnoreLocal(): bool
@@ -626,14 +662,22 @@ class IpManagerService
     }
 
     /**
-     * 获取IP统计信息
+     * 获取IP统计信息 - 带请求级缓存
      */
     public function getIpStats(string $ip): array
     {
-        $cacheKey = self::CACHE_PREFIX . 'stats:' . md5($ip);
+        // 1. 检查请求级缓存
+        $cacheKey = 'stats:' . md5($ip);
+        if (isset(self::$requestCache[$cacheKey])) {
+            self::$cacheStats['hits']++;
+            return self::$requestCache[$cacheKey];
+        }
+
+        // 2. 应用级缓存
+        $fullCacheKey = self::CACHE_PREFIX . $cacheKey;
         $cacheTtl = $this->config->get('ip_database.cache_ttl', 300);
 
-        return Cache::remember($cacheKey, $cacheTtl, function () use ($ip) {
+        $result = Cache::remember($fullCacheKey, $cacheTtl, function () use ($ip) {
             $stats = SecurityIp::getIpStats($ip);
 
             if (empty($stats)) {
@@ -664,6 +708,113 @@ class IpManagerService
                 'auto_detected' => $stats['auto_detected'] ?? false,
             ];
         });
+
+        // 3. 写入请求级缓存
+        self::$requestCache[$cacheKey] = $result;
+        self::$cacheStats['misses']++;
+
+        return $result;
+    }
+
+    /**
+     * 批量获取IP统计信息 - 减少数据库查询
+     *
+     * @param array $ips IP地址数组
+     * @return array IP统计信息映射
+     */
+    public function getIpStatsBatch(array $ips): array
+    {
+        if (empty($ips)) {
+            return [];
+        }
+
+        // 去重
+        $ips = array_unique($ips);
+
+        // 限制批量大小
+        if (count($ips) > 1000) {
+            $ips = array_slice($ips, 0, 1000);
+        }
+
+        $results = [];
+        $missingIps = [];
+
+        // 1. 从缓存获取
+        foreach ($ips as $ip) {
+            $cacheKey = 'stats:' . md5($ip);
+            if (isset(self::$requestCache[$cacheKey])) {
+                $results[$ip] = self::$requestCache[$cacheKey];
+            } else {
+                $missingIps[] = $ip;
+            }
+        }
+
+        // 2. 批量查询缺失的IP
+        if (!empty($missingIps)) {
+            $batchStats = SecurityIp::batchCheck($missingIps);
+
+            foreach ($missingIps as $ip) {
+                $status = $batchStats[$ip] ?? 'none';
+                $stats = [
+                    'ip' => $ip,
+                    'exists' => $status !== 'none',
+                    'type' => $status,
+                    'threat_score' => 0,
+                    'request_count' => 0,
+                    'blocked_count' => 0,
+                ];
+
+                $results[$ip] = $stats;
+                self::$requestCache['stats:' . md5($ip)] = $stats;
+            }
+        }
+
+        return $results;
+    }
+
+    /**
+     * 缓存预热 - 预加载常用IP数据
+     *
+     * @param array $ips 需要预热的IP列表
+     */
+    public function warmupCache(array $ips): void
+    {
+        if (empty($ips)) {
+            return;
+        }
+
+        $this->getIpStatsBatch($ips);
+
+        // 同时预热白名单/黑名单缓存
+        foreach ($ips as $ip) {
+            SecurityIp::isWhitelisted($ip);
+            SecurityIp::isBlacklisted($ip);
+        }
+    }
+
+    /**
+     * 获取缓存统计
+     */
+    public function getCacheStats(): array
+    {
+        $total = self::$cacheStats['hits'] + self::$cacheStats['misses'];
+        $hitRate = $total > 0 ? round((self::$cacheStats['hits'] / $total) * 100, 2) : 0;
+
+        return [
+            'hits' => self::$cacheStats['hits'],
+            'misses' => self::$cacheStats['misses'],
+            'hit_rate' => $hitRate . '%',
+            'request_cache_size' => count(self::$requestCache),
+        ];
+    }
+
+    /**
+     * 清除请求级缓存
+     */
+    public static function clearRequestCache(): void
+    {
+        self::$requestCache = [];
+        self::$cacheStats = ['hits' => 0, 'misses' => 0];
     }
 
     /**

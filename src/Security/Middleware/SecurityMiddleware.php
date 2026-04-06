@@ -101,7 +101,7 @@ class SecurityMiddleware
     }
 
     /**
-     * 处理传入的HTTP请求 - 主入口方法
+     * 处理传入的HTTP请求 - 主入口方法（高性能版本）
      *
      * @param Request $request 当前HTTP请求对象
      * @param Closure $next 下一个中间件闭包
@@ -114,42 +114,25 @@ class SecurityMiddleware
         $this->detectionStats['start_time'] = microtime(true);
 
         try {
-            // 检查配置热重载（优化版：带时间窗口限制）
-            if ($this->hotReloadService &&
-                !$this->isReloadingConfig &&
-                $this->shouldReloadConfig()) {
-                $this->isReloadingConfig = true;
-                try {
-                    $this->hotReloadService->reloadConfig();
-                    $this->lastReloadTime = time();
-                } catch (Throwable $e) {
-                    // 记录但继续执行
-                    Log::warning('配置热重载失败，继续执行安全检查', [
-                        'error' => $e->getMessage(),
-                    ]);
-                } finally {
-                    $this->isReloadingConfig = false;
-                }
-            }
-
-            // 1. 检查中间件是否启用
+            // 1. 快速检查：中间件是否启用（使用预加载配置）
             if (!$this->isEnabled()) {
-                $this->logDebug('安全中间件已禁用，跳过检查');
                 return $next($request);
             }
 
-            // 2. 检查是否为本地请求（如果配置忽略）
+            // 2. 快速检查：本地请求跳过
             if ($this->shouldIgnoreLocalRequest($request)) {
-                $this->logDebug('本地环境请求，跳过安全检查');
                 return $next($request);
             }
 
-            // 跳过资源文件的安全检查
+            // 3. 快速检查：资源文件跳过
             if ($this->threatDetector->isResourcePath($request)) {
                 return $next($request);
             }
 
-            // 3. 执行多层安全检测
+            // 4. 检查配置热重载（带时间窗口限制）
+            $this->checkConfigReload();
+
+            // 5. 执行多层安全检测
             $blockResult = $this->performSecurityChecks($request);
 
             if ($blockResult['blocked']) {
@@ -157,31 +140,64 @@ class SecurityMiddleware
                 return $this->handleBlockedRequest($request, $blockResult);
             }
 
-            // 4. 请求正常，继续处理
+            // 6. 请求正常，继续处理
             return $this->handleNormalRequest($request, $next);
 
         } catch (SecurityException $e) {
-            // 安全相关异常
             ExceptionHandler::handle($e, ['request_path' => $request->path()]);
             return $this->handleSecurityException($request, $e);
         } catch (Throwable $e) {
-            // 其他异常（包括递归、内存等）
             ExceptionHandler::handle($e, ['request_path' => $request->path()]);
 
-            // 检查是否为递归异常
+            // 递归异常时放行请求
             if (ExceptionHandler::isRecursionException($e)) {
-                Log::critical('检测到递归异常，安全检查失败，放行请求', [
-                    'error' => $e->getMessage(),
-                    'request_path' => $request->path(),
-                ]);
-                // 递归异常时放行请求，避免死循环
                 return $next($request);
             }
 
             return $this->handleGeneralException($request, $e);
         } finally {
-            // 记录性能统计
+            // 记录性能统计并清理资源
             $this->detectionStats['end_time'] = microtime(true);
+            $this->cleanupRequestResources();
+        }
+    }
+
+    /**
+     * 检查配置热重载
+     */
+    protected function checkConfigReload(): void
+    {
+        if (!$this->hotReloadService || $this->isReloadingConfig || !$this->shouldReloadConfig()) {
+            return;
+        }
+
+        $this->isReloadingConfig = true;
+        try {
+            $this->hotReloadService->reloadConfig();
+            $this->lastReloadTime = time();
+        } catch (Throwable $e) {
+            Log::warning('配置热重载失败', ['error' => $e->getMessage()]);
+        } finally {
+            $this->isReloadingConfig = false;
+        }
+    }
+
+    /**
+     * 清理请求资源 - 刷新延迟写入和缓存
+     */
+    protected function cleanupRequestResources(): void
+    {
+        try {
+            // 1. 刷新IP记录延迟写入队列
+            SecurityIp::onRequestTerminate();
+
+            // 2. 刷新速率限制计数器缓冲区
+            $this->rateLimiter->onRequestTerminate();
+
+            // 3. 清理IP管理服务请求级缓存
+            IpManagerService::clearRequestCache();
+        } catch (Throwable $e) {
+            Log::error('清理请求资源失败: ' . $e->getMessage());
         }
     }
 
@@ -236,11 +252,11 @@ class SecurityMiddleware
             if ($checkResult['blocked']) {
                 // 拦截
                 return $checkResult;
-            }else{
-                // 不拦截且放行
-                if (isset($checkResult['release']) && $checkResult['release']) {
-                    return $checkResult;
-                }
+            }
+            
+            // 不拦截且放行（如白名单）
+            if (!empty($checkResult['release'])) {
+                return $checkResult;
             }
         }
 
@@ -620,11 +636,11 @@ class SecurityMiddleware
     /**
      * SQL 注入安全检查
      * @param Request $request
-     * @return false[]
+     * @return array<string, mixed>
      */
-    protected function checkSQLInjection(Request $request)
+    protected function checkSQLInjection(Request $request): array
     {
-        if($this->threatDetector->hasSQLInjection($request)){
+        if ($this->threatDetector->hasSQLInjection($request)) {
             $ipRecord = $this->ipManager->recordAccess($request, true, SecurityEvent::SQL_INJECTION);
             $this->logSecurityEvent($request, SecurityEvent::SQL_INJECTION, $ipRecord);
             return [
@@ -637,15 +653,14 @@ class SecurityMiddleware
         return ['blocked' => false];
     }
 
-
     /**
      * 检查XSS攻击
      * @param Request $request
-     * @return false[]
+     * @return array<string, mixed>
      */
-    protected function checkXSSAttack(Request $request)
+    protected function checkXSSAttack(Request $request): array
     {
-        if($this->threatDetector->hasXSSAttack($request)){
+        if ($this->threatDetector->hasXSSAttack($request)) {
             $ipRecord = $this->ipManager->recordAccess($request, true, SecurityEvent::XSS_ATTACK);
             $this->logSecurityEvent($request, SecurityEvent::XSS_ATTACK, $ipRecord);
             return [
@@ -661,11 +676,11 @@ class SecurityMiddleware
     /**
      * 检查命令注入
      * @param Request $request
-     * @return false[]
+     * @return array<string, mixed>
      */
-    protected function checkCommandInjection(Request $request)
+    protected function checkCommandInjection(Request $request): array
     {
-        if($this->threatDetector->hasCommandInjection($request)){
+        if ($this->threatDetector->hasCommandInjection($request)) {
             $ipRecord = $this->ipManager->recordAccess($request, true, SecurityEvent::COMMAND_INJECTION);
             $this->logSecurityEvent($request, SecurityEvent::COMMAND_INJECTION, $ipRecord);
             return [
