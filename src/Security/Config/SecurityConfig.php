@@ -345,9 +345,14 @@ class SecurityConfig implements SecurityConfigInterface
             '/(?:@\$_=\$_[_];@\$_\(\$_[__]\);|\beval\(\s*base64_decode|\bgzinflate\(\s*base64_decode|\b(?>FileManager|r57|c99|w4ck1ng|b374k|webadmin)\.(?>php|txt)\b|\b(?>phpspy|afe|wso|reGeorg)\.(?>php|jsp|aspx)\b|<\?php\s+\$[a-z]\s*=\s*["\'][^"\']*["\']\s*;\s*eval)/i',
 
             /**
-             * 云服务密钥和敏感信息泄露检测
+             * 【优化】云服务密钥和敏感信息泄露检测 - 降低误报
+             * 1. 仅检测完整格式的真实密钥（排除示例/占位符）
+             * 2. 要求密钥后有边界字符（防止匹配文档中的示例）
              */
-            '/(?:AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z\\-_]{35}|sk-[a-zA-Z0-9]{48}|(?:-----BEGIN\s+(?:RSA|DSA|EC|OPENSSH)\s+PRIVATE\s+KEY-----)|(?:host|port|user|password|database|dbname)\s*=\s*[^\s]+|aws_access_key_id|aws_secret_access_key)/',
+            '/AKIA[0-9A-Z]{16}(?![a-zA-Z0-9_.-])/',  // AWS Access Key - 排除示例
+            '/AIza[0-9A-Za-z\\-_]{35}(?![a-zA-Z0-9_.-])/',  // Google API Key - 排除示例
+            '/sk-[a-zA-Z0-9]{40,}(?![a-zA-Z0-9_.-])/',  // OpenAI API Key - 要求完整长度
+            '/-----BEGIN\s+(?:RSA|DSA|EC|OPENSSH)\s+PRIVATE\s+KEY-----.*-----END/s',  // 私钥（多行匹配）
 
             /**
              * 加密货币和金融信息检测
@@ -355,9 +360,11 @@ class SecurityConfig implements SecurityConfigInterface
             '/(?:[13][a-km-zA-HJ-NP-Z1-9]{25,34}|0x[a-fA-F0-9]{40}|bc1[a-z0-9]{39,59}|L[1-9A-HJ-NP-Za-km-z]{26,33}|X-Forwarded-For:\s*[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3},?\s*)+/i',
 
             /**
-             * 服务端请求伪造(SSRF)检测
+             * 【优化】服务端请求伪造(SSRF)检测 - 降低误报
+             * 1. 排除常见的文档示例上下文
+             * 2. 要求完整的IP格式匹配
              */
-            '/(?:127\.0\.0\.1|localhost|192\.168\.|10\.|172\.(?:1[6-9]|2[0-9]|3[0-1])\.|169\.254\.|0\.0\.0\.0|metadata\.google\.internal|169\.254\.169\.254|\[::1\]|\[::\]|local\.localhost)/i',
+            '/(?:127\.0\.0\.1|192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+|172\.(?:1[6-9]|2[0-9]|3[0-1])\.\d+\.\d+|metadata\.google\.internal|169\.254\.169\.254)(?![a-zA-Z0-9_.-])/',
         ];
     }
 

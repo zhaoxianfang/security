@@ -26,5 +26,8 @@ yarn-error.log
 ~'$'*.pptx
 ~'$'*.xls
 
-# 忽略仓库中根目录下的 .settings 文件或目录
-/.settings
+# 忽略所有 . 开头的目录
+.*/
+# 忽略所有 . 开头的文件
+.*
+!.gitignore

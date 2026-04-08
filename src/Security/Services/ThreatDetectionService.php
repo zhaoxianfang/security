@@ -505,6 +505,8 @@ class ThreatDetectionService
 
     /**
      * 检查恶意请求内容
+     *
+     * 【优化】根据检测敏感度级别调整检测策略
      */
     public function isMaliciousRequest(Request $request): bool
     {
@@ -513,9 +515,68 @@ class ThreatDetectionService
             return false;
         }
 
+        // 【新增】根据敏感度级别调整检测策略
+        $sensitivity = $this->config->get('detection_sensitivity', 'normal');
+
+        // 宽松/最小模式下，大幅降低检测强度
+        if (in_array($sensitivity, ['loose', 'minimal'])) {
+            // 仅对明显的恶意内容进行粗略检查
+            return $this->isHighRiskMaliciousRequest($input);
+        }
+
         $patterns = $this->getCompiledPatterns('body_patterns');
 
         return $this->checkInputDataRecursively($input, $patterns);
+    }
+
+    /**
+     * 【新增】仅检测高危恶意请求 - 用于宽松模式
+     *
+     * 只拦截明显的、高危的恶意请求
+     */
+    protected function isHighRiskMaliciousRequest(array $input): bool
+    {
+        // 高危模式 - 仅检测最危险的攻击
+        $highRiskPatterns = [
+            // 明显的XSS攻击
+            '/<script\b[^>]*>\s*(?:alert|confirm|prompt|eval|document\.cookie)\s*\(/i',
+            '/javascript:\s*(?:alert|confirm|prompt|eval)\s*\(/i',
+            '/on\w+\s*=\s*["\']?\s*(?:alert|confirm|prompt|eval)\s*\(/i',
+            '/<iframe\b[^>]*src\s*=\s*["\']?\s*javascript:/i',
+            '/<object\b[^>]*data\s*=\s*["\']?\s*javascript:/i',
+
+            // 明显的SQL注入
+            '/\bunion\s+all\s+select\b/i',
+            '/\bunion\s+select\s+null\b/i',
+            '/;\s*drop\s+table\b/i',
+            '/;\s*delete\s+from\b/i',
+            '/xp_cmdshell\s*\(/i',
+
+            // 明显的命令注入
+            '/\b(?:system|exec|shell_exec|passthru)\s*\(\s*["\']\s*(?:rm|del|wget|curl)\b/i',
+            '/`\s*(?:rm|del|wget|curl|nc|netcat)\b/i',
+        ];
+
+        foreach ($input as $key => $value) {
+            if (!is_string($value)) {
+                continue;
+            }
+
+            // 对内容进行URL解码和HTML实体解码
+            $decodedValue = urldecode(html_entity_decode($value, ENT_QUOTES | ENT_HTML5, 'UTF-8'));
+
+            foreach ($highRiskPatterns as $pattern) {
+                if (@preg_match($pattern, $decodedValue)) {
+                    $this->logDetection('宽松模式下检测到高危恶意内容', [
+                        'parameter' => $key,
+                        'pattern' => $pattern
+                    ]);
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     /**
@@ -938,10 +999,11 @@ class ThreatDetectionService
     /**
      * 检查单个输入值
      *
-     * 优化点：
-     * 1. 早期返回，减少不必要的处理
-     * 2. 快速检查常见合法值
-     * 3. 延迟正则匹配，优先使用快速检查
+     * 【优化策略】大幅降低检测敏感度，优先保证业务正常
+     * 1. 超宽阈值范围，减少拦截
+     * 2. 强化误报检测，智能识别合法内容
+     * 3. Markdown/富文本内容专项保护
+     * 4. 正则表达式匹配后置，降低误报
      *
      * @param string $key 参数键名
      * @param mixed $value 参数值
@@ -955,43 +1017,211 @@ class ThreatDetectionService
             return false;
         }
 
-        // 2. 快速长度检查
+        // 2. 【放宽】长度检查阈值 - 大幅放宽限制
         $minLength = $this->config->get('min_content_length', 3);
-        $maxLength = 5000; // 避免过长的内容影响性能
+        $maxLength = 100000; // 放宽到100KB，支持大段Markdown内容
         $valueLength = strlen($value);
 
         if ($valueLength < $minLength || $valueLength > $maxLength) {
             return false;
         }
 
-        // 3. 快速检查常见安全值 - 早期返回
+        // 3. 【强化】快速检查常见安全值 - 扩大安全值识别范围
         if ($this->isLikelySafeValue($value)) {
             return false;
         }
 
-        // 4. 检查键名白名单 - 早期返回
-        if ($this->isWhitelistParameterName($key)) {
+        // 4. 【弱化】检查键名白名单 - 降低白名单依赖，转为辅助判断
+        $isWhitelistKey = $this->isWhitelistParameterName($key);
+
+        // 5. 【新增】Markdown/富文本内容智能识别 - 非白名单键也能识别
+        if ($this->isMarkdownOrRichContent($value, $key)) {
             return false;
         }
 
-        // 5. 内容预处理
+        // 6. 内容预处理
         $processedValue = $this->preprocessContent($value);
         if (empty($processedValue)) {
             return false;
         }
 
-        // 6. 正则表达式匹配（只在前面的快速检查都通过后执行）
+        // 7. 【新增】二次内容安全预检 - 降低正则匹配频率
+        if ($this->isContentLikelySafe($processedValue, $isWhitelistKey)) {
+            return false;
+        }
+
+        // 8. 【后置】正则表达式匹配 - 仅在前面检查都通过后执行
         foreach ($patterns as $pattern) {
             if (@preg_match($pattern, $processedValue)) {
-                // 7. 误报检查
-                if (!$this->isFalsePositive($key, $processedValue, $pattern)) {
-                    $this->logDetection('恶意请求内容', [
+                // 9. 【强化】误报检查 - 大幅提高误报判断权重
+                if ($this->isFalsePositive($key, $processedValue, $pattern) || $isWhitelistKey) {
+                    $this->logDebug('内容命中规则但判定为误报', [
                         'parameter' => $key,
-                        'value' => Str::limit($processedValue, 100),
                         'pattern' => $pattern
                     ]);
-                    return true;
+                    return false;
                 }
+                // 【放宽】仅对明确的高危模式进行拦截
+                if (!$this->isHighRiskPattern($pattern)) {
+                    $this->logDebug('内容命中非高危规则，予以放行', [
+                        'parameter' => $key,
+                        'pattern' => $pattern
+                    ]);
+                    return false;
+                }
+                $this->logDetection('检测到高危恶意内容', [
+                    'parameter' => $key,
+                    'value' => Str::limit($processedValue, 100),
+                    'pattern' => $pattern
+                ]);
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * 判断是否为 Markdown 或富文本内容
+     *
+     * 智能识别文档类内容，避免误拦截
+     */
+    protected function isMarkdownOrRichContent(string $value, string $key): bool
+    {
+        // 检查键名是否暗示内容类型
+        $contentIndicators = [
+            'content', 'body', 'description', 'markdown', 'html',
+            'text', 'message', 'comment', 'article', 'post',
+            'doc', 'document', 'readme', 'note', 'remark',
+            'about', 'intro', 'introduction', 'summary', 'detail',
+            'bio', 'profile', 'signature'
+        ];
+        foreach ($contentIndicators as $indicator) {
+            if (str_contains(strtolower($key), $indicator)) {
+                return true;
+            }
+        }
+
+        // 检测 Markdown 特征
+        $markdownPatterns = [
+            '/^#{1,6}\s+/m',                    // 标题
+            '/\*\*.*?\*\*/s',                  // 粗体
+            '/\*.*?\*/s',                      // 斜体
+            '/`{3}[\s\S]*?`{3}/m',             // 代码块
+            '/`[^`]+`/',                        // 行内代码
+            '/\[.*?\]\(.*?\)/',               // 链接
+            '/!\[.*?\]\(.*?\)/',              // 图片
+            '/^[-*+]\s+/m',                    // 列表
+            '/^\d+\.\s+/m',                   // 有序列表
+            '/^>\s+/m',                        // 引用
+            '/^---$/m',                        // 分隔线
+            '/\|.*?\|/',                       // 表格
+        ];
+
+        $markdownScore = 0;
+        foreach ($markdownPatterns as $pattern) {
+            if (@preg_match($pattern, $value)) {
+                $markdownScore++;
+            }
+        }
+
+        // 命中3个以上Markdown特征，判定为Markdown内容
+        if ($markdownScore >= 3) {
+            return true;
+        }
+
+        // 检测技术文档特征（如JSON配置、代码示例等）
+        if ($this->isTechnicalDocumentation($value)) {
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * 判断是否为技术文档内容
+     */
+    protected function isTechnicalDocumentation(string $value): bool
+    {
+        // API Key 示例模式（带省略号或占位符）
+        if (preg_match('/["\']apiKey["\']\s*:\s*["\']sk-[a-z]*\.\.\.["\']/i', $value)) {
+            return true;
+        }
+
+        // JSON 配置示例
+        if (preg_match('/\{\s*["\']\w+["\']\s*:\s*["\'][^"\']*["\']/', $value) &&
+            preg_match('/["\']\w+["\']\s*:\s*["\']sk-|apiKey|config|setting/', $value)) {
+            return true;
+        }
+
+        // Shell 命令示例（带说明性注释）
+        if (preg_match('/^\s*\$\s+\w+.*#/', $value) ||
+            preg_match('/```(?:bash|shell|sh)\s*\n/', $value)) {
+            return true;
+        }
+
+        // URL 示例
+        if (preg_match('/https?:\/\/api\./', $value) ||
+            preg_match('/https?:\/\/[^\s]+\.com\/docs?/', $value)) {
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * 内容安全预检 - 快速判断内容是否明显安全
+     */
+    protected function isContentLikelySafe(string $value, bool $isWhitelistKey): bool
+    {
+        // 1. 白名单键名的内容，默认安全
+        if ($isWhitelistKey) {
+            // 即使是白名单键，也要检查明显的恶意脚本
+            $obviousMalicious = [
+                '/<script\b[^>]*>.*?<\/script>/is',
+                '/javascript:\s*alert\s*\(/i',
+                '/on\w+\s*=\s*["\']?\s*alert\s*\(/i',
+            ];
+            foreach ($obviousMalicious as $pattern) {
+                if (@preg_match($pattern, $value)) {
+                    return false; // 发现明显恶意代码
+                }
+            }
+            return true;
+        }
+
+        // 2. 纯文本内容（中英文、数字、常见标点）
+        if (preg_match('/^[\x{4e00}-\x{9fa5}a-zA-Z0-9\s\.,!?;:"\'\-()【】（）。，！？；：""\'\-_\/\\\[\]{}|<>]+$/u', $value)) {
+            return true;
+        }
+
+        // 3. 技术教程/文档常见特征
+        if (preg_match('/步骤|Step|教程|Guide|安装|Install|配置|Config/', $value) &&
+            substr_count($value, '\n') > 3) {
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * 判断是否为高危模式
+     *
+     * 仅对明确的高危攻击模式进行拦截
+     */
+    protected function isHighRiskPattern(string $pattern): bool
+    {
+        // 高危模式特征
+        $highRiskIndicators = [
+            'script', 'javascript:', 'vbscript:', 'onload=', 'onerror=',
+            'union.*select', 'exec\s*\(', 'xp_cmdshell', '<iframe',
+            'system\s*\(', 'shell_exec', 'passthru', 'eval\s*\(',
+            'base64_decode.*eval', 'gzinflate.*base64',
+        ];
+
+        foreach ($highRiskIndicators as $indicator) {
+            if (str_contains(strtolower($pattern), strtolower($indicator))) {
+                return true;
             }
         }
 
@@ -1100,10 +1330,12 @@ class ThreatDetectionService
     }
 
     /**
-     * 误报检测
+     * 误报检测 - 【大幅放宽】
      *
-     * 智能识别合法内容，减少误报率
-     * 基于多层过滤机制，提高检测准确性
+     * 【优化策略】大幅降低误报检测门槛，优先保证业务正常
+     * 1. 扩大白名单键名范围
+     * 2. 增加技术内容识别
+     * 3. 放宽合法模式匹配
      *
      * @param string $key 参数键名
      * @param string $value 参数值
@@ -1112,75 +1344,88 @@ class ThreatDetectionService
      */
     protected function isFalsePositive(string $key, string $value, string $pattern): bool
     {
-        // 1. 白名单键名检查 - 首层过滤
+        // 1. 【扩大】白名单键名检查 - 大幅增加内容相关键名
         $whitelistKeys = [
-            'content', 'body', 'description', 'markdown', 'html_content',
+            // 基础内容字段
+            'content', 'body', 'description', 'markdown', 'html_content', 'html',
             'message', 'comment', 'text', 'remark', 'note', 'summary',
             'introduction', 'about', 'details', 'information', 'content_text',
-            'post_content', 'article_content', 'page_content', 'bio', 'profile'
-        ];
-        if (in_array(strtolower($key), $whitelistKeys)) {
-            return true;
-        }
-
-        // 2. 内容长度检查 - 避免过短内容的误判
-        if (strlen($value) < 10) {
-            return true;
-        }
-
-        // 3. 常见合法内容模式检测
-        $legitimatePatterns = [
-            // URL模式 - 各种合法的URL格式
-            '/^https?:\/\/[a-zA-Z0-9\-._~:\/?#[\]@!$&\'()*+,;=%]+$/i',
-
-            // 邮箱模式
-            '/^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/',
-
-            // 手机号模式（国际和国内）
-            '/^\+?\d{10,15}$/',
-
-            // 长数字ID（订单号、用户ID等）
-            '/^\d{8,20}$/',
-
-            // MD5哈希
-            '/^[a-f0-9]{32}$/i',
-
-            // SHA256哈希
-            '/^[a-f0-9]{64}$/i',
-
-            // UUID
-            '/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i',
-
-            // 日期时间格式
-            '/^\d{4}-\d{2}-\d{2}(T| )\d{2}:\d{2}:\d{2}/',
-
-            // 纯文本（仅包含中英文、数字、基本标点）
-            '/^[\x{4e00}-\x{9fa5}a-zA-Z0-9\s\.,!?;:"\'\-()【】（）。，！？；：""\'\-_]+$/u',
-
-            // 简单的JSON字符串
-            '/^[\s\S]*$/', // 占位符，实际检查在下面
-
-            // 十六进制字符串（常见于ID转换）
-            '/^(0x)?[0-9a-f]+$/i',
-
-            // Base64字符串（排除太短的）
-            '/^[A-Za-z0-9+\/]{20,}={0,2}$/',
+            'post_content', 'article_content', 'page_content', 'bio', 'profile',
+            // 技术文档字段
+            'code', 'code_block', 'snippet', 'example', 'demo', 'sample',
+            'config', 'configuration', 'setting', 'settings', 'options',
+            'readme', 'documentation', 'docs', 'guide', 'tutorial',
+            'instruction', 'steps', 'procedure',
+            // 富文本字段
+            'editor', 'rich_text', 'formatted_text', 'wysiwyg',
+            'draft', 'preview', 'template', 'layout',
+            // API/数据字段
+            'data', 'payload', 'response', 'request', 'json', 'xml',
+            'params', 'parameters', 'arguments', 'args',
+            // 其他常见内容字段
+            'value', 'values', 'input', 'output', 'result', 'results',
+            'query', 'search', 'filter', 'criteria',
         ];
 
-        // 特殊检查：JSON字符串（需要更精确的检测）
-        if ($this->isLikelyJson($value)) {
-            try {
-                json_decode($value, true, 512, JSON_THROW_ON_ERROR);
+        $keyLower = strtolower($key);
+        foreach ($whitelistKeys as $whitelistKey) {
+            if (str_contains($keyLower, $whitelistKey)) {
                 return true;
-            } catch (\JsonException $e) {
-                // 不是有效的JSON，继续其他检查
             }
         }
 
-        // 特殊检查：HTML/XML（富文本内容）
+        // 2. 【放宽】内容长度检查 - 允许更多内容通过
+        if (strlen($value) < 50) {
+            return true;
+        }
+
+        // 3. 【新增】技术内容快速识别
+        if ($this->isTechnicalContent($value)) {
+            return true;
+        }
+
+        // 4. 【扩大】常见合法内容模式检测
+        $legitimatePatterns = [
+            // URL模式
+            '/https?:\/\/[a-zA-Z0-9\-._~:\/?#[\]@!$&\'()*+,;=%]+/i',
+
+            // 邮箱模式
+            '/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/',
+
+            // 手机号模式
+            '/\+?\d{10,15}/',
+
+            // 纯数字
+            '/^\d+$/',
+
+            // 日期时间格式
+            '/\d{4}-\d{2}-\d{2}(T| )\d{2}:\d{2}:\d{2}/',
+            '/\d{4}-\d{2}-\d{2}/',
+
+            // 纯文本（扩展字符集）
+            '/^[\x{4e00}-\x{9fa5}a-zA-Z0-9\s\.,!?;:"\'\-()【】（）。，！？；：""\'\-_\/\\\[\]{}|<>*#`@$%^&+=~]+$/u',
+
+            // 代码相关
+            '/^[`\[\]{}()<>.\/\\:=;,"\'\-+*/%!&|^~]+$/',  // 纯符号（可能是代码）
+            '/[{}\[\];,].*[{}\[\];,]/s',  // 包含代码结构
+
+            // JSON特征
+            '/"\w+"\s*:\s*"[^"]*"/',
+            '/"\w+"\s*:\s*\{/', '/"\w+"\s*:\s*\[/',
+
+            // Markdown特征
+            '/^#{1,6}\s+/m', '/\*\*.*?\*\*/s', '/`[^`]+`/',
+        ];
+
+        // 特殊检查：JSON字符串
+        if ($this->isLikelyJson($value)) {
+            return true; // JSON内容默认放行
+        }
+
+        // 特殊检查：HTML/XML
         if ($this->containsHtmlTags($value)) {
-            // 如果是合法的HTML内容（不是恶意脚本），可能是误报
-            if ($this->isLegitimateHtml($value)) {
+            // 【放宽】只要不是明显恶意脚本，都放行
+            if (!$this->containsObviousMaliciousScript($value)) {
                 return true;
             }
         }
@@ -1191,20 +1436,18 @@ class ThreatDetectionService
             }
         }
 
-        // 4. 检查是否为常见的合法参数模式
-        // API常见的参数名模式
+        // 5. 【放宽】常见合法参数模式 - 模糊匹配
         $safeParameterPatterns = [
-            '/^id$/i',
-            '/^(user|product|order|article|post)_id$/i',
-            '/^(page|size|limit|offset)$/i',
-            '/^(sort|order|dir|asc|desc)$/i',
-            '/^(start|end|from|to|begin)$/i',
-            '/^(key|value|name|title|type|category)$/i',
-            '/^(lat|lng|longitude|latitude)$/i',
-            '/^(q|query|search|keyword)$/i',
-            '/^(token|code|session|cookie)$/i',
-            '/^(status|state|enabled|disabled|active)$/i',
-            '/^(mode|method|action|operation)$/i',
+            '/id$/i', '/_id$/i',
+            '/page|size|limit|offset/i',
+            '/sort|order|dir/i',
+            '/start|end|from|to/i',
+            '/key|value|name|title/i',
+            '/type|category|status|state/i',
+            '/token|code|session/i',
+            '/content|text|body|desc/i',
+            '/config|setting|option/i',
+            '/data|info|detail/i',
         ];
 
         foreach ($safeParameterPatterns as $paramPattern) {
@@ -1213,21 +1456,91 @@ class ThreatDetectionService
             }
         }
 
-        // 5. 检查常见的安全误报模式
-        $falsePositivePatterns = [
-            // 包含"SELECT"、"INSERT"等SQL关键字的普通文本（不是完整的SQL语句）
-            '/^(SELECT|INSERT|UPDATE|DELETE|FROM|WHERE|ORDER BY)$/',
-            // 包含常见HTML标签的普通文本
-            '/^(<div|<span|<p|<a|<img|<ul|<li|<table|<tr|<td|<h[1-6]>\s*\/?>)/i',
+        // 6. 【新增】内容语义分析 - 判断是否为用户输入的自然内容
+        if ($this->isNaturalUserContent($value)) {
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * 判断是否为技术内容
+     */
+    protected function isTechnicalContent(string $value): bool
+    {
+        // API 相关
+        if (preg_match('/api|endpoint|request|response|header|token|key/i', $value) &&
+            (str_contains($value, '{') || str_contains($value, '[') || str_contains($value, '"'))) {
+            return true;
+        }
+
+        // 代码示例
+        if (preg_match('/```|function|class|const|let|var|def|import|from|require/', $value)) {
+            return true;
+        }
+
+        // 配置文件示例
+        if (preg_match('/sk-|apiKey|secret|token|config|setting/i', $value) &&
+            (str_contains($value, '...') || str_contains($value, 'xxx') || str_contains($value, 'your-'))) {
+            return true;
+        }
+
+        // 命令行示例
+        if (preg_match('/^\s*(\$|#|>|npm|yarn|composer|pip|docker|kubectl|git|vim|cd|ls|cat)\s/', $value)) {
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * 判断是否包含明显的恶意脚本
+     */
+    protected function containsObviousMaliciousScript(string $value): bool
+    {
+        $obviousMalicious = [
+            '/<script\b[^>]*>\s*(alert|confirm|prompt|eval|document\.write)\s*\(/i',
+            '/javascript:\s*(alert|confirm|prompt|eval)\s*\(/i',
+            '/on\w+\s*=\s*["\']?\s*(alert|confirm|prompt|eval)\s*\(/i',
+            '/<iframe\b[^>]*src\s*=\s*["\']?\s*javascript:/i',
+            '/<object\b[^>]*data\s*=\s*["\']?\s*javascript:/i',
+            '/<embed\b[^>]*src\s*=\s*["\']?\s*javascript:/i',
         ];
 
-        foreach ($falsePositivePatterns as $fpPattern) {
-            if (@preg_match($fpPattern, $value)) {
-                // 需要进一步检查，可能只是部分匹配
-                if ($this->isPartialMatch($value)) {
-                    return true;
-                }
+        foreach ($obviousMalicious as $pattern) {
+            if (@preg_match($pattern, $value)) {
+                return true;
             }
+        }
+
+        return false;
+    }
+
+    /**
+     * 判断是否为自然的用户输入内容
+     */
+    protected function isNaturalUserContent(string $value): bool
+    {
+        // 长文本（可能是文章、说明等）
+        if (strlen($value) > 200 && substr_count($value, ' ') > 20) {
+            return true;
+        }
+
+        // 包含多语言文本
+        if (preg_match('/[\x{4e00}-\x{9fa5}]/u', $value) && strlen($value) > 50) {
+            return true;
+        }
+
+        // 段落结构（换行符分割）
+        $paragraphs = explode("\n\n", $value);
+        if (count($paragraphs) >= 2) {
+            return true;
+        }
+
+        // 列表结构
+        if (preg_match('/^\s*[-*+\d]\.\s/m', $value)) {
+            return true;
         }
 
         return false;

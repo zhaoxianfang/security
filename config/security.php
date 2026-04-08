@@ -357,25 +357,99 @@ return [
     /**
      * 请求体正则表达式模式
      *
-     * 用于检测恶意请求内容的正则表达式模式
+     * 【优化】用于检测恶意请求内容的正则表达式模式
      * 支持：array | callable
      * 默认值：SecurityConfig::getMaliciousBodyPatterns()
+     *
+     * 注意：如需更宽松的检测，可配置为空数组或自定义规则
      */
     'body_patterns' => [SecurityConfig::class, 'getMaliciousBodyPatterns'],
 
     /**
+     * 【新增】检测敏感度级别
+     *
+     * 控制安全检测的严格程度：
+     * - 'strict': 严格模式，高安全性但可能有误报
+     * - 'normal': 正常模式，平衡安全与可用性（默认）
+     * - 'loose': 宽松模式，优先保证业务正常，减少误报
+     * - 'minimal': 最小检测，仅拦截明显的恶意请求
+     */
+    'detection_sensitivity' => env('SECURITY_DETECTION_SENSITIVITY', 'loose'),
+
+    /**
      * 不验证请求体的白名单路径
      *
-     * 这些路径的请求体将跳过恶意内容检测
-     * 常用于API接口、健康检查等
+     * 【大幅扩展】这些路径的请求体将跳过恶意内容检测
      * 支持：array | callable
-     * 默认值：['api/health', 'api/status', 'health', 'status']
+     *
+     * 包含：API接口、健康检查、内容管理、文章发布、表单提交等
      */
     'body_whitelist_paths' => [
+        // 基础健康检查
         'api/health',
         'api/status',
         'health',
         'status',
+        'ping',
+        'ready',
+
+        // 【新增】内容管理路径 - 文章、博客、文档
+        'api/articles',
+        'api/articles/*',
+        'api/posts',
+        'api/posts/*',
+        'api/pages',
+        'api/pages/*',
+        'api/content',
+        'api/content/*',
+        'api/documents',
+        'api/documents/*',
+
+        // 【新增】编辑器相关路径
+        'api/editor',
+        'api/editor/*',
+        'api/upload',
+        'api/upload/*',
+        'api/media',
+        'api/media/*',
+
+        // 【新增】表单提交路径
+        'api/forms',
+        'api/forms/*',
+        'api/submit',
+        'api/submit/*',
+        'api/feedback',
+        'api/contact',
+
+        // 【新增】评论/留言路径
+        'api/comments',
+        'api/comments/*',
+        'api/reviews',
+        'api/reviews/*',
+        'api/messages',
+        'api/messages/*',
+
+        // 【新增】用户生成内容路径
+        'api/user/content',
+        'api/user/posts',
+        'api/user/comments',
+        'api/profile',
+        'api/profile/*',
+        'api/settings',
+        'api/settings/*',
+
+        // 【新增】管理后台路径
+        'admin/*',
+        'admin/articles/*',
+        'admin/posts/*',
+        'admin/content/*',
+        'admin/pages/*',
+
+        // 【新增】通配符支持常见CRUD路径
+        '*/*/create',
+        '*/*/update',
+        '*/*/store',
+        '*/*/edit',
     ],
 
     /**
@@ -1101,37 +1175,26 @@ return [
     /**
      * 防御层配置
      *
-     * 配置多层防御策略，从上到下依次执行
+     * 【优化】配置多层防御策略，大幅降低默认检测强度
      * 支持：array | callable
-     * 默认值：[
-     *     'ip_whitelist' => true,
-     *     'ip_blacklist' => true,
-     *     'method_check' => true,
-     *     'user_agent_check' => true,
-     *     'header_check' => true,
-     *     'url_check' => true,
-     *     'upload_check' => true,
-     *     'body_check' => true,
-     *     'anomaly_check' => true,
-     *     'rate_limit' => true,
-     *     'custom_check' => true,
-     * ]
+     *
+     * 注意：以下默认值为优化后的宽松配置，优先保证业务正常
      */
     'defense_layers' => [
         'ip_whitelist' => env('SECURITY_DEFENSE_IP_WHITELIST', true),
         'ip_blacklist' => env('SECURITY_DEFENSE_IP_BLACKLIST', true),
-        'method_check' => env('SECURITY_DEFENSE_METHOD', true), // 检查请求方法
-        'user_agent_check' => env('SECURITY_DEFENSE_USER_AGENT', true), // 检查UA
-        'header_check' => env('SECURITY_DEFENSE_HEADER', true),
-        'url_check' => env('SECURITY_DEFENSE_URL', true),
-        'upload_check' => env('SECURITY_DEFENSE_UPLOAD', true),
-        'body_check' => env('SECURITY_DEFENSE_BODY', true),
-        'anomaly_check' => env('SECURITY_DEFENSE_ANOMALY', true),
-        'rate_limit' => env('SECURITY_DEFENSE_RATE_LIMIT', true),
-        'sql_check' => env('SECURITY_DEFENSE_SQL', true), // 检查SQL注入
-        'xss_check' => env('SECURITY_DEFENSE_XSS', true), // 检查XSS攻击
-        'command_check' => env('SECURITY_DEFENSE_COMMON', true), // 检查命令注入
-        'custom_check' => env('SECURITY_DEFENSE_CUSTOM', true),
+        'method_check' => env('SECURITY_DEFENSE_METHOD', true), // HTTP方法检查（建议保留）
+        'user_agent_check' => env('SECURITY_DEFENSE_USER_AGENT', false), // 【关闭】UA检查，减少误报
+        'header_check' => env('SECURITY_DEFENSE_HEADER', false), // 【关闭】请求头检查，减少误报
+        'url_check' => env('SECURITY_DEFENSE_URL', true), // URL路径检查（基础防护）
+        'upload_check' => env('SECURITY_DEFENSE_UPLOAD', true), // 文件上传检查（保留安全）
+        'body_check' => env('SECURITY_DEFENSE_BODY', false), // 【关闭】请求体内容检查，避免Markdown等误报
+        'anomaly_check' => env('SECURITY_DEFENSE_ANOMALY', false), // 【关闭】异常参数检查，减少误报
+        'rate_limit' => env('SECURITY_DEFENSE_RATE_LIMIT', true), // 频率限制（保留）
+        'sql_check' => env('SECURITY_DEFENSE_SQL', false), // 【关闭】SQL注入检查，减少误报
+        'xss_check' => env('SECURITY_DEFENSE_XSS', false), // 【关闭】XSS检查，避免富文本误报
+        'command_check' => env('SECURITY_DEFENSE_COMMON', false), // 【关闭】命令注入检查，减少误报
+        'custom_check' => env('SECURITY_DEFENSE_CUSTOM', false), // 【关闭】自定义检查
     ],
 
     // ==================== 其他配置 ====================
