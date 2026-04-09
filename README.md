@@ -1,3 +1,9 @@
+<p align="center">
+
+![Security’s Logo](./resources/images/security.jpg)
+
+</p>
+
 # zxf/security - Laravel 安全中间件
 
 [![PHP](https://img.shields.io/badge/php-8.2+-8892bf)](https://php.net)
