@@ -1,1107 +1,270 @@
 <?php
 
-use Illuminate\Http\JsonResponse;
-use Illuminate\Http\Request;
-use Illuminate\Http\Response;
-use Illuminate\Support\Facades\Cache;
+/**
+ * zxf/security 辅助函数
+ *
+ * 本文件提供了一系列便捷的全局函数，用于：
+ * 1. 安全事件日志记录
+ * 2. IP地址类型判断
+ * 3. CIDR网段匹配
+ *
+ * 这些函数可在应用任何地方调用，无需引入额外命名空间。
+ */
+
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Str;
-use zxf\Security\Models\SecurityIp;
-use zxf\Security\Services\ConfigManager;
-use zxf\Security\Services\ThreatDetectionService;
 
-if (! function_exists('security_config')) {
-    /**
-     * 获取安全包的配置值
-     *
-     * 这是一个便捷的助手函数，用于获取安全包的配置值。
-     * 支持获取单个配置项或所有配置，支持默认值。
-     *
-     * @param string|null $key 配置键名。如果为null，返回所有配置。
-     * @param mixed $default 默认值，当配置不存在时返回此值。
-     * @return mixed 配置值或所有配置数组。
-     *
-     * @example
-     * // 获取所有配置
-     * $allConfig = security_config();
-     *
-     * // 获取单个配置项
-     * $enabled = security_config('enabled');
-     *
-     * // 获取配置项，如果不存在返回默认值
-     * $timeout = security_config('timeout', 30);
-     *
-     * // 获取嵌套配置
-     * $threshold = security_config('ip_auto_detection.blacklist_threshold');
-     *
-     * // 动态配置支持（闭包、类方法等）
-     * $patterns = security_config('body_patterns');
-     */
-    function security_config(?string $key = null, mixed $default = null): mixed
-    {
-        $configManager = ConfigManager::instance();
+// ==================== 日志记录函数 ====================
 
-        if (is_null($key)) {
-            return $configManager->all();
-        }
-
-        // 特殊处理：确保数值类型的配置正确转换
-        $value = $configManager->get($key, $default);
-
-        // 如果是阈值相关的配置，确保返回正确的数值类型
-        $thresholdKeys = [
-            'ip_auto_detection.blacklist_threshold',
-            'ip_auto_detection.suspicious_threshold',
-            'ip_auto_detection.add_threat_score',
-            'ip_auto_detection.reduce_threat_score',
-            'ip_auto_detection.decay_rate_per_hour',
-            'ip_auto_detection.max_triggers',
-        ];
-
-        foreach ($thresholdKeys as $thresholdKey) {
-            if ($key === $thresholdKey || str_starts_with($key, $thresholdKey . '.')) {
-                if (is_numeric($value)) {
-                    return is_float($default) ? (float) $value : (int) $value;
-                }
-            }
-        }
-
-        return $value;
-    }
-}
-
-if (! function_exists('security_is_whitelisted')) {
-    /**
-     * 检查IP是否在白名单中
-     *
-     * 检查指定IP地址是否在安全白名单中。
-     * 支持单个IP和IP段检查。
-     *
-     * @param string $ip 要检查的IP地址
-     * @return bool IP是否在白名单中
-     *
-     * @example
-     * // 检查当前请求IP
-     * $isWhitelisted = security_is_whitelisted(request()->ip());
-     *
-     * // 检查指定IP
-     * $isWhitelisted = security_is_whitelisted('192.168.1.100');
-     */
-    function security_is_whitelisted(string $ip): bool
-    {
-        return SecurityIp::isWhitelisted($ip);
-    }
-}
-
-if (! function_exists('security_is_blacklisted')) {
-    /**
-     * 检查IP是否在黑名单中
-     *
-     * 检查指定IP地址是否在安全黑名单中。
-     * 支持单个IP和IP段检查。
-     *
-     * @param string $ip 要检查的IP地址
-     * @return bool IP是否在黑名单中
-     *
-     * @example
-     * // 检查当前请求IP
-     * $isBlacklisted = security_is_blacklisted(request()->ip());
-     *
-     * // 检查指定IP
-     * $isBlacklisted = security_is_blacklisted('10.0.0.1');
-     */
-    function security_is_blacklisted(string $ip): bool
-    {
-        return SecurityIp::isBlacklisted($ip);
-    }
-}
-
-if (! function_exists('security_record_access')) {
-    /**
-     * 记录IP访问请求
-     *
-     * 记录IP地址的访问请求，用于统计和威胁分析。
-     * 可以标记请求是否被拦截以及触发规则。
-     *
-     * @param string $ip 访问IP地址
-     * @param bool $blocked 是否被拦截
-     * @param string|null $rule 触发规则名称
-     * @return array|null IP记录信息或null
-     *
-     * @example
-     * // 记录成功访问
-     * $record = security_record_access('192.168.1.100', false);
-     *
-     * // 记录被拦截的访问
-     * $record = security_record_access('10.0.0.1', true, 'SQLInjection');
-     *
-     * // 在中间件中使用
-     * $record = security_record_access($request->ip(), $blocked, $rule);
-     */
-    function security_record_access(string $ip, bool $blocked = false, ?string $rule = null): ?array
-    {
-        try {
-            $record = SecurityIp::recordRequest($ip, $blocked, $rule);
-
-            if ($record) {
-                return [
-                    'id' => $record->id,
-                    'ip_address' => $record->ip_address,
-                    'type' => $record->type,
-                    'threat_score' => $record->threat_score,
-                    'request_count' => $record->request_count,
-                    'blocked_count' => $record->blocked_count,
-                    'success_count' => $record->success_count,
-                    'trigger_count' => $record->trigger_count,
-                    'last_request_at' => $record->last_request_at,
-                    'first_seen_at' => $record->first_seen_at,
-                ];
-            }
-
-            return null;
-        } catch (Throwable $e) {
-            Log::error('记录IP访问失败: ' . $e->getMessage(), [
-                'ip' => $ip,
-                'blocked' => $blocked,
-                'rule' => $rule,
-                'exception' => $e
-            ]);
-            return null;
-        }
-    }
-}
-
-if (! function_exists('security_add_to_whitelist')) {
-    /**
-     * 添加IP到白名单
-     *
-     * 将IP地址添加到安全白名单，支持单个IP和IP段。
-     * 可以设置过期时间和添加原因。
-     *
-     * @param string $ip IP地址或IP段（如：192.168.1.1 或 192.168.1.0/24）
-     * @param string $reason 添加原因
-     * @param DateTimeInterface|null $expiresAt 过期时间，null表示永久有效
-     * @return bool 操作是否成功
-     *
-     * @example
-     * // 添加单个IP到白名单
-     * security_add_to_whitelist('192.168.1.100', '内部服务器');
-     *
-     * // 添加IP段到白名单，设置过期时间
-     * security_add_to_whitelist('192.168.1.0/24', '内部网络', now()->addMonth());
-     *
-     * // 永久添加到白名单
-     * security_add_to_whitelist('10.0.0.1', '管理服务器');
-     */
-    function security_add_to_whitelist(string $ip, string $reason = '', ?DateTimeInterface $expiresAt = null): bool
-    {
-        try {
-            SecurityIp::addToWhitelist($ip, $reason, $expiresAt);
-            return true;
-        } catch (Exception $e) {
-            Log::error('添加IP到白名单失败: ' . $e->getMessage(), [
-                'ip' => $ip,
-                'reason' => $reason,
-                'exception' => $e
-            ]);
-            return false;
-        }
-    }
-}
-
-if (! function_exists('security_add_to_blacklist')) {
-    /**
-     * 添加IP到黑名单
-     *
-     * 将IP地址添加到安全黑名单，支持单个IP和IP段。
-     * 可以设置过期时间、添加原因和标记是否自动检测。
-     *
-     * @param string $ip IP地址或IP段（如：192.168.1.1 或 192.168.1.0/24）
-     * @param string $reason 添加原因
-     * @param DateTimeInterface|null $expiresAt 过期时间，null表示永久有效
-     * @param bool $autoDetected 是否自动检测添加
-     * @return bool 操作是否成功
-     *
-     * @example
-     * // 添加单个IP到黑名单
-     * security_add_to_blacklist('10.0.0.100', '恶意攻击');
-     *
-     * // 添加IP段到黑名单，设置过期时间
-     * security_add_to_blacklist('10.0.0.0/24', '僵尸网络', now()->addWeek());
-     *
-     * // 自动检测添加
-     * security_add_to_blacklist('172.16.0.1', '自动检测威胁', null, true);
-     */
-    function security_add_to_blacklist(string $ip, string $reason = '', ?DateTimeInterface $expiresAt = null, bool $autoDetected = false): bool
-    {
-        try {
-            SecurityIp::addToBlacklist($ip, $reason, $expiresAt, $autoDetected);
-            return true;
-        } catch (Exception $e) {
-            Log::error('添加IP到黑名单失败: ' . $e->getMessage(), [
-                'ip' => $ip,
-                'reason' => $reason,
-                'exception' => $e
-            ]);
-            return false;
-        }
-    }
-}
-
-if (! function_exists('security_get_ip_stats')) {
-    /**
-     * 获取IP统计信息
-     *
-     * 获取指定IP地址的详细统计信息，包括访问次数、拦截次数、威胁评分等。
-     *
-     * @param string $ip IP地址
-     * @return array IP统计信息
-     *
-     * @example
-     * // 获取IP统计信息
-     * $stats = security_get_ip_stats('192.168.1.100');
-     *
-     * // 使用统计信息
-     * if ($stats['threat_score'] > 50) {
-     *     // 高威胁IP处理
-     * }
-     */
-    function security_get_ip_stats(string $ip): array
-    {
-        return SecurityIp::getIpStats($ip);
-    }
-}
-
-if (! function_exists('security_get_high_threat_ips')) {
-    /**
-     * 获取高威胁IP列表
-     *
-     * 获取威胁评分较高的IP地址列表，用于安全分析和监控。
-     *
-     * @param int $limit 返回数量限制，默认100
-     * @return array 高威胁IP列表
-     *
-     * @example
-     * // 获取前50个高威胁IP
-     * $threatIps = security_get_high_threat_ips(50);
-     *
-     * // 分析高威胁IP
-     * foreach ($threatIps as $ip) {
-     *     echo "IP: {$ip['ip_address']}, 威胁评分: {$ip['threat_score']}\n";
-     * }
-     */
-    function security_get_high_threat_ips(int $limit = 100): array
-    {
-        try {
-            $ips = SecurityIp::getHighThreatIps($limit);
-            return $ips->toArray();
-        } catch (Throwable $e) {
-            Log::error('获取高威胁IP列表失败: ' . $e->getMessage(), [
-                'limit' => $limit,
-                'exception' => $e
-            ]);
-            return [];
-        }
-    }
-}
-
-if (! function_exists('security_cleanup_expired')) {
-    /**
-     * 清理过期的IP记录
-     *
-     * 清理数据库中过期的IP记录，包括过期黑名单、白名单等。
-     * 返回清理的记录数量。
-     *
-     * @return int 清理的记录数量
-     *
-     * @example
-     * // 清理过期记录
-     * $cleanedCount = security_cleanup_expired();
-     * echo "清理了 {$cleanedCount} 条过期记录";
-     *
-     * // 在定时任务中使用
-     * $schedule->call(function () {
-     *     security_cleanup_expired();
-     * })->daily();
-     */
-    function security_cleanup_expired(): int
-    {
-        return SecurityIp::cleanupExpired();
-    }
-}
-
-if (! function_exists('security_log_event')) {
+if (!function_exists('security_log')) {
     /**
      * 记录安全事件日志
      *
-     * 记录安全相关事件日志，支持不同日志级别。
-     * 自动包含请求上下文信息。
+     * 将安全相关事件记录到 Laravel 日志系统，便于后续分析和审计。
+     * 日志级别为 WARNING，可通过通道过滤快速定位安全事件。
      *
-     * @param string $message 日志消息
-     * @param string $level 日志级别（debug, info, warning, error等）
-     * @param array $context 额外上下文信息
-     * @param Request|null $request 请求对象，为null时自动获取当前请求
+     * 使用场景：
+     * - 记录自定义安全检查的结果
+     * - 标记可疑用户行为
+     * - 审计关键操作（如登录、权限变更）
+     *
+     * @param string $type    事件类型标识符，如 'brute_force'、'data_leak'、'privilege_escalation'
+     * @param string $message 人类可读的日志消息
+     * @param array  $context 额外的上下文信息，如用户ID、IP地址、操作对象等
+     * @return void
      *
      * @example
-     * // 记录安全警告
-     * security_log_event('检测到SQL注入尝试', 'warning', [
-     *     'sql_pattern' => $pattern,
-     *     'parameter' => $paramName
+     * // 记录暴力破解尝试
+     * security_log('brute_force', '多次登录失败', [
+     *     'ip' => $request->ip(),
+     *     'username' => $request->username,
+     *     'attempts' => 5,
      * ]);
      *
-     * // 记录安全错误
-     * security_log_event('安全中间件异常', 'error', [
-     *     'exception' => $e->getMessage()
-     * ]);
-     *
-     * // 记录调试信息
-     * security_log_event('安全检测完成', 'debug', [
-     *     'execution_time' => $time
+     * @example
+     * // 记录数据导出操作
+     * security_log('data_export', '批量导出用户数据', [
+     *     'operator_id' => auth()->id(),
+     *     'record_count' => 1000,
+     *     'ip' => $request->ip(),
      * ]);
      */
-    function security_log_event(string $message, string $level = 'info', array $context = [], ?Request $request = null): void
+    function security_log(string $type, string $message, array $context = []): void
     {
-        if (is_null($request) && function_exists('request')) {
-            $request = \request();
+        // 检查日志功能是否启用（通过配置控制）
+        if (!config('security.log_enabled', true)) {
+            return;
         }
 
-        $logData = [
-            'timestamp' => \now()->toISOString(),
-            'message' => $message,
-            'level' => $level,
-            'context' => $context,
-        ];
+        // 尝试获取当前请求对象，自动补充请求信息
+        $request = function_exists('request') ? request() : null;
 
-        if ($request) {
-            $logData['request'] = [
-                'ip' => $request->ip(),
-                'method' => $request->method(),
-                'url' => $request->fullUrl(),
-                'user_agent' => substr($request->userAgent() ?? '', 0, 200),
-            ];
-        }
-
-        // 根据日志级别记录
-        switch (strtolower($level)) {
-            case 'debug':
-                Log::debug($message, $logData);
-                break;
-            case 'info':
-                Log::info($message, $logData);
-                break;
-            case 'warning':
-            case 'warn':
-                Log::warning($message, $logData);
-                break;
-            case 'error':
-                Log::error($message, $logData);
-                break;
-            case 'critical':
-                Log::critical($message, $logData);
-                break;
-            default:
-                Log::info($message, $logData);
-        }
-    }
-}
-
-if (! function_exists('security_check_rate_limit')) {
-    /**
-     * 检查速率限制
-     *
-     * 检查指定标识符的速率限制，支持分钟、小时、天级别限制。
-     *
-     * @param string $identifier 限制标识符（如IP、用户ID等）
-     * @param array $limits 限制配置，默认使用配置文件中的配置
-     * @return array 检查结果，包含是否被限制和详细信息
-     *
-     * @example
-     * // 检查IP速率限制
-     * $result = security_check_rate_limit(request()->ip());
-     * if ($result['blocked']) {
-     *     return response()->json(['error' => '请求过于频繁'], 429);
-     * }
-     *
-     * // 使用自定义限制
-     * $result = security_check_rate_limit($userId, [
-     *     'minute' => 10,
-     *     'hour' => 100,
-     *     'day' => 1000
-     * ]);
-     */
-    function security_check_rate_limit(string $identifier, array $limits = []): array
-    {
-        try {
-            // 验证identifier
-            if (empty($identifier)) {
-                Log::warning('速率限制检查失败：标识符为空');
-                return [
-                    'blocked' => false,
-                    'details' => [],
-                ];
-            }
-
-            if (empty($limits)) {
-                $limits = security_config('rate_limits', [
-                    'minute' => 60,
-                    'hour' => 1000,
-                    'day' => 10000,
-                ]);
-            }
-
-            // 验证limits
-            if (!is_array($limits) || empty($limits)) {
-                Log::warning('速率限制配置无效');
-                return [
-                    'blocked' => false,
-                    'details' => [],
-                ];
-            }
-
-            $results = [];
-
-            foreach ($limits as $window => $limit) {
-                // 验证limit为正整数
-                if (!is_int($limit) || $limit <= 0) {
-                    Log::warning("无效的限流阈值: {$window}", ['limit' => $limit]);
-                    continue;
-                }
-
-                $cacheKey = "security:rate_limit:{$window}:" . md5($identifier);
-                $count = Cache::get($cacheKey, 0);
-
-                // 验证count为数值
-                if (!is_numeric($count)) {
-                    $count = 0;
-                }
-
-                $results[$window] = [
-                    'current' => $count,
-                    'limit' => $limit,
-                    'blocked' => $count >= $limit,
-                ];
-
-                if ($count >= $limit) {
-                    return [
-                        'blocked' => true,
-                        'window' => $window,
-                        'current' => $count,
-                        'limit' => $limit,
-                        'retry_after' => match($window) {
-                            'minute' => 60,
-                            'hour' => 3600,
-                            'day' => 86400,
-                            default => 60,
-                        },
-                        'details' => $results,
-                    ];
-                }
-            }
-
-            return [
-                'blocked' => false,
-                'details' => $results,
-            ];
-        } catch (Throwable $e) {
-            Log::error('速率限制检查异常: ' . $e->getMessage(), [
-                'identifier' => $identifier ?? 'unknown',
-                'exception' => $e
-            ]);
-            return [
-                'blocked' => false,
-                'details' => [],
-            ];
-        }
-    }
-}
-
-if (! function_exists('security_increment_rate_limit')) {
-    /**
-     * 增加速率限制计数器
-     *
-     * 增加指定标识符的速率限制计数器。
-     *
-     * @param string $identifier 限制标识符
-     *
-     * @example
-     * // 在请求处理成功后增加计数器
-     * security_increment_rate_limit(request()->ip());
-     *
-     * // 为用户操作增加计数器
-     * security_increment_rate_limit("user:{$userId}:action");
-     */
-    function security_increment_rate_limit(string $identifier): void
-    {
-        try {
-            // 验证identifier
-            if (empty($identifier)) {
-                Log::warning('增加速率限制计数器失败：标识符为空');
-                return;
-            }
-
-            $limits = security_config('rate_limits', [
-                'minute' => 60,
-                'hour' => 1000,
-                'day' => 10000,
-            ]);
-
-            // 验证limits
-            if (!is_array($limits) || empty($limits)) {
-                return;
-            }
-
-            foreach ($limits as $window => $limit) {
-                $cacheKey = "security:rate_limit:{$window}:" . md5($identifier);
-                $count = Cache::get($cacheKey, 0);
-
-                // 验证count为数值
-                if (!is_numeric($count)) {
-                    $count = 0;
-                }
-
-                $ttl = match($window) {
-                    'minute' => 60,
-                    'hour' => 3600,
-                    'day' => 86400,
-                    default => 60,
-                };
-
-                Cache::put($cacheKey, $count + 1, $ttl);
-            }
-        } catch (Throwable $e) {
-            Log::error('增加速率限制计数器异常: ' . $e->getMessage(), [
-                'identifier' => $identifier ?? 'unknown',
-                'exception' => $e
-            ]);
-        }
-    }
-}
-
-if (! function_exists('security_clear_rate_limit')) {
-    /**
-     * 清除速率限制计数器
-     *
-     * 清除指定标识符的速率限制计数器。
-     *
-     * @param string $identifier 限制标识符
-     *
-     * @example
-     * // 清除IP的速率限制
-     * security_clear_rate_limit(request()->ip());
-     *
-     * // 清除用户的速率限制
-     * security_clear_rate_limit("user:{$userId}");
-     */
-    function security_clear_rate_limit(string $identifier): void
-    {
-        $windows = ['minute', 'hour', 'day'];
-
-        foreach ($windows as $window) {
-            $cacheKey = "security:rate_limit:{$window}:" . md5($identifier);
-            Cache::forget($cacheKey);
-        }
-    }
-}
-
-if (! function_exists('security_detect_threat')) {
-    /**
-     * 检测请求威胁
-     *
-     * 对请求进行安全威胁检测，返回检测结果。
-     * 可以用于手动检测或自定义检测逻辑。
-     *
-     * @param Request $request 请求对象
-     * @return array 威胁检测结果
-     *
-     * @example
-     * // 在控制器中手动检测
-     * $threatResult = security_detect_threat($request);
-     * if ($threatResult['blocked']) {
-     *     return response()->json(['error' => '安全威胁检测'], 403);
-     * }
-     *
-     * // 获取详细检测信息
-     * $threatResult = security_detect_threat($request);
-     * if ($threatResult['has_sql_injection']) {
-     *     // SQL注入处理
-     * }
-     */
-    function security_detect_threat(Request $request): array
-    {
-        /** @var ThreatDetectionService $threatDetector */
-        $threatDetector = \app(ThreatDetectionService::class);
-
-        return [
-            'blocked' => false, // 需要调用具体检测方法
-            'is_resource_path' => $threatDetector->isResourcePath($request),
-            'has_sql_injection' => $threatDetector->hasSQLInjection($request),
-            'has_xss_attack' => $threatDetector->hasXSSAttack($request),
-            'has_command_injection' => $threatDetector->hasCommandInjection($request),
-            'has_malicious_request' => $threatDetector->isMaliciousRequest($request),
-            'has_anomalous_parameters' => $threatDetector->hasAnomalousParameters($request),
-            'has_dangerous_uploads' => $threatDetector->hasDangerousUploads($request),
-            'has_suspicious_user_agent' => $threatDetector->hasSuspiciousUserAgent($request),
-            'has_suspicious_headers' => $threatDetector->hasSuspiciousHeaders($request),
-            'is_safe_url' => $threatDetector->isSafeUrl($request),
-        ];
-    }
-}
-
-if (! function_exists('security_response')) {
-    /**
-     * 创建安全响应
-     *
-     * 创建标准化的安全拦截响应，支持JSON和HTML格式。
-     *
-     * @param string $type 拦截类型
-     * @param string $message 拦截提示消息
-     * @param array $context 额外上下文信息
-     * @param int $statusCode HTTP状态码
-     * @param array $errors 异常信息
-     * @param Request|null $request 请求对象
-     * @return Response|JsonResponse 响应对象
-     *
-     * @example
-     * // 创建JSON响应
-     * return security_response('RateLimit', '访问频率过高', [], 429);
-     *
-     * // 创建HTML响应
-     * return security_response('Blacklist', 'IP在黑名单中', [
-     *     'ip' => request()->ip()
-     * ], 403);
-     *
-     * // 在自定义处理器中使用
-     * if ($customCheckFailed) {
-     *     return security_response('CustomRule', '自定义规则拦截', $details);
-     * }
-     */
-    function security_response(string $type, string $message, array $context = [], int $statusCode = 403, array $errors = [], ?Request $request = null)
-    {
-        if (is_null($request) && function_exists('request')) {
-            $request = \request();
-        }
-
-        $title = \zxf\Security\Constants\SecurityEvent::getEventName($type, $message);
-
-        $responseData = [
-            'title' => $title,
+        // 构建日志数据
+        $logData = array_merge([
             'type' => $type,
-            'message' => $message,
-            'reason' => $title,
-            'request_id' => Str::uuid()->toString(),
-            'timestamp' => \now()->toISOString(),
-            'details' => $context['details'] ?? [],
-            'errors' => $errors,
-            'context' => $context,
-        ];
+            'ip' => $request?->ip(),
+            'url' => $request?->fullUrl(),
+            'method' => $request?->method(),
+            'user_agent' => $request ? substr($request->userAgent() ?? '', 0, 200) : null,
+        ], $context);
 
-        // 判断是否返回JSON
-        if (!$request || $request->expectsJson() || $request->is('api/*') || $request->ajax()) {
-            $format = security_config('ajax_response_format', [
-                'code' => 'code',
-                'message' => 'message',
-                'data' => 'data',
-            ]);
-
-            return \response()->json([
-                $format['code'] => $statusCode,
-                $format['message'] => $message,
-                $format['data'] => array_merge( $responseData, security_config('error_view_data', []) ),
-            ], $statusCode, [
-                'X-Security-Blocked' => 'true',
-                'X-Security-Type' => $type,
-                'X-Request-ID' => $responseData['request_id'],
-            ], JSON_UNESCAPED_UNICODE);
-        }
-
-        // 返回HTML响应
-        $view = security_config('error_view', 'security::blocked');
-        $viewData = array_merge( $responseData, security_config('error_view_data', []) );
-
-        !empty($viewData['context']) && ($viewData['context'] = array_to_pretty_json($viewData['context']));
-        !empty($viewData['errors']) && ($viewData['errors'] = array_to_pretty_json($viewData['errors']));
-
-        return response()->view($view, $viewData, $statusCode)
-            ->header('X-Security-Blocked', 'true')
-            ->header('X-Security-Type', $type)
-            ->header('X-Request-ID', $responseData['request_id']);
+        // 记录到 Laravel 日志，使用 WARNING 级别便于区分
+        Log::warning("[Security] {$type}: {$message}", $logData);
     }
 }
 
-if (! function_exists('array_to_pretty_json')) {
-    /**
-     * 显示数组/对象为 格式化的json 字符串
-     */
-    function array_to_pretty_json(array|object|string $array=[]): string
-    {
-        // 如果是对象，先转换为数组
-        if (!is_array($array)) {
-            $array = (array) $array;
-        }
-        // 进行格式化 | 不转义 Unicode 字符 | 不转义斜杠
-        return json_encode($array, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-    }
-}
+// ==================== IP 地址判断函数 ====================
 
-if (! function_exists('get_all_cache_keys')) {
-    /**
-     * 获取所有安全包的缓存键 - 文件缓存版本
-     *
-     * 使用文件缓存驱动获取所有security:前缀的缓存键
-     * 注意：此功能仅适用于文件缓存驱动
-     *
-     * @param string $prefix 键名前缀
-     * @param int|null $maxSize 最大返回数量限制
-     * @param bool $removePrefix 是否移除缓存键中的前缀
-     * @return array 缓存键名数组
-     *
-     * @example
-     *       get_all_cache_keys(); // 获取所有缓存键
-     *       get_all_cache_keys('security:'); // 获取指定前缀的缓存键
-     *       get_all_cache_keys('', 100); // 限制返回数量
-     */
-    function get_all_cache_keys(string $prefix = '', ?int $maxSize = null, bool $removePrefix = true): array
-    {
-        try {
-            // 获取缓存存储实例
-            $store = Cache::getStore();
-            
-            // 检查是否为文件缓存驱动
-            if ($store instanceof \Illuminate\Cache\FileStore) {
-                $cachePath = \storage_path('framework/cache/data');
-
-                $keys = [];
-                $iterator = new \RecursiveIteratorIterator(
-                    new \RecursiveDirectoryIterator($cachePath, \RecursiveDirectoryIterator::SKIP_DOTS),
-                    \RecursiveIteratorIterator::SELF_FIRST
-                );
-
-                foreach ($iterator as $file) {
-                    if ($file->isFile()) {
-                        $key = $file->getFilename();
-
-                        // Laravel文件缓存的文件名会进行base64编码
-                        // 需要解码才能获取原始键名
-                        try {
-                            $decodedKey = base64_decode(str_replace('.php', '', $key), true);
-
-                            // 只返回security:前缀的键
-                            if (empty($prefix) || str_starts_with($decodedKey, $prefix)) {
-                                if ($removePrefix && !empty($prefix)) {
-                                    $decodedKey = substr($decodedKey, strlen($prefix));
-                                }
-                                $keys[] = $decodedKey;
-
-                                // 限制返回数量
-                                if ($maxSize && count($keys) >= $maxSize) {
-                                    break; // 修复：移除break 2，只跳出当前循环
-                                }
-                            }
-                        } catch (\Exception) {
-                            // 忽略解码失败的文件
-                            continue;
-                        }
-                    }
-                }
-
-                return $keys;
-            }
-            
-            // 非文件缓存驱动，返回空数组
-            Log::warning('get_all_cache_keys函数仅支持文件缓存驱动');
-            return [];
-            
-        } catch (\Throwable $e) {
-            Log::error('获取缓存键失败: ' . $e->getMessage());
-            return [];
-        }
-    }
-}
-
-if (! function_exists('clean_security_cache')) {
-    /**
-     * 删除 zxf/security 包的所有缓存
-     */
-    function clean_security_cache(): bool
-    {
-        try {
-            // 1. 使用新的缓存适配器清除缓存
-            $cacheDriver = security_config('cache_driver', 'file');
-            if ($cacheDriver === 'file') {
-                $adapter = new \zxf\Security\Cache\CacheAdapter('file');
-                $adapter->clear();
-            } else {
-                // 获取所有security:前缀的缓存键
-                $keys = get_all_cache_keys('security:', null, false);
-
-                if (!empty($keys)) {
-                    // 批量删除
-                    foreach ($keys as $key) {
-                        Cache::forget($key);
-                    }
-                }
-            }
-
-            // 清除内存缓存
-            \zxf\Security\Cache\FileCacheDriver::clearMemoryBuffer();
-
-            // 清除服务层缓存
-            if (class_exists(\zxf\Security\Services\IpManagerService::class)) {
-                $ipManager = \app(\zxf\Security\Services\IpManagerService::class);
-                if (method_exists($ipManager, 'clearCache')) {
-                    $ipManager->clearCache();
-                }
-                if (method_exists($ipManager, 'clearRequestCache')) {
-                    $ipManager::clearRequestCache();
-                }
-            }
-
-            if (class_exists(\zxf\Security\Services\ThreatDetectionService::class)) {
-                $threatDetector = \app(\zxf\Security\Services\ThreatDetectionService::class);
-                if (method_exists($threatDetector, 'clearCache')) {
-                    $threatDetector->clearCache();
-                }
-            }
-
-            if (class_exists(\zxf\Security\Services\RateLimiterService::class)) {
-                $rateLimiter = \app(\zxf\Security\Services\RateLimiterService::class);
-                if (method_exists($rateLimiter, 'clearCache')) {
-                    $rateLimiter->clearCache();
-                }
-            }
-
-            // 清除IP模型请求缓存
-            if (class_exists(\zxf\Security\Models\SecurityIp::class)) {
-                \zxf\Security\Models\SecurityIp::clearRequestCache();
-            }
-
-            return true;
-
-        } catch (Throwable $e) {
-            Log::error('清除安全缓存失败: ' . $e->getMessage());
-            return false;
-        }
-    }
-}
-
-if (! function_exists('security_cache')) {
-    /**
-     * 获取安全缓存实例
-     *
-     * 提供统一的缓存接口，支持文件缓存和Laravel缓存
-     *
-     * @return \zxf\Security\Cache\CacheAdapter
-     *
-     * @example
-     * // 获取缓存值
-     * $value = security_cache()->get('key', 'default');
-     *
-     * // 设置缓存值
-     * security_cache()->set('key', $value, 300);
-     *
-     * // 使用remember
-     * $value = security_cache()->remember('key', fn() => computeValue(), 300);
-     */
-    function security_cache(): \zxf\Security\Cache\CacheAdapter
-    {
-        static $instance = null;
-
-        if ($instance === null) {
-            $driver = security_config('cache_driver', 'file');
-            $prefix = security_config('cache_prefix', 'security:');
-            $ttl = security_config('cache_ttl', 300);
-
-            $instance = new \zxf\Security\Cache\CacheAdapter($driver, $prefix, $ttl);
-        }
-
-        return $instance;
-    }
-}
-
-if (! function_exists('security_cache_stats')) {
-    /**
-     * 获取安全缓存统计信息
-     *
-     * @return array 缓存统计信息
-     *
-     * @example
-     * $stats = security_cache_stats();
-     * // [
-     * //   'driver' => 'file',
-     * //   'hits' => 100,
-     * //   'misses' => 10,
-     * //   'hit_rate' => '90.9%',
-     * //   'disk_size_mb' => 5.2,
-     * //   'file_count' => 1250
-     * // ]
-     */
-    function security_cache_stats(): array
-    {
-        try {
-            return security_cache()->getStats();
-        } catch (Throwable $e) {
-            Log::error('获取缓存统计失败: ' . $e->getMessage());
-            return [];
-        }
-    }
-}
-
-if (! function_exists('is_intranet_ip')) {
+if (!function_exists('is_intranet_ip')) {
     /**
      * 检查IP地址是否为内网/私有地址
      *
-     * 核心判定规则
+     * 根据 RFC1918 标准判断IP是否属于私有地址空间。
+     * 内网IP通常无需严格的安全检查，可提高性能并减少误报。
      *
-     * 1. 标准私有地址（永远是内网）：
-     *    ├─ IPv4：10.0.0.0/8（A类）、172.16.0.0/12（B类）、192.168.0.0/16（C类）
-     *    └─ IPv6：fc00::/7（唯一本地地址）
+     * 判定范围：
+     * - 10.0.0.0/8      (A类私网，约1677万个地址)
+     * - 172.16.0.0/12   (B类私网，约104万个地址)
+     * - 192.168.0.0/16  (C类私网，约6.5万个地址)
+     * - 127.0.0.0/8     (本地回环)
+     * - 169.254.0.0/16  (链路本地/APIPA)
      *
-     * 2. 回环地址（默认内网，可禁用）：
-     *    ├─ IPv4：127.0.0.0/8（整个127段都是回环）
-     *    └─ IPv6：::1/128（仅这一个地址）
-     *
-     * 3. 链路本地地址（默认内网，可禁用）：
-     *    ├─ IPv4：169.254.0.0/16（APIPA自动配置）
-     *    └─ IPv6：fe80::/10（本地链路通信）
-     *
-     * 4. 自定义范围（用户指定）：
-     *    └─ 任意CIDR格式，如：'10.0.0.0/8'、'192.168.0.0/16'、'fc00::/7'
-     *
-     * 配置选项
-     *
-     * @param string $ip 要检查的IP地址（支持IPv4和IPv6）
-     * @param array<string, mixed> $opt 配置选项
-     *        - loopback: bool, true=回环算内网(默认) false=回环算公网
-     *        - linklocal: bool, true=链路本地算内网(默认) false=链路本地算公网
-     *        - custom: string[], 自定义CIDR数组，如：['10.0.0.0/8', '172.16.0.0/12']
+     * @param string $ip 要检查的IP地址（IPv4或IPv6）
      * @return bool true=内网IP，false=公网IP
-     * @throws InvalidArgumentException IP格式非法时抛出
+     *
+     * @example
+     * // 检查当前请求是否来自内网
+     * if (is_intranet_ip(request()->ip())) {
+     *     // 内网访问，跳过某些限制
+     * }
+     *
+     * @example
+     * // 检查特定IP
+     * $isInternal = is_intranet_ip('192.168.1.50'); // true
+     * $isInternal = is_intranet_ip('8.8.8.8');      // false
      */
-    function is_intranet_ip(string $ip, array $opt = []): bool {
-        // ========== 1. 配置解析 ==========
-        $loopback = $opt['loopback'] ?? true;   // 回环开关：127.x.x.x 和 ::1 是否算内网
-        $linklocal = $opt['linklocal'] ?? true; // 链路本地开关：169.254.x.x 和 fe80::/10 是否算内网
-        $custom = $opt['custom'] ?? [];         // 自定义CIDR数组
-
-        // ========== 2. IP格式验证 ==========
-        if (!filter_var($ip, FILTER_VALIDATE_IP)) {
-            throw new InvalidArgumentException("无效的IP地址: {$ip}");
+    function is_intranet_ip(string $ip): bool
+    {
+        // 本地回环地址快速检查
+        if ($ip === '127.0.0.1' || $ip === '::1') {
+            return true;
         }
 
-        // ========== 3. 二进制转换 ==========
-        $ipBin = inet_pton($ip);                    // 二进制IP：IPv4=4字节，IPv6=16字节
-        $isV4 = strlen($ipBin) === 4;               // IPv4标志
-        $isV6 = strlen($ipBin) === 16;              // IPv6标志
-
-        // ========== 4. CIDR匹配引擎 ==========
-        $match = function(string $cidr) use ($ipBin, $isV4): bool {
-            // ------------------------------------------------------------
-            // CIDR格式说明：
-            // - 带掩码：'192.168.1.0/24' 表示前24位是网络位，后8位是主机位
-            // - 不带掩码：'192.168.1.1' 表示单个IP，必须完全匹配
-            // ------------------------------------------------------------
-
-            // 4.1 处理单个IP（无掩码）
-            if (!str_contains($cidr, '/')) {
-                $target = inet_pton($cidr);
-                return $target !== false && $ipBin === $target;
-            }
-
-            // 4.2 解析CIDR：分离网络地址和掩码长度
-            [$network, $maskLen] = explode('/', $cidr);
-            $maskLen = (int)$maskLen;                // 掩码长度：IPv4范围0-32，IPv6范围0-128
-
-            // 4.3 网络地址转二进制
-            $netBin = inet_pton($network);
-            if ($netBin === false) return false;    // 防御性编程
-
-            // 4.4 构建网络掩码（这是CIDR匹配的核心）
-            $bytes = $isV4 ? 4 : 16;                 // 总字节数
-            $fullBytes = intdiv($maskLen, 8);        // 完整字节数：掩码中有几个完整的8位
-            $remBits = $maskLen % 8;                  // 剩余位数：不足8位的部分
-
-            // ------------------------------------------------------------
-            // 掩码构建原理：
-            // 以 192.168.1.0/27 为例，掩码长度27位：
-            // - 完整字节：27÷8=3个完整字节 → 3个\xff（11111111 11111111 11111111）
-            // - 剩余位：27%8=3位 → 1个字节的高3位为1 → 11100000 (\xE0)
-            // - 补齐：总共4字节，已有3+1=4字节，无需补齐
-            // 最终掩码：11111111.11111111.11111111.11100000
-            // ------------------------------------------------------------
-
-            $mask = '';                              // 初始化掩码
-
-            // 4.4.1 添加完整的字节（全1）
-            if ($fullBytes > 0) {
-                $mask .= str_repeat("\xff", $fullBytes);
-            }
-
-            // 4.4.2 处理剩余的位（如/27的3个剩余位，生成11100000）
-            if ($remBits > 0) {
-                // 0xff << (8 - 3) = 0xff << 5 = 0xE0 = 11100000
-                $mask .= chr(0xff << (8 - $remBits));
-                $fullBytes++;  // 消耗了一个字节
-            }
-
-            // 4.4.3 补全剩余的字节（全0）
-            if ($fullBytes < $bytes) {
-                $mask .= str_repeat("\x00", $bytes - $fullBytes);
-            }
-
-            // 4.5 执行位运算比较
-            // (&)是按位与：只有掩码为1的位才参与比较
-            return ($ipBin & $mask) === ($netBin & $mask);
-        };
-
-        // ========== 5. 预定义私有范围 ==========
-        // 格式：[CIDR, IP版本(4/6), 类型]
-        // 类型说明：
-        //   0 = 标准私有（永远内网，不受配置影响）
-        //   1 = 回环地址（受loopback开关控制）
-        //   2 = 链路本地（受linklocal开关控制）
-        $ranges = [
-            // 5.1 标准私有IPv4（RFC 1918）- 永远内网
-            ['10.0.0.0/8', 4, 0],      // 10.0.0.0 - 10.255.255.255
-            ['172.16.0.0/12', 4, 0],   // 172.16.0.0 - 172.31.255.255
-            ['192.168.0.0/16', 4, 0],  // 192.168.0.0 - 192.168.255.255
-
-            // 5.2 标准私有IPv6（RFC 4193）- 永远内网
-            ['fc00::/7', 6, 0],        // fc00:: - fdff:ffff:ffff:ffff:ffff:ffff:ffff:ffff
-
-            // 5.3 回环地址 - 受loopback控制
-            ['127.0.0.0/8', 4, 1],     // 127.0.0.0 - 127.255.255.255（整个127段）
-            ['::1/128', 6, 1],         // ::1（仅这一个地址）
-
-            // 5.4 链路本地地址 - 受linklocal控制
-            ['169.254.0.0/16', 4, 2],  // 169.254.0.0 - 169.254.255.255
-            ['fe80::/10', 6, 2]        // fe80:: - febf:ffff:ffff:ffff:ffff:ffff:ffff:ffff
+        // IPv4 私有地址段（RFC1918）
+        $privateRanges = [
+            '10.0.0.0/8',        // A类私网
+            '172.16.0.0/12',     // B类私网
+            '192.168.0.0/16',    // C类私网
+            '127.0.0.0/8',       // 本地回环
+            '169.254.0.0/16',    // 链路本地（APIPA）
         ];
 
-        // ========== 6. 遍历检查内置范围 ==========
-        foreach ($ranges as [$cidr, $version, $type]) {
-            // 6.1 IP版本过滤：只检查同版本的范围
-            if (($version === 4 && !$isV4) || ($version === 6 && !$isV6)) {
-                continue;
-            }
-
-            // 6.2 类型过滤：根据配置决定是否检查
-            if ($type === 1 && !$loopback) continue;   // 回环被禁用，跳过
-            if ($type === 2 && !$linklocal) continue;  // 链路本地被禁用，跳过
-
-            // 6.3 执行CIDR匹配
-            if ($match($cidr)) {
-                return true;  // 匹配成功，是内网IP
+        // 逐一检查是否匹配任一私有网段
+        foreach ($privateRanges as $range) {
+            if (ip_in_cidr($ip, $range)) {
+                return true;
             }
         }
 
-        // ========== 7. 检查自定义范围 ==========
-        foreach ($custom as $cidr) {
-            if ($match($cidr)) {
-                return true;  // 匹配自定义范围，也是内网IP
-            }
-        }
-
-        // ========== 8. 都不是，判定为公网IP ==========
         return false;
+    }
+}
+
+if (!function_exists('ip_in_cidr')) {
+    /**
+     * 检查IP地址是否在CIDR范围内
+     *
+     * CIDR（无类别域间路由）表示法如 192.168.1.0/24
+     * 本函数支持IPv4的精确匹配和网段匹配。
+     *
+     * 算法原理：
+     * 1. 将IP地址转换为32位整数
+     * 2. 计算掩码：-1 << (32 - 前缀长度)
+     * 3. IP和子网分别与掩码进行按位与
+     * 4. 比较结果是否相等
+     *
+     * 性能说明：
+     * - 精确匹配：O(1)字符串比较
+     * - CIDR匹配：O(1)位运算，极快
+     *
+     * @param string $ip    要检查的IP地址（IPv4）
+     * @param string $cidr  CIDR范围，如 '192.168.1.0/24' 或单个IP '192.168.1.100'
+     * @return bool true=IP在范围内，false=不在范围内
+     *
+     * @example
+     * // CIDR网段匹配
+     * $inRange = ip_in_cidr('192.168.1.50', '192.168.1.0/24'); // true
+     * $inRange = ip_in_cidr('192.168.2.1', '192.168.1.0/24');  // false
+     *
+     * @example
+     * // 精确匹配（不含斜杠）
+     * $inRange = ip_in_cidr('192.168.1.100', '192.168.1.100'); // true
+     * $inRange = ip_in_cidr('192.168.1.100', '192.168.1.101'); // false
+     *
+     * @example
+     * // 批量检查IP列表
+     * $allowedRanges = ['192.168.0.0/16', '10.0.0.0/8'];
+     * $clientIp = request()->ip();
+     * $isAllowed = collect($allowedRanges)->some(fn($range) => ip_in_cidr($clientIp, $range));
+     */
+    function ip_in_cidr(string $ip, string $cidr): bool
+    {
+        // 不含斜杠：视为精确IP匹配
+        if (!str_contains($cidr, '/')) {
+            return $ip === $cidr;
+        }
+
+        // 解析CIDR：分割网络地址和前缀长度
+        [$subnet, $prefixLength] = explode('/', $cidr);
+        $prefixLength = (int) $prefixLength;
+
+        // IPv4处理
+        if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
+            // 将IP地址转换为32位长整数
+            $ipLong = ip2long($ip);
+            $subnetLong = ip2long($subnet);
+
+            // 转换失败检查（无效IP）
+            if ($ipLong === false || $subnetLong === false) {
+                return false;
+            }
+
+            // 计算子网掩码
+            // 例如 /24 对应掩码 0xFFFFFFFF << 8 = 0xFFFFFF00
+            $mask = -1 << (32 - $prefixLength);
+
+            // 将子网地址对齐到网络边界
+            $subnetLong &= $mask;
+
+            // 判断IP是否在同一网络
+            return ($ipLong & $mask) === $subnetLong;
+        }
+
+        // IPv6暂不实现CIDR匹配，仅支持精确匹配
+        return false;
+    }
+}
+
+// ==================== 扩展功能函数（可选） ====================
+
+if (!function_exists('security_hash_ip')) {
+    /**
+     * 对IP地址进行匿名化处理
+     *
+     * 用于日志记录时保护用户隐私，符合GDPR等法规要求。
+     * 使用HMAC-SHA256，需要配置密钥。
+     *
+     * @param string $ip IP地址
+     * @return string 哈希值（前16位）
+     *
+     * @example
+     * $hashed = security_hash_ip('192.168.1.100');
+     * // 返回: a3f7b2d8...（可用于关联分析，但无法还原原始IP）
+     */
+    function security_hash_ip(string $ip): string
+    {
+        $key = config('app.key', 'default-key');
+        $hash = hash_hmac('sha256', $ip, $key);
+        return substr($hash, 0, 16);
+    }
+}
+
+if (!function_exists('security_mask_ip')) {
+    /**
+     * 对IP地址进行掩码处理（保留网段信息）
+     *
+     * 用于日志展示，隐藏主机位，保留网络位。
+     *
+     * @param string $ip     IP地址
+     * @param int    $prefix 保留的前缀长度（默认24，即保留前3段）
+     * @return string 掩码后的IP，如 192.168.1.xxx
+     *
+     * @example
+     * $masked = security_mask_ip('192.168.1.100');
+     * // 返回: 192.168.1.xxx
+     */
+    function security_mask_ip(string $ip, int $prefix = 24): string
+    {
+        if (!filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
+            return $ip; // IPv6或未识别，原样返回
+        }
+
+        $ipLong = ip2long($ip);
+        if ($ipLong === false) {
+            return $ip;
+        }
+
+        $mask = -1 << (32 - $prefix);
+        $network = $ipLong & $mask;
+
+        // 构建掩码字符串
+        $segments = $prefix / 8;
+        $octets = explode('.', long2ip($network));
+
+        $result = [];
+        for ($i = 0; $i < 4; $i++) {
+            $result[] = $i < $segments ? $octets[$i] : 'xxx';
+        }
+
+        return implode('.', $result);
     }
 }
