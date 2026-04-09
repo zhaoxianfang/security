@@ -88,49 +88,6 @@ class SecurityMiddleware
     protected string $currentThreatType = '';
 
     /**
-     * 最大输入长度（用于攻击检测）
-     * 超过此长度的输入将被截断，防止正则回溯
-     *
-     * @var int
-     */
-    protected const MAX_INPUT_LENGTH = 100000; // 100KB
-
-    /**
-     * 威胁类型到风险等级的映射
-     *
-     * @var array<string, string>
-     */
-    protected const THREAT_RISK_LEVELS = [
-        // 高危
-        'sql' => 'high',
-        'command' => 'high',
-        'path' => 'high',
-        'xml' => 'high',
-        'ssti' => 'high',
-        'blacklist' => 'high',
-        'encoding_bypass' => 'high',
-
-        // 中危
-        'nosql' => 'medium',
-        'xss_script' => 'medium',
-        'xss_dom' => 'medium',
-        'xss_tag' => 'medium',
-        'dangerous_upload' => 'medium',
-        'url_path_attack' => 'medium',
-        'bad_user_agent' => 'medium',
-
-        // 低危
-        'ldap' => 'low',
-        'xss_encoding' => 'low',
-        'xss_framework' => 'low',
-        'rate_limit' => 'low',
-        'invalid_method' => 'low',
-        'url_too_long' => 'low',
-        'body_too_large' => 'low',
-        'invalid_headers' => 'low',
-    ];
-
-    /**
      * 构造函数
      * 预加载配置到内存，提高后续访问速度
      */
@@ -138,6 +95,54 @@ class SecurityMiddleware
     {
         $this->config = config('security', []);
         $this->ipMatcher = new IpMatcherService();
+    }
+
+    /**
+     * 获取最大输入长度
+     */
+    protected function getMaxInputLength(): int
+    {
+        return $this->config['input_processing']['max_input_length'] ?? 100000;
+    }
+
+    /**
+     * 获取威胁风险等级
+     */
+    protected function getThreatRiskLevel(string $threatType): string
+    {
+        $levels = $this->config['threat_risk_levels'] ?? [];
+        $defaultLevels = [
+            // 高危
+            'sql' => 'high',
+            'command' => 'high',
+            'path' => 'high',
+            'xml' => 'high',
+            'ssti' => 'high',
+            'blacklist' => 'high',
+            'encoding_bypass' => 'high',
+
+            // 中危
+            'nosql' => 'medium',
+            'xss_script' => 'medium',
+            'xss_dom' => 'medium',
+            'xss_tag' => 'medium',
+            'dangerous_upload' => 'medium',
+            'url_path_attack' => 'medium',
+            'bad_user_agent' => 'medium',
+
+            // 低危
+            'ldap' => 'low',
+            'xss_encoding' => 'low',
+            'xss_framework' => 'low',
+            'rate_limit' => 'low',
+            'invalid_method' => 'low',
+            'url_too_long' => 'low',
+            'body_too_large' => 'low',
+            'invalid_headers' => 'low',
+        ];
+        $levels = !empty($levels) && is_array($levels) ? array_merge($defaultLevels, $levels) : $defaultLevels;
+
+        return $levels[$threatType] ?? 'unknown';
     }
 
     /**
@@ -179,7 +184,6 @@ class SecurityMiddleware
                 $this->logThreat($request, 'blacklist', 'IP地址位于黑名单中: ' . $ip);
                 return $this->blockRequest($request, 'IP已被禁止访问', 403, 'blacklist');
             }
-            return $next($request);
         }
 
         // ========== 第三层：URL路径攻击检测 ==========
@@ -425,6 +429,12 @@ class SecurityMiddleware
      */
     protected function detectUrlPathAttacks(Request $request): bool
     {
+        $config = $this->config['url_path_detection'] ?? [];
+
+        if (!($config['enabled'] ?? true)) {
+            return false;
+        }
+
         // 收集所有需要检查的来源
         $checkSources = [];
 
@@ -440,22 +450,9 @@ class SecurityMiddleware
         $routeParams = $request->route()?->parameters() ?? [];
         $this->collectParamsForCheck($routeParams, $checkSources, 'route');
 
-        // 路径遍历检测模式
-        $pathTraversalPatterns = [
-            // 标准路径遍历（至少两个../）
-            '/(?:\.\./){2,}/',
-            '/(?:\.\.\\){2,}/',
-            // 混合路径遍历
-            '/\.\.(?:/|\\)\.\.(?:/|\\)/',
-            // 双重编码的路径遍历
-            '/%2e%2e%2f/i',
-            '/%252e%252e%252f/i',
-            '/%2e%2e(?:%2f|%5c)/i',
-            // Unicode编码的路径遍历
-            '/%c0%af/i',
-            '/%ef%bc%8f/i',
-            '/%e0%80%af/i',
-        ];
+        // 从配置获取路径遍历检测模式
+        $pathTraversalPatterns = $config['path_traversal_patterns'] ?? [];
+        $traversalThreshold = $config['traversal_threshold'] ?? 2;
 
         // 检查所有来源
         foreach ($checkSources as $source => $strings) {
@@ -466,13 +463,13 @@ class SecurityMiddleware
 
                 foreach ($pathTraversalPatterns as $pattern) {
                     if (preg_match($pattern, $checkString)) {
-                        // 检查是否匹配了足够多的遍历（至少2个../才算攻击）
+                        // 检查是否匹配了足够多的遍历
                         $traversalCount = substr_count($checkString, '../') +
                                          substr_count($checkString, '..\\') +
                                          substr_count($checkString, '..%2f') +
                                          substr_count($checkString, '..%2F');
 
-                        if ($traversalCount >= 2) {
+                        if ($traversalCount >= $traversalThreshold) {
                             $this->lastMatchedPattern = $pattern;
                             $this->lastMatchedContent = substr($checkString, 0, 100);
                             return true;
@@ -482,15 +479,8 @@ class SecurityMiddleware
             }
         }
 
-        // 检查敏感文件访问尝试
-        $sensitiveFilePatterns = [
-            '/\/(?:etc|proc|sys|var|root|home)\/(?:passwd|shadow|hosts|id_rsa)/i',
-            '/\/\.env/i',
-            '/\/\.git\//i',
-            '/\/\.svn\//i',
-            '/\/(?:config|database)\.php/i',
-            '/\.\.(?:\/|\\)(?:windows|winnt|system32|system)/i',
-        ];
+        // 从配置获取敏感文件访问检测模式
+        $sensitiveFilePatterns = $config['sensitive_file_patterns'] ?? [];
 
         foreach ($checkSources as $source => $strings) {
             foreach ($strings as $checkString) {
@@ -546,10 +536,17 @@ class SecurityMiddleware
      */
     protected function detectMultiEncodingAttacks(Request $request): bool
     {
+        $config = $this->config['encoding_detection'] ?? [];
+
+        if (!($config['enabled'] ?? true)) {
+            return false;
+        }
+
         $rawUrl = $request->fullUrl();
 
         // 检测空字节注入
-        if (str_contains($rawUrl, "%00") || str_contains($rawUrl, "\x00")) {
+        if (($config['detect_null_bytes'] ?? true) &&
+            (str_contains($rawUrl, "%00") || str_contains($rawUrl, "\x00"))) {
             $this->lastMatchedPattern = 'null_byte_injection';
             $this->lastMatchedContent = '%00';
             return true;
@@ -558,15 +555,16 @@ class SecurityMiddleware
         // 检测过多的URL编码（可能是编码绕过）
         $percentCount = substr_count($rawUrl, '%');
         $urlLength = strlen($rawUrl);
+        $percentThreshold = $config['percent_threshold'] ?? 0.30;
 
-        // 如果URL中%字符占比超过30%，可能是编码攻击
-        if ($urlLength > 0 && ($percentCount * 3) / $urlLength > 0.3) {
+        // 如果URL中%字符占比超过阈值，可能是编码攻击
+        if ($urlLength > 0 && ($percentCount * 3) / $urlLength > $percentThreshold) {
             // 进一步检查是否有危险模式的编码
             $decoded = urldecode($rawUrl);
             $doubleDecoded = urldecode($decoded);
 
-            // 解码后出现了明显的攻击特征
-            $suspicious = ['../', '..\\', '<script', 'javascript:', 'onerror=', 'onload='];
+            // 解码后检查可疑模式
+            $suspicious = $config['suspicious_patterns'] ?? ['../', '..\\', '<script', 'javascript:', 'onerror=', 'onload='];
             foreach ($suspicious as $pattern) {
                 if (str_contains($decoded, $pattern) || str_contains($doubleDecoded, $pattern)) {
                     $this->lastMatchedPattern = 'encoding_bypass_attempt';
@@ -577,14 +575,16 @@ class SecurityMiddleware
         }
 
         // 检测无效的UTF-8序列（可能的UTF-8攻击）
-        $path = $request->path();
-        if (preg_match('/%[c-f][0-9a-f](?:%[8-9a-b][0-9a-f])+/i', $path)) {
-            // 可能是UTF-8过度编码攻击
-            $decoded = urldecode($path);
-            if (preg_match('/(?:\.\.\/|\.\.\\)/', $decoded)) {
-                $this->lastMatchedPattern = 'utf8_overlong_encoding';
-                $this->lastMatchedContent = substr($decoded, 0, 100);
-                return true;
+        if ($config['detect_utf8_overlong'] ?? true) {
+            $path = $request->path();
+            if (preg_match('/%[c-f][0-9a-f](?:%[8-9a-b][0-9a-f])+/i', $path)) {
+                // 可能是UTF-8过度编码攻击
+                $decoded = urldecode($path);
+                if (preg_match('/(?:\.\.\/|\.\.\\\\)/', $decoded)) {
+                    $this->lastMatchedPattern = 'utf8_overlong_encoding';
+                    $this->lastMatchedContent = substr($decoded, 0, 100);
+                    return true;
+                }
             }
         }
 
@@ -746,7 +746,7 @@ class SecurityMiddleware
      */
     protected function hasInvalidMethod(Request $request): bool
     {
-        $allowedMethods = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'];
+        $allowedMethods = $this->config['allowed_http_methods'] ?? ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'];
 
         return !in_array($request->method(), $allowedMethods, true);
     }
@@ -921,9 +921,12 @@ class SecurityMiddleware
      */
     protected function truncateInput(string $input): string
     {
-        if (strlen($input) > self::MAX_INPUT_LENGTH) {
-            return substr($input, 0, self::MAX_INPUT_LENGTH);
+        $maxLength = $this->getMaxInputLength();
+
+        if (strlen($input) > $maxLength) {
+            return substr($input, 0, $maxLength);
         }
+
         return $input;
     }
 
@@ -936,13 +939,17 @@ class SecurityMiddleware
      */
     protected function isLikelyMarkdownContent(string $content, string $matchedPattern): bool
     {
+        $config = $this->config['input_processing'] ?? [];
+
         // 如果内容太短，不太可能是Markdown文档
-        if (strlen($content) < 100) {
+        $minLength = $config['markdown_min_length'] ?? 100;
+        if (strlen($content) < $minLength) {
             return false;
         }
 
-        $codeBlockMarkers = ['```', '~~~'];
-        $inlineCodeMarker = '`';
+        $markdownConfig = $this->config['markdown'] ?? [];
+        $codeBlockMarkers = $markdownConfig['code_block_markers'] ?? ['```', '~~~'];
+        $inlineCodeMarker = $markdownConfig['inline_code_marker'] ?? '`';
 
         // 检测是否包含代码块
         $hasCodeBlock = false;
@@ -957,8 +964,8 @@ class SecurityMiddleware
         $inlineCodeCount = substr_count($content, $inlineCodeMarker);
         $hasInlineCode = $inlineCodeCount >= 4;
 
-        // 检测其他Markdown语法
-        $markdownPatterns = [
+        // 从配置获取Markdown语法模式
+        $markdownPatterns = $config['markdown_patterns'] ?? [
             '/^#{1,6}\s+/m',
             '/^[-*+]\s+/m',
             '/\[.+?\]\(.+?\)/',
@@ -1220,7 +1227,7 @@ class SecurityMiddleware
      */
     protected function getRiskLevel(string $threatType): string
     {
-        return self::THREAT_RISK_LEVELS[$threatType] ?? 'unknown';
+        return $this->getThreatRiskLevel($threatType);
     }
 
     /**
@@ -1400,7 +1407,9 @@ class SecurityMiddleware
             return '';
         }
 
-        $maxLength = 200;
+        $config = $this->config['input_processing'] ?? [];
+        $maxLength = $config['max_match_content_length'] ?? 200;
+
         if (strlen($content) > $maxLength) {
             $content = substr($content, 0, $maxLength) . '...[截断]';
         }

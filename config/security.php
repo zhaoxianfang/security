@@ -964,4 +964,126 @@ return [
         'inline_code_marker' => '`',
     ],
 
+    /*
+    |--------------------------------------------------------------------------
+    | URL路径攻击检测配置
+    |--------------------------------------------------------------------------
+    |
+    | 配置URL路径和查询参数中的路径遍历攻击检测模式。
+    |
+    */
+
+    'url_path_detection' => [
+        'enabled' => env('SECURITY_URL_PATH_DETECTION', true),
+
+        // 路径遍历检测正则模式
+        'path_traversal_patterns' => [
+            '/(?:\.\./){2,}/',
+            '/(?:\.\.\\\\){2,}/',
+            '/\.\.(?:/|\\\\)\.\.(?:/|\\\\)/',
+            '/%2e%2e%2f/i',
+            '/%252e%252e%252f/i',
+            '/%2e%2e(?:%2f|%5c)/i',
+            '/%c0%af/i',
+            '/%ef%bc%8f/i',
+            '/%e0%80%af/i',
+        ],
+
+        // 敏感文件访问检测模式
+        'sensitive_file_patterns' => [
+            '/\/(?:etc|proc|sys|var|root|home|usr\/local)\/(?:passwd|shadow|hosts|id_rsa|authorized_keys|\.env|\.git|\.htaccess|config\.php|database\.php)\b/i',
+            '/\b(?:\.env|\.git\/)\b/i',
+            '/\b(?:\.svn|\.hg|\.bzr)\b/i',
+            '/\b(?:\.htaccess|\.htpasswd|web\.config)\b/i',
+            '/\b(?:composer\.json|composer\.lock|package\.json|package-lock\.json)\b/i',
+            '/\.\.(?:\/|\\\\)(?:windows|winnt|system32|system|program files|programdata|inetpub)/i',
+        ],
+
+        // 路径遍历阈值（至少需要多少个"../"才算攻击）
+        'traversal_threshold' => 2,
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | 编码绕过攻击检测配置
+    |--------------------------------------------------------------------------
+    |
+    | 配置多重编码攻击的检测参数。
+    |
+    */
+
+    'encoding_detection' => [
+        'enabled' => env('SECURITY_ENCODING_DETECTION', true),
+
+        // URL编码百分比阈值（0-1）
+        'percent_threshold' => 0.30,
+
+        // 解码后检查的可疑模式
+        'suspicious_patterns' => [
+            '../', '..\\', '<script', 'javascript:',
+            'onerror=', 'onload=', 'onfocus=',
+        ],
+
+        'detect_null_bytes' => true,
+        'detect_utf8_overlong' => true,
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | HTTP方法配置
+    |--------------------------------------------------------------------------
+    |
+    | 配置允许的HTTP请求方法。
+    |
+    */
+
+    'allowed_http_methods' => [
+        'GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS',
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | 输入处理配置
+    |--------------------------------------------------------------------------
+    |
+    | 配置请求输入的处理参数。
+    |
+    */
+
+    'input_processing' => [
+        // 最大输入长度（字节），防止正则回溯
+        'max_input_length' => 100 * 1024,
+
+        // 匹配内容最大长度（用于日志）
+        'max_match_content_length' => 200,
+
+        // Markdown检测最小内容长度
+        'markdown_min_length' => 100,
+
+        // Markdown语法模式
+        'markdown_patterns' => [
+            '/^#{1,6}\s+/m',
+            '/^[-*+]\s+/m',
+            '/\[.+?\]\(.+?\)/',
+            '/^\s*>\s+/m',
+            '/^\s*\|\s*[-:]+\s*\|/m',
+            '/!\[.*?\]\(.*?\)/',
+            '/\*\*.*?\*\*/',
+        ],
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | 威胁风险等级映射
+    |--------------------------------------------------------------------------
+    |
+    | 配置每种威胁类型的风险等级（high, medium, low）
+    | 不配置(空数组) 表示使用默认配置
+    |
+    */
+
+    'threat_risk_levels' => [
+        // 'sql' => 'high', // 高危
+    ],
+
 ];

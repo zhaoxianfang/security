@@ -19,9 +19,18 @@ return [
     'xss_patterns'         => [...],          // XSS检测
     'upload'               => [...],          // 文件上传限制
     'max_url_length'       => 2048,           // URL长度限制
+    'max_body_size'        => [...],          // 请求体大小限制
+    'user_agent_blacklist' => [...],          // User-Agent黑名单
+    'headers'              => [...],          // HTTP头检查
+    'excluded_routes'      => [...],          // 路由排除
     'before_block_callback'=> null,           // 拦截前回调
     'response'             => [...],          // 响应配置
     'markdown'             => [...],          // Markdown智能识别
+    'url_path_detection'   => [...],          // URL路径攻击检测
+    'encoding_detection'   => [...],          // 编码绕过检测
+    'allowed_http_methods' => [...],          // 允许的HTTP方法
+    'input_processing'     => [...],          // 输入处理配置
+    'threat_risk_levels'   => [...],          // 威胁风险等级
 ];
 ```
 
@@ -598,15 +607,199 @@ Markdown智能识别配置。
 | rate_limit.max_attempts | `SECURITY_RATE_LIMIT_ATTEMPTS` | `60` |
 | rate_limit.decay_minutes | `SECURITY_RATE_LIMIT_DECAY` | `1` |
 
+## 高级配置
+
+### url_path_detection
+
+URL路径遍历攻击检测配置。
+
+```php
+'url_path_detection' => [
+    'enabled' => env('SECURITY_URL_PATH_DETECTION', true),
+
+    // 路径遍历检测正则模式
+    'path_traversal_patterns' => [
+        '/(?:\.\./){2,}/',              // 标准路径遍历
+        '/(?:\.\.\\\\){2,}/',            // Windows路径遍历
+        '/\.\.(?:/|\\\\)\.\.(?:/|\\\\)/',  // 混合路径遍历
+        '/%2e%2e%2f/i',                  // URL编码遍历
+        '/%252e%252e%252f/i',            // 双重编码遍历
+        '/%c0%af/i',                     // UTF-8过度编码
+        '/%ef%bc%8f/i',                  // 全角斜线
+        '/%e0%80%af/i',                  // 另一种UTF-8编码
+    ],
+
+    // 敏感文件访问检测模式
+    'sensitive_file_patterns' => [
+        '/\/(?:etc|proc|sys)\/(?:passwd|shadow)/i',
+        '/\/\.env/i',
+        '/\/\.git\//i',
+        '/\/(?:config|database)\.php/i',
+    ],
+
+    // 路径遍历阈值（至少几个"../"才算攻击）
+    // 设为2可减少误报，设为1更严格
+    'traversal_threshold' => 2,
+],
+```
+
+### encoding_detection
+
+编码绕过攻击检测配置。
+
+```php
+'encoding_detection' => [
+    'enabled' => env('SECURITY_ENCODING_DETECTION', true),
+
+    // URL编码百分比阈值（0-1）
+    // URL中%字符占比超过此值时触发额外检查
+    'percent_threshold' => 0.30,
+
+    // 解码后检查的可疑模式
+    'suspicious_patterns' => [
+        '../', '..\\', '<script', 'javascript:',
+        'onerror=', 'onload=', 'onfocus=',
+    ],
+
+    // 是否检测空字节注入
+    'detect_null_bytes' => true,
+
+    // 是否检测UTF-8过度编码
+    'detect_utf8_overlong' => true,
+],
+```
+
+### allowed_http_methods
+
+允许的HTTP请求方法列表。
+
+```php
+'allowed_http_methods' => [
+    'GET', 'POST', 'PUT', 'PATCH',
+    'DELETE', 'HEAD', 'OPTIONS',
+],
+```
+
+### input_processing
+
+输入处理配置。
+
+```php
+'input_processing' => [
+    // 最大输入长度（字节），防止正则回溯
+    'max_input_length' => 100 * 1024,
+
+    // 匹配内容最大长度（用于日志）
+    'max_match_content_length' => 200,
+
+    // Markdown检测最小内容长度
+    'markdown_min_length' => 100,
+
+    // Markdown语法模式
+    'markdown_patterns' => [
+        '/^#{1,6}\s+/m',      // 标题
+        '/^[-*+]\s+/m',       // 列表
+        '/\[.+?\]\(.+?\)/',    // 链接
+        '/^\s*>\s+/m',        // 引用
+        '/!\[.*?\]\(.*?\)/',  // 图片
+        '/\*\*.*?\*\*/',      // 粗体
+    ],
+],
+```
+
+### threat_risk_levels
+
+威胁类型到风险等级的映射。
+
+```php
+'threat_risk_levels' => [
+    // 高危 - 可能导致服务器被接管
+    'sql' => 'high',
+    'command' => 'high',
+    'path' => 'high',
+    'xml' => 'high',
+    'ssti' => 'high',
+    'blacklist' => 'high',
+    'encoding_bypass' => 'high',
+
+    // 中危 - 可能造成数据泄露或损坏
+    'nosql' => 'medium',
+    'xss_script' => 'medium',
+    'xss_dom' => 'medium',
+    'xss_tag' => 'medium',
+    'dangerous_upload' => 'medium',
+    'url_path_attack' => 'medium',
+    'bad_user_agent' => 'medium',
+
+    // 低危 - 可能是误报或低风险行为
+    'ldap' => 'low',
+    'xss_encoding' => 'low',
+    'xss_framework' => 'low',
+    'rate_limit' => 'low',
+    'invalid_method' => 'low',
+    'url_too_long' => 'low',
+    'body_too_large' => 'low',
+    'invalid_headers' => 'low',
+],
+```
+
+## 环境变量对照表
+
+| 配置项 | 环境变量 | 默认值 |
+|--------|----------|--------|
+| enabled | `SECURITY_ENABLED` | `true` |
+| log_enabled | `SECURITY_LOG_ENABLED` | `true` |
+| log_level | `SECURITY_LOG_LEVEL` | `warning` |
+| log_full_request | `SECURITY_LOG_FULL_REQUEST` | `false` |
+| detection_layers.url_path | `SECURITY_DETECT_URL_PATH` | `true` |
+| detection_layers.encoding | `SECURITY_DETECT_ENCODING` | `true` |
+| detection_layers.user_agent | `SECURITY_DETECT_USER_AGENT` | `true` |
+| detection_layers.headers | `SECURITY_DETECT_HEADERS` | `true` |
+| detection_layers.body_size | `SECURITY_DETECT_BODY_SIZE` | `true` |
+| detection_layers.rate_limit | `SECURITY_DETECT_RATE_LIMIT` | `true` |
+| detection_layers.http_method | `SECURITY_DETECT_HTTP_METHOD` | `true` |
+| detection_layers.url_length | `SECURITY_DETECT_URL_LENGTH` | `true` |
+| detection_layers.high_risk | `SECURITY_DETECT_HIGH_RISK` | `true` |
+| detection_layers.xss | `SECURITY_DETECT_XSS` | `true` |
+| detection_layers.upload | `SECURITY_DETECT_UPLOAD` | `true` |
+| rate_limit.enabled | `SECURITY_RATE_LIMIT_ENABLED` | `true` |
+| rate_limit.max_attempts | `SECURITY_RATE_LIMIT_ATTEMPTS` | `60` |
+| rate_limit.decay_minutes | `SECURITY_RATE_LIMIT_DECAY` | `1` |
+| response.show_threat_details | `SECURITY_SHOW_DETAILS` | `false` |
+| url_path_detection.enabled | `SECURITY_URL_PATH_DETECTION` | `true` |
+| encoding_detection.enabled | `SECURITY_ENCODING_DETECTION` | `true` |
+
 ## 完整 .env 示例
 
 ```env
 # 基础开关
 SECURITY_ENABLED=true
 SECURITY_LOG_ENABLED=true
+SECURITY_LOG_LEVEL=warning
+SECURITY_LOG_FULL_REQUEST=false
+
+# 检测层级开关
+SECURITY_DETECT_URL_PATH=true
+SECURITY_DETECT_ENCODING=true
+SECURITY_DETECT_USER_AGENT=true
+SECURITY_DETECT_HEADERS=true
+SECURITY_DETECT_BODY_SIZE=true
+SECURITY_DETECT_RATE_LIMIT=true
+SECURITY_DETECT_HTTP_METHOD=true
+SECURITY_DETECT_URL_LENGTH=true
+SECURITY_DETECT_HIGH_RISK=true
+SECURITY_DETECT_XSS=true
+SECURITY_DETECT_UPLOAD=true
 
 # 速率限制
 SECURITY_RATE_LIMIT_ENABLED=true
 SECURITY_RATE_LIMIT_ATTEMPTS=60
 SECURITY_RATE_LIMIT_DECAY=1
+
+# 响应配置
+SECURITY_SHOW_DETAILS=false
+
+# 高级检测
+SECURITY_URL_PATH_DETECTION=true
+SECURITY_ENCODING_DETECTION=true
 ```

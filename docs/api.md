@@ -331,3 +331,110 @@ class DatabaseIpChecker implements IpCheckerInterface
     'rate_limit_status' => 429,   // 速率限制状态码
 ],
 ```
+
+## 高级配置
+
+### URL路径攻击检测配置
+
+配置URL路径遍历攻击的检测参数：
+
+```php
+'url_path_detection' => [
+    'enabled' => env('SECURITY_URL_PATH_DETECTION', true),
+
+    // 路径遍历检测正则模式（可自定义）
+    'path_traversal_patterns' => [
+        '/(?:\.\./){2,}/',
+        '/(?:\.\.\\){2,}/',
+        '/%2e%2e%2f/i',
+        // ... 更多模式
+    ],
+
+    // 敏感文件访问检测
+    'sensitive_file_patterns' => [
+        '/\/(?:etc|proc|sys)\/(?:passwd|shadow)/i',
+        // ... 更多模式
+    ],
+
+    // 路径遍历阈值（至少几个"../"才算攻击）
+    'traversal_threshold' => 2,
+],
+```
+
+### 编码绕过攻击检测配置
+
+配置多重编码攻击的检测参数：
+
+```php
+'encoding_detection' => [
+    'enabled' => env('SECURITY_ENCODING_DETECTION', true),
+
+    // URL编码百分比阈值（0-1）
+    'percent_threshold' => 0.30,
+
+    // 解码后检查的可疑模式
+    'suspicious_patterns' => [
+        '../', '..\\', '<script', 'javascript:',
+        'onerror=', 'onload=',
+    ],
+
+    'detect_null_bytes' => true,
+    'detect_utf8_overlong' => true,
+],
+```
+
+### HTTP方法配置
+
+配置允许的HTTP请求方法：
+
+```php
+'allowed_http_methods' => [
+    'GET', 'POST', 'PUT', 'PATCH',
+    'DELETE', 'HEAD', 'OPTIONS',
+],
+```
+
+### 输入处理配置
+
+配置请求输入的处理参数：
+
+```php
+'input_processing' => [
+    // 最大输入长度（字节），防止正则回溯
+    'max_input_length' => 100 * 1024,
+
+    // 匹配内容最大长度（用于日志）
+    'max_match_content_length' => 200,
+
+    // Markdown检测最小内容长度
+    'markdown_min_length' => 100,
+
+    // Markdown语法模式
+    'markdown_patterns' => [
+        '/^#{1,6}\s+/m',
+        '/^[-*+]\s+/m',
+        // ... 更多模式
+    ],
+],
+```
+
+### 威胁风险等级映射
+
+配置每种威胁类型的风险等级：
+
+```php
+'threat_risk_levels' => [
+    // 高危
+    'sql' => 'high',
+    'command' => 'high',
+    'path' => 'high',
+
+    // 中危
+    'nosql' => 'medium',
+    'xss_script' => 'medium',
+
+    // 低危
+    'rate_limit' => 'low',
+    'invalid_method' => 'low',
+],
+```
