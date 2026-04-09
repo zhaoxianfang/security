@@ -184,6 +184,7 @@ class SecurityMiddleware
                 $this->logThreat($request, 'blacklist', 'IP地址位于黑名单中: ' . $ip);
                 return $this->blockRequest($request, 'IP已被禁止访问', 403, 'blacklist');
             }
+            // return $next($request);
         }
 
         // ========== 第三层：URL路径攻击检测 ==========
@@ -196,7 +197,7 @@ class SecurityMiddleware
                 $this->logThreat($request, 'url_path_attack', 'URL路径包含攻击模式: ' . $this->lastMatchedPattern);
                 return $this->blockRequest($request, '请求包含非法内容', 403, 'url_path_attack');
             }
-            return $next($request);
+            // return $next($request);
         }
 
         // ========== 第四层：多重编码检测 ==========
@@ -208,7 +209,7 @@ class SecurityMiddleware
                 $this->logThreat($request, 'encoding_bypass', '检测到编码绕过攻击');
                 return $this->blockRequest($request, '请求格式非法', 403, 'encoding_bypass');
             }
-            return $next($request);
+            // return $next($request);
         }
 
         // ========== 第五层：User-Agent检查 ==========
@@ -220,7 +221,7 @@ class SecurityMiddleware
                 $this->logThreat($request, 'bad_user_agent', '恶意User-Agent: ' . $request->userAgent());
                 return $this->blockRequest($request, '请求被拒绝', 403, 'bad_user_agent');
             }
-            return $next($request);
+            // return $next($request);
         }
 
         // ========== 第六层：HTTP头检查 ==========
@@ -232,7 +233,7 @@ class SecurityMiddleware
                 $this->logThreat($request, 'invalid_headers', 'HTTP头检查失败');
                 return $this->blockRequest($request, '请求被拒绝', 403, 'invalid_headers');
             }
-            return $next($request);
+            // return $next($request);
         }
 
         // ========== 第七层：请求体大小检查 ==========
@@ -244,7 +245,7 @@ class SecurityMiddleware
                 $this->logThreat($request, 'body_too_large', '请求体大小超过限制');
                 return $this->blockRequest($request, '请求体过大', 403, 'body_too_large');
             }
-            return $next($request);
+            // return $next($request);
         }
 
         // ========== 第八层：请求速率限制 ==========
@@ -256,7 +257,7 @@ class SecurityMiddleware
                 $this->logThreat($request, 'rate_limit', '请求频率超过限制');
                 return $this->blockRequest($request, '请求过于频繁，请稍后再试', 429, 'rate_limit');
             }
-            return $next($request);
+            // return $next($request);
         }
 
         // ========== 第九层：HTTP方法检查 ==========
@@ -268,7 +269,7 @@ class SecurityMiddleware
                 $this->logThreat($request, 'invalid_method', '非法HTTP方法: ' . $request->method());
                 return $this->blockRequest($request, '不支持的请求方法', 403, 'invalid_method');
             }
-            return $next($request);
+            // return $next($request);
         }
 
         // ========== 第十层：URL长度检查 ==========
@@ -280,7 +281,7 @@ class SecurityMiddleware
                 $this->logThreat($request, 'url_too_long', 'URL长度超限');
                 return $this->blockRequest($request, '请求URL过长', 403, 'url_too_long');
             }
-            return $next($request);
+            // return $next($request);
         }
 
         // ========== 第十一层：高危攻击检测 ==========
@@ -293,7 +294,7 @@ class SecurityMiddleware
                     $this->logThreat($request, $threatType, '高危模式匹配: ' . $this->lastMatchedPattern);
                     return $this->blockRequest($request, '请求包含高危安全威胁', 403, $threatType);
                 }
-                return $next($request);
+                // return $next($request);
             }
         }
 
@@ -307,7 +308,7 @@ class SecurityMiddleware
                     $this->logThreat($request, $xssType, 'XSS模式匹配: ' . $this->lastMatchedPattern);
                     return $this->blockRequest($request, '请求包含潜在的安全威胁', 403, $xssType);
                 }
-                return $next($request);
+                // return $next($request);
             }
         }
 
@@ -320,7 +321,7 @@ class SecurityMiddleware
                 $this->logThreat($request, 'dangerous_upload', '检测到危险文件上传');
                 return $this->blockRequest($request, '文件上传被拒绝', 403, 'dangerous_upload');
             }
-            return $next($request);
+            // return $next($request);
         }
 
         // 所有安全检查通过，继续处理请求
@@ -439,14 +440,10 @@ class SecurityMiddleware
         $checkSources = [];
 
         // 1. URL路径（原始和解码）
-        $path = $request->path();
-        $checkSources['path'] = [$path, urldecode($path), urldecode(urldecode($path))];
+        $url = $request->fullUrl();
+        $checkSources['url'] = [$url, urldecode($url), urldecode(urldecode($url))];
 
-        // 2. 查询字符串参数（所有参数值）
-        $queryParams = $request->query();
-        $this->collectParamsForCheck($queryParams, $checkSources, 'query');
-
-        // 3. 路由参数
+        // 2. 路由参数
         $routeParams = $request->route()?->parameters() ?? [];
         $this->collectParamsForCheck($routeParams, $checkSources, 'route');
 
