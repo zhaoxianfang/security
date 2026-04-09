@@ -417,46 +417,66 @@ class SecurityMiddleware
     // ==================== URL路径攻击检测 ====================
 
     /**
-     * 检测URL路径中的攻击
-     * 专门检测路径遍历等直接出现在URL路径中的攻击
+     * 检测URL路径和查询参数中的攻击
+     * 专门检测路径遍历等直接出现在URL路径或查询参数中的攻击
      *
      * @param Request $request HTTP请求对象
      * @return bool true=检测到攻击，false=正常
      */
     protected function detectUrlPathAttacks(Request $request): bool
     {
+        // 收集所有需要检查的来源
+        $checkSources = [];
+
+        // 1. URL路径（原始和解码）
         $path = $request->path();
-        $decodedPath = urldecode($path);
-        $doubleDecodedPath = urldecode($decodedPath);
+        $checkSources['path'] = [$path, urldecode($path), urldecode(urldecode($path))];
+
+        // 2. 查询字符串参数（所有参数值）
+        $queryParams = $request->query();
+        $this->collectParamsForCheck($queryParams, $checkSources, 'query');
+
+        // 3. 路由参数
+        $routeParams = $request->route()?->parameters() ?? [];
+        $this->collectParamsForCheck($routeParams, $checkSources, 'route');
 
         // 路径遍历检测模式
         $pathTraversalPatterns = [
-            // 标准路径遍历
-            '/\.\.\//',
-            '/\.\.\\/',
+            // 标准路径遍历（至少两个../）
+            '/(?:\.\./){2,}/',
+            '/(?:\.\.\\){2,}/',
+            // 混合路径遍历
+            '/\.\.(?:/|\\)\.\.(?:/|\\)/',
             // 双重编码的路径遍历
             '/%2e%2e%2f/i',
             '/%252e%252e%252f/i',
+            '/%2e%2e(?:%2f|%5c)/i',
             // Unicode编码的路径遍历
             '/%c0%af/i',
             '/%ef%bc%8f/i',
+            '/%e0%80%af/i',
         ];
 
-        $checkStrings = [$path, $decodedPath, $doubleDecodedPath];
+        // 检查所有来源
+        foreach ($checkSources as $source => $strings) {
+            foreach ($strings as $checkString) {
+                if (!is_string($checkString) || empty($checkString)) {
+                    continue;
+                }
 
-        foreach ($checkStrings as $checkString) {
-            foreach ($pathTraversalPatterns as $pattern) {
-                if (preg_match($pattern, $checkString)) {
-                    // 检查是否匹配了足够多的遍历（至少2个../才算攻击）
-                    $traversalCount = substr_count($checkString, '../') +
-                                     substr_count($checkString, '..\\') +
-                                     substr_count($checkString, '..%2f') +
-                                     substr_count($checkString, '..%2F');
+                foreach ($pathTraversalPatterns as $pattern) {
+                    if (preg_match($pattern, $checkString)) {
+                        // 检查是否匹配了足够多的遍历（至少2个../才算攻击）
+                        $traversalCount = substr_count($checkString, '../') +
+                                         substr_count($checkString, '..\\') +
+                                         substr_count($checkString, '..%2f') +
+                                         substr_count($checkString, '..%2F');
 
-                    if ($traversalCount >= 2) {
-                        $this->lastMatchedPattern = $pattern;
-                        $this->lastMatchedContent = substr($checkString, 0, 100);
-                        return true;
+                        if ($traversalCount >= 2) {
+                            $this->lastMatchedPattern = $pattern;
+                            $this->lastMatchedContent = substr($checkString, 0, 100);
+                            return true;
+                        }
                     }
                 }
             }
@@ -467,20 +487,54 @@ class SecurityMiddleware
             '/\/(?:etc|proc|sys|var|root|home)\/(?:passwd|shadow|hosts|id_rsa)/i',
             '/\/\.env/i',
             '/\/\.git\//i',
+            '/\/\.svn\//i',
             '/\/(?:config|database)\.php/i',
+            '/\.\.(?:\/|\\)(?:windows|winnt|system32|system)/i',
         ];
 
-        foreach ($checkStrings as $checkString) {
-            foreach ($sensitiveFilePatterns as $pattern) {
-                if (preg_match($pattern, $checkString)) {
-                    $this->lastMatchedPattern = $pattern;
-                    $this->lastMatchedContent = substr($checkString, 0, 100);
-                    return true;
+        foreach ($checkSources as $source => $strings) {
+            foreach ($strings as $checkString) {
+                if (!is_string($checkString) || empty($checkString)) {
+                    continue;
+                }
+
+                foreach ($sensitiveFilePatterns as $pattern) {
+                    if (preg_match($pattern, $checkString)) {
+                        $this->lastMatchedPattern = $pattern;
+                        $this->lastMatchedContent = substr($checkString, 0, 100);
+                        return true;
+                    }
                 }
             }
         }
 
         return false;
+    }
+
+    /**
+     * 收集参数用于检查
+     *
+     * @param array $params 参数数组
+     * @param array $checkSources 检查来源数组（引用）
+     * @param string $prefix 前缀标识
+     * @return void
+     */
+    protected function collectParamsForCheck(array $params, array &$checkSources, string $prefix): void
+    {
+        foreach ($params as $key => $value) {
+            if (is_string($value)) {
+                // 原始值
+                $checkSources[$prefix . '.' . $key][] = $value;
+                // 解码后的值
+                $decoded = urldecode($value);
+                $checkSources[$prefix . '.' . $key][] = $decoded;
+                // 双重解码
+                $checkSources[$prefix . '.' . $key][] = urldecode($decoded);
+            } elseif (is_array($value)) {
+                // 递归处理数组
+                $this->collectParamsForCheck($value, $checkSources, $prefix . '.' . $key);
+            }
+        }
     }
 
     /**
