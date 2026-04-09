@@ -584,6 +584,25 @@ class BlockResponseHandler
 | `$threats` | array | 威胁类型数组 |
 | `$matched_pattern` | string | 匹配的正则模式 |
 | `$matched_content` | string | 匹配的内容片段（脱敏） |
+| `$threat_type` | string | 威胁类型 |
+| `$risk_level` | string | 风险等级 (high/medium/low) |
+| `$timestamp` | string | 拦截时间戳 |
+
+### 默认错误视图
+
+如果没有配置自定义视图（`view` 为 `null`），系统会使用内置的 `security::error` 视图显示拦截页面。
+
+**视图命名空间**
+
+安全包注册了 `security` 视图命名空间，可通过以下方式访问：
+
+```php
+// 访问安全包的错误视图
+return view('security::error', $data);
+
+// 如果发布了视图，优先使用应用中的自定义版本
+return view('vendor.security.error', $data);
+```
 
 ### markdown
 

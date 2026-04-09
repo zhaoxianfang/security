@@ -25,6 +25,7 @@ readonly class InterceptionContext
      * @param string $clientIp 客户端IP地址
      * @param string $method HTTP方法
      * @param string $url 请求URL
+     * @param string $request_id 请求唯一id
      * @param array<string> $allThreats 所有检测到的威胁类型数组
      * @param array<string, mixed> $requestData 请求数据摘要（不包含敏感信息）
      * @param \DateTimeImmutable $timestamp 拦截时间戳
@@ -40,6 +41,7 @@ readonly class InterceptionContext
         public string $url = '',
         public array $allThreats = [],
         public array $requestData = [],
+        public string $request_id = '',
     ) {
     }
 

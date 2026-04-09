@@ -88,6 +88,14 @@ class SecurityMiddleware
     protected string $currentThreatType = '';
 
     /**
+     * 当前请求ID
+     * 用于日志记录等处理
+     *
+     * @var string
+     */
+    protected string $requestId = '';
+
+    /**
      * 构造函数
      * 预加载配置到内存，提高后续访问速度
      */
@@ -174,6 +182,9 @@ class SecurityMiddleware
         if ($this->isWhitelisted($ip, $request)) {
             return $next($request);
         }
+
+        // 生成唯一请求ID
+        $this->requestId = 'SEC_' . strtoupper(uniqid()) . '_' . substr(md5(random_bytes(8)), 0, 8);
 
         // ========== 第二层：IP 黑名单检查 ==========
         if ($this->isBlacklisted($ip, $request)) {
@@ -1158,43 +1169,29 @@ class SecurityMiddleware
         // 根据威胁类型获取更详细的拦截消息
         $detailedMessage = $this->getBlockMessage($threatType, $message);
 
-        // 构建响应数据
-        $responseData = [
-            'message' => $detailedMessage,
-            'blocked' => true,
-            'threats' => array_unique($this->threats),
-            'threat_type' => $threatType,
-            'risk_level' => $this->getRiskLevel($threatType),
-            'matched_pattern' => $this->lastMatchedPattern,
-            'matched_content' => $this->lastMatchedContent,
-            'timestamp' => now()->toIso8601String(),
-        ];
+        // 构建标准化的拦截响应数据
+        $interceptionData = $this->buildInterceptionData(
+            $request,
+            $detailedMessage,
+            $threatType,
+            $status,
+            $showDetails
+        );
 
         // JSON 响应
         if ($request->expectsJson() || $request->is('api/*') || $request->ajax()) {
-            $response = [
-                'message' => $detailedMessage,
-                'blocked' => true,
-            ];
-
-            if ($showDetails) {
-                $response['threats'] = array_unique($this->threats);
-                $response['threat_type'] = $threatType;
-                $response['risk_level'] = $this->getRiskLevel($threatType);
-            }
-
-            return response()->json($response, $status);
+            return response()->json($interceptionData, $status);
         }
 
         // 检查是否配置了自定义视图
         $viewConfig = $this->config['response']['view'] ?? null;
 
         if ($viewConfig !== null && $viewConfig !== '') {
-            return $this->renderViewResponse($viewConfig, $responseData, $status);
+            return $this->renderViewResponse($viewConfig, $interceptionData, $status);
         }
 
-        // 默认文本响应
-        return response($detailedMessage, $status);
+        // 使用默认的安全拦截视图 security::error
+        return response()->view('security::error', $interceptionData, $status);
     }
 
     /**
@@ -1225,6 +1222,141 @@ class SecurityMiddleware
     protected function getRiskLevel(string $threatType): string
     {
         return $this->getThreatRiskLevel($threatType);
+    }
+
+    /**
+     * 构建标准化的拦截响应数据
+     *
+     * 统一 JSON 和 Blade 响应的数据结构，确保一致性
+     *
+     * @param Request $request 请求对象
+     * @param string $message 拦截消息
+     * @param string $threatType 威胁类型
+     * @param int $status HTTP状态码
+     * @param bool $showDetails 是否显示详细信息
+     * @return array 标准化的响应数据
+     */
+    protected function buildInterceptionData(
+        Request $request,
+        string $message,
+        string $threatType,
+        int $status,
+        bool $showDetails
+    ): array {
+        $riskLevel = $this->getRiskLevel($threatType);
+        $threats = array_values(array_unique($this->threats));
+
+        // 基础数据结构
+        $data = [
+            'success' => false,
+            'blocked' => true,
+            'message' => $message,
+            'request_id' => $this->requestId,
+            'timestamp' => now()->toIso8601String(),
+            'http_status' => $status,
+        ];
+
+        // 请求元数据
+        $data['request'] = [
+            'url' => $request->fullUrl(),
+            'method' => $request->method(),
+            'ip' => $request->ip(),
+            'user_agent' => $request->userAgent(),
+        ];
+
+        // 威胁信息（始终包含基础信息）
+        $data['threat'] = [
+            'type' => $threatType,
+            'risk_level' => $riskLevel,
+            'category' => $this->getThreatCategory($threatType),
+        ];
+
+        // 详细信息（根据配置决定是否包含）
+        if ($showDetails) {
+            $data['threat']['identifiers'] = $threats;
+            $data['threat']['matched_pattern'] = $this->lastMatchedPattern;
+            $data['threat']['matched_content'] = $this->lastMatchedContent;
+            $data['threat']['description'] = $this->getThreatDescription($threatType);
+        }
+
+        // 兼容性字段（用于 Blade 视图）
+        $data['threat_type'] = $threatType;
+        $data['risk_level'] = $riskLevel;
+        $data['threats'] = $threats;
+        $data['matched_pattern'] = $this->lastMatchedPattern;
+        $data['matched_content'] = $this->lastMatchedContent;
+
+        return $data;
+    }
+
+    /**
+     * 获取威胁分类
+     *
+     * @param string $threatType 威胁类型
+     * @return string 威胁分类
+     */
+    protected function getThreatCategory(string $threatType): string
+    {
+        $categories = [
+            'sql_injection' => 'injection',
+            'command_injection' => 'injection',
+            'path_traversal' => 'path_attack',
+            'lfi' => 'path_attack',
+            'rfi' => 'path_attack',
+            'xss' => 'client_side',
+            'xxe' => 'xml_attack',
+            'ldap_injection' => 'injection',
+            'xpath_injection' => 'injection',
+            'nosql_injection' => 'injection',
+            'ssti' => 'template_attack',
+            'encoding_bypass' => 'evasion',
+            'null_byte' => 'evasion',
+            'high_risk_pattern' => 'pattern_match',
+            'suspicious_user_agent' => 'reconnaissance',
+            'suspicious_header' => 'reconnaissance',
+            'rate_limit_exceeded' => 'rate_limit',
+            'http_method_not_allowed' => 'protocol_violation',
+            'url_length_exceeded' => 'protocol_violation',
+            'body_size_exceeded' => 'protocol_violation',
+            'ip_blacklist' => 'access_control',
+        ];
+
+        return $categories[$threatType] ?? 'unknown';
+    }
+
+    /**
+     * 获取威胁描述
+     *
+     * @param string $threatType 威胁类型
+     * @return string 威胁描述
+     */
+    protected function getThreatDescription(string $threatType): string
+    {
+        $descriptions = [
+            'sql_injection' => '检测到SQL注入攻击，试图通过输入字段操纵数据库查询',
+            'command_injection' => '检测到命令注入攻击，试图执行系统命令',
+            'path_traversal' => '检测到路径遍历攻击，试图访问受限文件系统路径',
+            'lfi' => '检测到本地文件包含攻击',
+            'rfi' => '检测到远程文件包含攻击',
+            'xss' => '检测到跨站脚本攻击(XSS)，试图注入恶意脚本',
+            'xxe' => '检测到XML外部实体攻击',
+            'ldap_injection' => '检测到LDAP注入攻击',
+            'xpath_injection' => '检测到XPath注入攻击',
+            'nosql_injection' => '检测到NoSQL注入攻击',
+            'ssti' => '检测到服务器端模板注入攻击',
+            'encoding_bypass' => '检测到编码绕过尝试',
+            'null_byte' => '检测到空字节注入',
+            'high_risk_pattern' => '检测到高风险攻击模式',
+            'suspicious_user_agent' => '检测到可疑的用户代理',
+            'suspicious_header' => '检测到可疑的HTTP请求头',
+            'rate_limit_exceeded' => '请求频率超过限制',
+            'http_method_not_allowed' => '使用了不允许的HTTP方法',
+            'url_length_exceeded' => 'URL长度超过限制',
+            'body_size_exceeded' => '请求体大小超过限制',
+            'ip_blacklist' => 'IP地址在黑名单中',
+        ];
+
+        return $descriptions[$threatType] ?? '检测到未知的安全威胁';
     }
 
     /**
@@ -1381,6 +1513,7 @@ class SecurityMiddleware
         return new InterceptionContext(
             request: $request,
             threatType: $threatType,
+            timestamp: new DateTimeImmutable(),
             matchedPattern: $this->lastMatchedPattern,
             matchedContent: $this->lastMatchedContent,
             clientIp: $request->ip() ?? '',
@@ -1388,7 +1521,7 @@ class SecurityMiddleware
             url: $request->fullUrl(),
             allThreats: array_unique($this->threats),
             requestData: $requestData,
-            timestamp: new DateTimeImmutable(),
+            request_id: $this->requestId,
         );
     }
 

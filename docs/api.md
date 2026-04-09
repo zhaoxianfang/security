@@ -332,6 +332,36 @@ class DatabaseIpChecker implements IpCheckerInterface
 ],
 ```
 
+## 响应格式
+
+### JSON 响应
+
+当请求期望 JSON 响应（`Accept: application/json` 头或 AJAX 请求）时，返回 JSON 格式：
+
+```json
+{
+    "message": "请求被拒绝：检测到潜在的安全威胁",
+    "blocked": true,
+    "threats": ["sql"],
+    "threat_type": "sql",
+    "risk_level": "high"
+}
+```
+
+### HTML 响应
+
+对于普通 Web 请求，返回 HTML 页面：
+
+1. **配置了自定义视图**：使用配置的视图渲染
+2. **未配置自定义视图**：使用内置的 `security::error` 视图
+
+内置错误页面包含：
+- 拦截提示信息
+- 威胁类型详情
+- 风险等级标识
+- 拦截时间戳
+- 返回首页按钮
+
 ## 高级配置
 
 ### URL路径攻击检测配置

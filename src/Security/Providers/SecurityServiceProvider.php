@@ -42,6 +42,10 @@ class SecurityServiceProvider extends ServiceProvider
             __DIR__ . '/../../../config/security.php' => config_path('security.php'),
         ], ['security-config', 'security']);
 
+        // 注册视图命名空间
+        // 使用 security::error 访问安全拦截错误页面
+        app('view')->addNamespace('security', __DIR__ . '/../../../resources/views');
+
         // 注册安全中间件
         $this->registerMiddleware();
 

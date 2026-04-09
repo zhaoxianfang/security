@@ -912,7 +912,7 @@ return [
         // 支持格式：视图名、闭包、类方法数组、可调用类
         //
         // 示例1：使用 Blade 视图
-        // 'view' => 'blog::errors.security',
+        // 'view' => 'security::error',
         //
         // 示例2：使用闭包函数
         // 'view' => function($data) {
@@ -925,7 +925,7 @@ return [
         // 示例3：使用类方法
         // 'view' => ['App\Http\Controllers\SecurityController', 'renderBlockPage'],
         //
-        // 示例4：使用可调用类
+        // 示例4：使用可调用类, 需要实现  __invoke 方法
         // 'view' => \App\Security\BlockResponseHandler::class,
         'view' => null,
     ],
