@@ -369,25 +369,27 @@ class DatabaseIpChecker implements IpCheckerInterface
 配置URL路径遍历攻击的检测参数：
 
 ```php
-'url_path_detection' => [
+'path_patterns' => [
     'enabled' => env('SECURITY_URL_PATH_DETECTION', true),
 
-    // 路径遍历检测正则模式（可自定义）
-    'path_traversal_patterns' => [
-        '/(?:\.\./){2,}/',
-        '/(?:\.\.\\){2,}/',
-        '/%2e%2e%2f/i',
-        // ... 更多模式
+    'path_patterns' => [
+        // 路径遍历检测正则模式
+        '/(\.\.\/){2,}/',
+        '/(\.\.\\\\){2,}/',
+        '/\.\.(\/|\\\\)\.\.(\/|\\\\)/',
+
+        // 敏感文件访问检测模式
+        '/\/(etc|proc|sys|var|root|home|usr\/local)\/(passwd|shadow|hosts|id_rsa|authorized_keys|\.env|\.git|\.htaccess|config\.php|database\.php)\b/i',
+        '/\b(\.env|\.git\/)\b/i',
+        '/\b(\.svn|\.hg|\.bzr)\b/i',
+        '/\b(\.htaccess|\.htpasswd|web\.config)\b/i',
+        '/\b(composer\.json|composer\.lock|package\.json|package-lock\.json)\b/i',
+        '/\.\.(\/|\\\\)(windows|winnt|system32|system|program files|programdata|inetpub)/i',
+
+        // 其他匹配
+        // '/\.(php|jsp|sh)(?:[?#&\/]|$)/i', // 匹配 php、jsp、sh 等文件扩展名
     ],
 
-    // 敏感文件访问检测
-    'sensitive_file_patterns' => [
-        '/\/(?:etc|proc|sys)\/(?:passwd|shadow)/i',
-        // ... 更多模式
-    ],
-
-    // 路径遍历阈值（至少几个"../"才算攻击）
-    'traversal_threshold' => 2,
 ],
 ```
 

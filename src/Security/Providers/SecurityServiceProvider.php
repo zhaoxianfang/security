@@ -40,7 +40,7 @@ class SecurityServiceProvider extends ServiceProvider
         // 用户可通过 --tag=security-config 选择性发布
         $this->publishes([
             __DIR__ . '/../../../config/security.php' => config_path('security.php'),
-        ], ['security-config', 'security']);
+        ], ['security-config']);
 
         // 注册视图命名空间
         // 使用 security::error 访问安全拦截错误页面

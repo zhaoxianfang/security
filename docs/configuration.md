@@ -633,32 +633,26 @@ Markdown智能识别配置。
 URL路径遍历攻击检测配置。
 
 ```php
-'url_path_detection' => [
+'path_patterns' => [
     'enabled' => env('SECURITY_URL_PATH_DETECTION', true),
 
-    // 路径遍历检测正则模式
-    'path_traversal_patterns' => [
-        '/(?:\.\./){2,}/',              // 标准路径遍历
-        '/(?:\.\.\\\\){2,}/',            // Windows路径遍历
-        '/\.\.(?:/|\\\\)\.\.(?:/|\\\\)/',  // 混合路径遍历
-        '/%2e%2e%2f/i',                  // URL编码遍历
-        '/%252e%252e%252f/i',            // 双重编码遍历
-        '/%c0%af/i',                     // UTF-8过度编码
-        '/%ef%bc%8f/i',                  // 全角斜线
-        '/%e0%80%af/i',                  // 另一种UTF-8编码
-    ],
+    'path_patterns' => [
+        // 路径遍历检测正则模式
+        '/(\.\.\/){2,}/',
+        '/(\.\.\\\\){2,}/',
+        '/\.\.(\/|\\\\)\.\.(\/|\\\\)/',
 
-    // 敏感文件访问检测模式
-    'sensitive_file_patterns' => [
-        '/\/(?:etc|proc|sys)\/(?:passwd|shadow)/i',
-        '/\/\.env/i',
-        '/\/\.git\//i',
-        '/\/(?:config|database)\.php/i',
-    ],
+        // 敏感文件访问检测模式
+        '/\/(etc|proc|sys|var|root|home|usr\/local)\/(passwd|shadow|hosts|id_rsa|authorized_keys|\.env|\.git|\.htaccess|config\.php|database\.php)\b/i',
+        '/\b(\.env|\.git\/)\b/i',
+        '/\b(\.svn|\.hg|\.bzr)\b/i',
+        '/\b(\.htaccess|\.htpasswd|web\.config)\b/i',
+        '/\b(composer\.json|composer\.lock|package\.json|package-lock\.json)\b/i',
+        '/\.\.(\/|\\\\)(windows|winnt|system32|system|program files|programdata|inetpub)/i',
 
-    // 路径遍历阈值（至少几个"../"才算攻击）
-    // 设为2可减少误报，设为1更严格
-    'traversal_threshold' => 2,
+        // 其他匹配
+        // '/\.(php|jsp|sh)(?:[?#&\/]|$)/i', // 匹配 php、jsp、sh 等文件扩展名
+    ],
 ],
 ```
 

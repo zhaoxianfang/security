@@ -452,15 +452,15 @@ class SecurityMiddleware
 
         // 1. URL路径（原始和解码）
         $url = $request->fullUrl();
-        $checkSources['url'] = [$url, urldecode($url), urldecode(urldecode($url))];
+        // $checkSources['url'] = [$url, urldecode($url), urldecode(urldecode($url))];
+        $checkSources['url'] = [$url, urldecode($url)];
 
         // 2. 路由参数
         $routeParams = $request->route()?->parameters() ?? [];
         $this->collectParamsForCheck($routeParams, $checkSources, 'route');
 
-        // 从配置获取路径遍历检测模式
-        $pathTraversalPatterns = $config['path_traversal_patterns'] ?? [];
-        $traversalThreshold = $config['traversal_threshold'] ?? 2;
+        // 从配置获取遍历检测模式
+        $pathPatterns = $config['path_patterns'] ?? [];
 
         // 检查所有来源
         foreach ($checkSources as $source => $strings) {
@@ -469,34 +469,7 @@ class SecurityMiddleware
                     continue;
                 }
 
-                foreach ($pathTraversalPatterns as $pattern) {
-                    if (preg_match($pattern, $checkString)) {
-                        // 检查是否匹配了足够多的遍历
-                        $traversalCount = substr_count($checkString, '../') +
-                                         substr_count($checkString, '..\\') +
-                                         substr_count($checkString, '..%2f') +
-                                         substr_count($checkString, '..%2F');
-
-                        if ($traversalCount >= $traversalThreshold) {
-                            $this->lastMatchedPattern = $pattern;
-                            $this->lastMatchedContent = substr($checkString, 0, 100);
-                            return true;
-                        }
-                    }
-                }
-            }
-        }
-
-        // 从配置获取敏感文件访问检测模式
-        $sensitiveFilePatterns = $config['sensitive_file_patterns'] ?? [];
-
-        foreach ($checkSources as $source => $strings) {
-            foreach ($strings as $checkString) {
-                if (!is_string($checkString) || empty($checkString)) {
-                    continue;
-                }
-
-                foreach ($sensitiveFilePatterns as $pattern) {
+                foreach ($pathPatterns as $pattern) {
                     if (preg_match($pattern, $checkString)) {
                         $this->lastMatchedPattern = $pattern;
                         $this->lastMatchedContent = substr($checkString, 0, 100);
