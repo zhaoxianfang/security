@@ -1,5 +1,7 @@
 <?php
 
+use zxf\Security\Middleware\SecurityMiddleware;
+
 /**
  * Laravel 安全中间件配置文件
  *
@@ -14,7 +16,7 @@
  * - 生产环境：建议启用所有检测项，rate_limit 适当收紧
  * - 内网部署：将内网IP段加入 trusted_ips，提升性能
  *
- * @see \zxf\Security\Middleware\SecurityMiddleware
+ * @see SecurityMiddleware
  */
 
 return [
@@ -115,20 +117,16 @@ return [
     */
 
     'trusted_ips' => [
-        // IPv4 本地回环
-        '127.0.0.1',
-
-        // IPv6 本地回环
-        '::1',
-
-        // RFC1918 私有地址段 - A类（大型网络）
-        '10.0.0.0/8',
-
-        // RFC1918 私有地址段 - B类（中型网络）
-        '172.16.0.0/12',
-
-        // RFC1918 私有地址段 - C类（小型网络）
-        '192.168.0.0/16',
+        //    // IPv4 本地回环
+        //    '127.0.0.1',
+        //    // IPv6 本地回环
+        //    '::1',
+        //    // RFC1918 私有地址段 - A类（大型网络）
+        //    '10.0.0.0/8',
+        //    // RFC1918 私有地址段 - B类（中型网络）
+        //    '172.16.0.0/12',
+        //    // RFC1918 私有地址段 - C类（小型网络）
+        //    '192.168.0.0/16',
     ],
 
     /*
@@ -399,10 +397,10 @@ return [
         // 检测使用各种编码技术绕过WAF的攻击
         'encoding' => [
             // 多重URL编码
-            '/%25(?:25)*[0-9a-f]/i',
+            // '/%25(?:25)*[0-9a-f]/i',
 
             // Unicode规范化攻击（更多变体）
-            '/%(?:c0[\x80-\xbf]|e0%80[\x80-\xbf])/i',
+            // '/%(?:c0[\x80-\xbf]|e0%80[\x80-\xbf])/i',
 
             // 空字节注入（PHP/C风格字符串终止）
             '/%00|\x00|%00;/i',
@@ -979,7 +977,7 @@ return [
             '/(\.\.\/){2,}/',
             '/(\.\.\\\\){2,}/',
             '/\.\.(\/|\\\\)\.\.(\/|\\\\)/',
-            '/%2e%2e(%2f|%5c)/i', // URL 编码（兼容 Windows）	../ 或 ..\
+            '/%2e%2e(%2f|%5c)/i', // URL 编码（兼容 Windows） ../ 或 ..\
 
             // 敏感文件访问检测模式
             '/\/(etc|proc|sys|var|root|home|usr\/local)\/(passwd|shadow|hosts|id_rsa|authorized_keys|\.env|\.git|\.htaccess|config\.php|database\.php)\b/i',
@@ -990,7 +988,7 @@ return [
             '/\.\.(\/|\\\\)(windows|winnt|system32|system|program files|programdata|inetpub)/i',
 
             // 其他匹配规则
-            // '/\.(php|jsp|sh)(?:[?#&\/]|$)/i', // 匹配 php、jsp、sh 等文件扩展名
+            '/\.(php|jsp|asp|sh|py|pl|exe|bat|cmd)(?:[?#&\/]|$)/i', // 匹配 php、jsp、sh 等文件扩展名
         ],
     ],
 
