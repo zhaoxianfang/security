@@ -988,7 +988,7 @@ return [
             '/\.\.(\/|\\\\)(windows|winnt|system32|system|program files|programdata|inetpub)/i',
 
             // 其他匹配规则
-            '/\.(php|jsp|asp|sh|py|pl|exe|bat|cmd)(?:[?#&\/]|$)/i', // 匹配 php、jsp、sh 等文件扩展名
+            '/\.(?:php|jsp|asp|sh|py|pl|exe|bat|cmd)(?=\b|$)/i', // 匹配 php、jsp、sh 等文件扩展名
         ],
     ],
 
