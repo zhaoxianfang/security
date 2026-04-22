@@ -96,6 +96,11 @@ class SecurityMiddleware
     protected string $requestId = '';
 
     /**
+     * @var InterceptionContext 拦截上下文信息
+     */
+    protected InterceptionContext $context;
+
+    /**
      * 构造函数
      * 预加载配置到内存，提高后续访问速度
      */
@@ -190,8 +195,8 @@ class SecurityMiddleware
         if ($this->isBlacklisted($ip, $request)) {
             $this->threats[] = 'blacklist';
             $this->currentThreatType = 'blacklist';
-            $context = $this->createInterceptionContext($request, 'blacklist');
-            if ($this->shouldBlock($context)) {
+            $this->context = $this->createInterceptionContext($request, 'blacklist');
+            if ($this->shouldBlock($this->context)) {
                 $this->logThreat($request, 'blacklist', 'IP地址位于黑名单中: ' . $ip);
                 return $this->blockRequest($request, 'IP已被禁止访问', 403, 'blacklist');
             }
@@ -203,8 +208,8 @@ class SecurityMiddleware
         if ($this->isDetectionEnabled('url_path') && $this->detectUrlPathAttacks($request)) {
             $this->threats[] = 'url_path_attack';
             $this->currentThreatType = 'url_path_attack';
-            $context = $this->createInterceptionContext($request, 'url_path_attack');
-            if ($this->shouldBlock($context)) {
+            $this->context = $this->createInterceptionContext($request, 'url_path_attack');
+            if ($this->shouldBlock($this->context)) {
                 $this->logThreat($request, 'url_path_attack', 'URL路径包含攻击模式: ' . $this->lastMatchedPattern);
                 return $this->blockRequest($request, '请求包含非法内容', 403, 'url_path_attack');
             }
@@ -215,8 +220,8 @@ class SecurityMiddleware
         if ($this->isDetectionEnabled('encoding') && $this->detectMultiEncodingAttacks($request)) {
             $this->threats[] = 'encoding_bypass';
             $this->currentThreatType = 'encoding_bypass';
-            $context = $this->createInterceptionContext($request, 'encoding_bypass');
-            if ($this->shouldBlock($context)) {
+            $this->context = $this->createInterceptionContext($request, 'encoding_bypass');
+            if ($this->shouldBlock($this->context)) {
                 $this->logThreat($request, 'encoding_bypass', '检测到编码绕过攻击');
                 return $this->blockRequest($request, '请求格式非法', 403, 'encoding_bypass');
             }
@@ -227,8 +232,8 @@ class SecurityMiddleware
         if ($this->isDetectionEnabled('user_agent') && $this->isBadUserAgent($request)) {
             $this->threats[] = 'bad_user_agent';
             $this->currentThreatType = 'bad_user_agent';
-            $context = $this->createInterceptionContext($request, 'bad_user_agent');
-            if ($this->shouldBlock($context)) {
+            $this->context = $this->createInterceptionContext($request, 'bad_user_agent');
+            if ($this->shouldBlock($this->context)) {
                 $this->logThreat($request, 'bad_user_agent', '恶意User-Agent: ' . $request->userAgent());
                 return $this->blockRequest($request, '请求被拒绝', 403, 'bad_user_agent');
             }
@@ -239,8 +244,8 @@ class SecurityMiddleware
         if ($this->isDetectionEnabled('headers') && $this->hasInvalidHeaders($request)) {
             $this->threats[] = 'invalid_headers';
             $this->currentThreatType = 'invalid_headers';
-            $context = $this->createInterceptionContext($request, 'invalid_headers');
-            if ($this->shouldBlock($context)) {
+            $this->context = $this->createInterceptionContext($request, 'invalid_headers');
+            if ($this->shouldBlock($this->context)) {
                 $this->logThreat($request, 'invalid_headers', 'HTTP头检查失败');
                 return $this->blockRequest($request, '请求被拒绝', 403, 'invalid_headers');
             }
@@ -251,8 +256,8 @@ class SecurityMiddleware
         if ($this->isDetectionEnabled('body_size') && $this->isBodyTooLarge($request)) {
             $this->threats[] = 'body_too_large';
             $this->currentThreatType = 'body_too_large';
-            $context = $this->createInterceptionContext($request, 'body_too_large');
-            if ($this->shouldBlock($context)) {
+            $this->context = $this->createInterceptionContext($request, 'body_too_large');
+            if ($this->shouldBlock($this->context)) {
                 $this->logThreat($request, 'body_too_large', '请求体大小超过限制');
                 return $this->blockRequest($request, '请求体过大', 403, 'body_too_large');
             }
@@ -263,8 +268,8 @@ class SecurityMiddleware
         if ($this->isDetectionEnabled('rate_limit') && $this->isRateLimited($request)) {
             $this->threats[] = 'rate_limit';
             $this->currentThreatType = 'rate_limit';
-            $context = $this->createInterceptionContext($request, 'rate_limit');
-            if ($this->shouldBlock($context)) {
+            $this->context = $this->createInterceptionContext($request, 'rate_limit');
+            if ($this->shouldBlock($this->context)) {
                 $this->logThreat($request, 'rate_limit', '请求频率超过限制');
                 return $this->blockRequest($request, '请求过于频繁，请稍后再试', 429, 'rate_limit');
             }
@@ -275,8 +280,8 @@ class SecurityMiddleware
         if ($this->isDetectionEnabled('http_method') && $this->hasInvalidMethod($request)) {
             $this->threats[] = 'invalid_method';
             $this->currentThreatType = 'invalid_method';
-            $context = $this->createInterceptionContext($request, 'invalid_method');
-            if ($this->shouldBlock($context)) {
+            $this->context = $this->createInterceptionContext($request, 'invalid_method');
+            if ($this->shouldBlock($this->context)) {
                 $this->logThreat($request, 'invalid_method', '非法HTTP方法: ' . $request->method());
                 return $this->blockRequest($request, '不支持的请求方法', 403, 'invalid_method');
             }
@@ -287,8 +292,8 @@ class SecurityMiddleware
         if ($this->isDetectionEnabled('url_length') && $this->isUrlTooLong($request)) {
             $this->threats[] = 'url_too_long';
             $this->currentThreatType = 'url_too_long';
-            $context = $this->createInterceptionContext($request, 'url_too_long');
-            if ($this->shouldBlock($context)) {
+            $this->context = $this->createInterceptionContext($request, 'url_too_long');
+            if ($this->shouldBlock($this->context)) {
                 $this->logThreat($request, 'url_too_long', 'URL长度超限');
                 return $this->blockRequest($request, '请求URL过长', 403, 'url_too_long');
             }
@@ -300,8 +305,8 @@ class SecurityMiddleware
             $threatType = $this->detectHighRiskAttacks($request);
             if ($threatType !== null) {
                 $this->currentThreatType = $threatType;
-                $context = $this->createInterceptionContext($request, $threatType);
-                if ($this->shouldBlock($context)) {
+                $this->context = $this->createInterceptionContext($request, $threatType);
+                if ($this->shouldBlock($this->context)) {
                     $this->logThreat($request, $threatType, '高危模式匹配: ' . $this->lastMatchedPattern);
                     return $this->blockRequest($request, '请求包含高危安全威胁', 403, $threatType);
                 }
@@ -314,8 +319,8 @@ class SecurityMiddleware
             $xssType = $this->detectXssAttacks($request);
             if ($xssType !== null) {
                 $this->currentThreatType = $xssType;
-                $context = $this->createInterceptionContext($request, $xssType);
-                if ($this->shouldBlock($context)) {
+                $this->context = $this->createInterceptionContext($request, $xssType);
+                if ($this->shouldBlock($this->context)) {
                     $this->logThreat($request, $xssType, 'XSS模式匹配: ' . $this->lastMatchedPattern);
                     return $this->blockRequest($request, '请求包含潜在的安全威胁', 403, $xssType);
                 }
@@ -327,8 +332,8 @@ class SecurityMiddleware
         if ($this->isDetectionEnabled('upload') && $this->hasDangerousUpload($request)) {
             $this->threats[] = 'dangerous_upload';
             $this->currentThreatType = 'dangerous_upload';
-            $context = $this->createInterceptionContext($request, 'dangerous_upload');
-            if ($this->shouldBlock($context)) {
+            $this->context = $this->createInterceptionContext($request, 'dangerous_upload');
+            if ($this->shouldBlock($this->context)) {
                 $this->logThreat($request, 'dangerous_upload', '检测到危险文件上传');
                 return $this->blockRequest($request, '文件上传被拒绝', 403, 'dangerous_upload');
             }
@@ -1553,6 +1558,7 @@ class SecurityMiddleware
             'user_agent' => $request->userAgent(),
             'details' => $details,
             'threat_type' => $this->currentThreatType,
+            'threat_type_text' => $this->context->getThreatTypeDescription(),
             'risk_level' => $this->getRiskLevel($type),
             'request_id' => $this->requestId,
             'timestamp' => now()->toIso8601String(),
