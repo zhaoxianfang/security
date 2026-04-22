@@ -1441,6 +1441,7 @@ class SecurityMiddleware
                 'exception' => $e->getMessage(),
                 'threat_type' => $context->threatType,
                 'ip' => $context->clientIp,
+                'request_id' => $this->requestId,
             ]);
 
             return true;
@@ -1553,6 +1554,7 @@ class SecurityMiddleware
             'details' => $details,
             'threat_type' => $this->currentThreatType,
             'risk_level' => $this->getRiskLevel($type),
+            'request_id' => $this->requestId,
             'timestamp' => now()->toIso8601String(),
         ];
 
