@@ -140,6 +140,16 @@ readonly class InterceptionContext
     }
 
     /**
+     * 获取请求ID
+     *
+     * @return string
+     */
+    public function getRequestId(): string
+    {
+        return $this->request_id;
+    }
+
+    /**
      * 转换为数组格式
      *
      * @return array<string, mixed>
@@ -154,6 +164,7 @@ readonly class InterceptionContext
             'client_ip' => $this->clientIp,
             'method' => $this->method,
             'url' => $this->url,
+            'request_id' => $this->request_id,
             'all_threats' => $this->allThreats,
             'timestamp' => $this->timestamp->format('Y-m-d H:i:s'),
         ];
