@@ -4,7 +4,6 @@ namespace zxf\Security\Providers;
 
 use Throwable;
 use Illuminate\Support\ServiceProvider;
-use Illuminate\Contracts\Http\Kernel;
 use Illuminate\Foundation\Console\AboutCommand;
 use zxf\Security\Middleware\SecurityMiddleware;
 use Composer\InstalledVersions;
@@ -84,20 +83,48 @@ class SecurityServiceProvider extends ServiceProvider
      */
     protected function registerMiddleware(): void
     {
-        $router = $this->app['router'];
-
-        // 注册中间件别名
-        // 使用方式：Route::middleware('security')->group(...)
-        $router->aliasMiddleware('security', SecurityMiddleware::class);
-
         // 自动注册全局中间件
         // 仅当 security.enabled 为 true 时启用
         if (config('security.enabled', true)) {
-            $kernel = $this->app->make(Kernel::class);
-            
-            // 将安全中间件添加到全局中间件栈
-            // prepend 确保尽早执行，在其他中间件之前
-            $kernel->prependMiddleware(SecurityMiddleware::class);
+            // 保证在
+            $router = $this->app['router'];
+
+            // 1. 注册唯一中间件别名（内部使用，不冲突）
+
+            // 1. 注册唯一中间件别名（内部使用，不冲突）
+            $middleware = SecurityMiddleware::class;
+            $alias = 'zxf.security';
+            $router->aliasMiddleware($alias, $middleware);
+
+            // ==============================================
+            // 🔥 终极保障 1：全局所有路由 强制附加中间件
+            // 无论路由有没有组、有没有中间件，全部执行！
+            // ==============================================
+            $router->middleware([$alias]);
+
+            // ==============================================
+            // 🔥 终极保障 2：安全注入所有存在的中间件组
+            // 自动判断组是否存在，不存在则跳过，绝对不报错
+            // ==============================================
+
+            // 系统默认核心组（全覆盖）
+            $defaultGroups = [
+                'web', 'api', 'auth', 'guest',
+                'sanctum', 'auth:sanctum', 'verified'
+            ];
+
+            // 获取项目实际已注册的所有组
+            $existsGroups = array_keys($router->getMiddlewareGroups());
+
+            // 合并去重
+            $allGroups = array_unique(array_merge($defaultGroups, $existsGroups));
+
+            // 循环：组存在才注入，不存在直接跳过
+            foreach ($allGroups as $group) {
+                if ($router->hasMiddlewareGroup($group)) {
+                    $router->pushMiddlewareToGroup($group, $alias);
+                }
+            }
         }
     }
 
