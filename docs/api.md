@@ -53,14 +53,25 @@ $callback = function(InterceptionContext $context) {
 | `ldap` | LDAP注入攻击 |
 | `nosql` | NoSQL注入攻击 |
 | `ssti` | 服务器端模板注入(SSTI) |
+| `ssrf` | 服务器端请求伪造(SSRF) |
+| `header_injection` | HTTP头注入攻击 |
 | `xss` | 跨站脚本攻击(XSS) |
 | `xss_script` | XSS脚本注入 |
 | `xss_dom` | DOM型XSS |
 | `xss_tag` | XSS标签注入 |
+| `xss_encoding` | XSS编码绕过 |
+| `xss_framework` | 框架特定XSS |
+| `encoding` | 编码绕过攻击 |
+| `encoding_bypass` | 编码绕过尝试 |
 | `blacklist` | 黑名单IP访问 |
+| `bad_user_agent` | 恶意User-Agent |
+| `invalid_headers` | 请求头不合法 |
+| `dangerous_upload` | 危险文件上传 |
 | `rate_limit` | 请求频率超限 |
 | `url_too_long` | URL长度超限 |
-| `dangerous_upload` | 危险文件上传 |
+| `body_too_large` | 请求体过大 |
+| `invalid_method` | 非法HTTP方法 |
+| `url_path_attack` | URL路径攻击 |
 
 #### getRiskLevel()
 
@@ -76,8 +87,8 @@ public function getRiskLevel(): string
 
 | 等级 | 威胁类型 |
 |------|----------|
-| high | sql, command, blacklist, dangerous_upload, encoding_bypass, xml, ssti |
-| medium | path, nosql, xss, xss_script, xss_dom, xss_tag, url_path_attack, bad_user_agent |
+| high | sql, command, path, blacklist, dangerous_upload, encoding_bypass, encoding, xml, ssti, ssrf, header_injection |
+| medium | nosql, xss, xss_script, xss_dom, xss_tag, url_path_attack, bad_user_agent |
 | low | xss_encoding, xss_framework, rate_limit, url_too_long, body_too_large, invalid_method, invalid_headers, ldap |
 
 **示例**：

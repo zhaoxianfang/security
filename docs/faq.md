@@ -77,6 +77,8 @@ grep "安全威胁检测" storage/logs/laravel.log | tail -1
 | `xss` | 如果内容是Markdown文档，确保代码块使用 ``` 包裹 |
 | `command` | 检查是否包含 `system(`、`rm -rf` 等危险组合 |
 | `path` | 检查是否包含 `../` 路径遍历，使用 basename() 净化路径 |
+| `ssrf` | 检查是否请求了内网IP/云元数据/危险协议，改用白名单URL |
+| `header_injection` | 检查请求中是否包含 `%0d%0a` 等换行编码 |
 | `rate_limit` | 客户端减少请求频率，或调整 `max_attempts` 阈值 |
 
 **步骤3：临时放行（紧急情况）**
@@ -603,17 +605,84 @@ class ThreatAwareResponseHandler
 })
 ```
 
-### Q: 支持 Laravel 10 吗？
+### Q: 支持哪些 Laravel 版本？
 
-本包要求 Laravel 11+，如需 Laravel 10 支持：
+本包支持 **Laravel 11+、12、13**，使用原生 bootstrap/app.php 中间件注册方式。
 
-1. 降级 illuminate/support 依赖
-2. 修改中间件注册方式（Kernel.php 而非 bootstrap/app.php）
+如需 Laravel 10 支持，请使用本包的旧版本（v3.x）。
 
 ### Q: 支持 PHP 8.1 吗？
 
-本包要求 PHP 8.2+。如需 PHP 8.1 支持：
+本包要求 **PHP 8.2+**。使用了以下 PHP 8.2 特性：
 
-1. 移除 readonly 属性
-2. 移除 null/false/true 独立类型
-3. 修改 composer.json 中的 PHP 版本要求
+- `readonly` 类属性
+- 独立类型声明（null/false/true）
+- `\Random\RandomException` 异常处理
+
+如需 PHP 8.1 支持，请使用本包的旧版本（v3.x）。
+
+### Q: SSRF检测会误拦截吗？
+
+SSRF检测规则经过精心设计，仅匹配明确的攻击特征：
+
+- **内网IP**：正则要求严格匹配 RFC1918 格式（如 `10.1.2.3`），不会匹配随机数字
+- **云元数据**：只匹配已知端点（`169.254.169.254`、`metadata.google.internal`）
+- **危险协议**：仅拦截明确非HTTP协议（`gopher://`、`dict://` 等），不影响正常的 HTTP/HTTPS 请求
+
+如果合法业务需要访问内网地址，可将请求路径加入排除路由：
+
+```php
+'excluded_routes' => [
+    'api/internal/*',  // 内网API调用豁免SSRF检测
+],
+```
+
+### Q: CRLF注入检查会误拦截吗？
+
+CRLF检测两层防护都很精确：
+
+1. **请求参数检测**：仅匹配明确的 `%0d%0a` 编码或 `\r\n` 字符
+2. **请求头值扫描**：仅在 HTTP 头值中发现换行符时才触发
+
+正常业务请求几乎不会在URL或头值中包含这些字符。如果确实需要（如传输包含换行的Base64编码数据），建议：
+
+```php
+// 使用安全的传输方式
+$safeData = base64url_encode($data);  // 使用URL安全的Base64
+```
+
+### Q: 拦截响应包含哪些安全头？
+
+中间件在拦截响应中自动添加以下安全HTTP头：
+
+| 头名称 | 值 | 作用 |
+|-------|-----|------|
+| `X-Content-Type-Options` | `nosniff` | 防止MIME类型嗅探 |
+| `X-Frame-Options` | `DENY` | 防止点击劫持 |
+| `X-XSS-Protection` | `1; mode=block` | 启用浏览器XSS过滤器 |
+| `Referrer-Policy` | `no-referrer` | 不发送Referrer信息 |
+| `Cache-Control` | `no-store, no-cache, must-revalidate, max-age=0` | 禁止缓存拦截页面 |
+| `Pragma` | `no-cache` | 兼容旧版浏览器缓存控制 |
+
+如需自定义安全头，可扩展中间件覆盖 `getSecurityResponseHeaders()` 方法。
+
+### Q: 速率限制的key是怎么计算的？
+
+速率限制使用 **IP + 路由路径** 的组合作为唯一标识：
+
+```php
+$key = 'security:' . $ip . ':' . md5($path);
+```
+
+这意味着：
+- 同一IP访问不同路由，分别计次
+- 不同IP访问同一路由，分别计次
+- 路由路径经过MD5哈希，不会暴露具体路径
+
+可通过 `rate_limit.key_prefix` 配置自定义前缀：
+
+```php
+'rate_limit' => [
+    'key_prefix' => 'my_app',  // 默认 'security'
+],
+```

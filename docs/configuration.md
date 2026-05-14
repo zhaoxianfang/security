@@ -185,6 +185,7 @@ IP白名单，语义上用于特定业务场景（如合作伙伴API）。
     'enabled'       => true,
     'max_attempts'  => 60,
     'decay_minutes' => 1,
+    'key_prefix'    => 'security',
 ],
 ```
 
@@ -195,6 +196,13 @@ IP白名单，语义上用于特定业务场景（如合作伙伴API）。
 | `enabled` | 是否启用 | `true` |
 | `max_attempts` | 时间窗口内最大请求数 | 60（网站）、300（API） |
 | `decay_minutes` | 时间窗口（分钟） | 1 |
+| `key_prefix` | 限流 key 前缀 | `security` |
+
+> **限流 key 说明**：中间件使用 `{key_prefix}:{IP}:{路由路径MD5}` 作为限流 key，避免不同路由间的碰撞。<｜end▁of▁thinking｜>现在让我也更新 headers 配置文档，添加 `detect_crlf` 说明：
+
+<｜｜DSML｜｜tool_calls>
+<｜｜DSML｜｜invoke name="read_file">
+<｜｜DSML｜｜parameter name="filePath" string="true">/Users/aha/www/security/docs/configuration.md
 
 ### 场景建议
 
@@ -378,6 +386,11 @@ class SecurityInterceptor
 | `path` | 路径遍历（../../../） |
 | `ldap` | LDAP注入 |
 | `xml` | XXE/XML注入 |
+| `nosql` | NoSQL注入（MongoDB操作符注入） |
+| `ssti` | 服务器端模板注入 |
+| `ssrf` | 服务器端请求伪造（内网IP、云元数据、危险协议） |
+| `encoding` | 编码绕过攻击 |
+| `header_injection` | HTTP头注入和响应拆分 |
 
 **自定义规则示例**：
 
@@ -426,8 +439,16 @@ XSS攻击检测配置。
     'max_size'             => 10 * 1024 * 1024,  // 10MB
     'allowed_extensions'   => ['jpg', 'png', ...],
     'blocked_extensions'   => ['php', 'jsp', ...],
+    'check_mime_magic'     => env('SECURITY_UPLOAD_CHECK_MIME', false),
+    'mime_magic_map'       => [],
 ],
 ```
+
+### check_mime_magic（深度MIME验证）
+
+启用后，中间件会读取文件头部魔数字节，验证扩展名与真实内容是否一致。防止攻击者将 `.php` 文件改名 `.jpg` 上传。
+
+⚠️ **注意**：会轻微增加 CPU 开销，高并发场景建议配合 CDN 使用。
 
 ### blocked_extensions 默认列表
 
@@ -451,6 +472,7 @@ XSS攻击检测配置。
 1. 上传目录不应有执行权限
 2. 建议重命名上传文件
 3. 图片文件应二次处理（压缩/转换）
+4. 生产环境建议开启 `check_mime_magic`
 
 ## 其他配置
 
@@ -732,15 +754,18 @@ URL路径遍历攻击检测配置。
     'path' => 'high',
     'xml' => 'high',
     'ssti' => 'high',
+    'ssrf' => 'high',
     'blacklist' => 'high',
     'encoding_bypass' => 'high',
+    'encoding' => 'high',
+    'header_injection' => 'high',
+    'dangerous_upload' => 'high',
 
     // 中危 - 可能造成数据泄露或损坏
     'nosql' => 'medium',
     'xss_script' => 'medium',
     'xss_dom' => 'medium',
     'xss_tag' => 'medium',
-    'dangerous_upload' => 'medium',
     'url_path_attack' => 'medium',
     'bad_user_agent' => 'medium',
 
@@ -778,6 +803,9 @@ URL路径遍历攻击检测配置。
 | rate_limit.enabled | `SECURITY_RATE_LIMIT_ENABLED` | `true` |
 | rate_limit.max_attempts | `SECURITY_RATE_LIMIT_ATTEMPTS` | `60` |
 | rate_limit.decay_minutes | `SECURITY_RATE_LIMIT_DECAY` | `1` |
+| rate_limit.key_prefix | `SECURITY_RATE_LIMIT_KEY_PREFIX` | `security` |
+| headers.detect_crlf | `SECURITY_DETECT_CRLF` | `true` |
+| upload.check_mime_magic | `SECURITY_UPLOAD_CHECK_MIME` | `false` |
 | response.show_threat_details | `SECURITY_SHOW_DETAILS` | `false` |
 | url_path_detection.enabled | `SECURITY_URL_PATH_DETECTION` | `true` |
 | encoding_detection.enabled | `SECURITY_ENCODING_DETECTION` | `true` |
@@ -808,6 +836,13 @@ SECURITY_DETECT_UPLOAD=true
 SECURITY_RATE_LIMIT_ENABLED=true
 SECURITY_RATE_LIMIT_ATTEMPTS=60
 SECURITY_RATE_LIMIT_DECAY=1
+SECURITY_RATE_LIMIT_KEY_PREFIX=security
+
+# HTTP头安全检查
+SECURITY_DETECT_CRLF=true
+
+# 文件上传
+SECURITY_UPLOAD_CHECK_MIME=false
 
 # 响应配置
 SECURITY_SHOW_DETAILS=false

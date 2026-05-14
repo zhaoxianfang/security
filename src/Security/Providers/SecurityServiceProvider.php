@@ -86,12 +86,9 @@ class SecurityServiceProvider extends ServiceProvider
         // 自动注册全局中间件
         // 仅当 security.enabled 为 true 时启用
         if (config('security.enabled', true)) {
-            // 保证在
             $router = $this->app['router'];
 
-            // 1. 注册唯一中间件别名（内部使用，不冲突）
-
-            // 1. 注册唯一中间件别名（内部使用，不冲突）
+            // 注册唯一中间件别名（内部使用，不冲突）
             $middleware = SecurityMiddleware::class;
             $alias = 'zxf.security';
             $router->aliasMiddleware($alias, $middleware);

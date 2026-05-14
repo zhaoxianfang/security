@@ -108,7 +108,9 @@ class IpMatcherService
     /**
      * CIDR网段匹配
      *
-     * @param string $ip IPv4地址
+     * 支持 IPv4 和 IPv6 的 CIDR 网段匹配。
+     *
+     * @param string $ip IP地址（IPv4 或 IPv6）
      * @param string $range CIDR格式网段
      * @return bool
      */
@@ -117,10 +119,29 @@ class IpMatcherService
         [$subnet, $bits] = explode('/', $range);
         $bits = (int) $bits;
 
-        if (!filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
-            return false;
+        // IPv6 CIDR 匹配
+        if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6)) {
+            return $this->cidrMatchIPv6($ip, $subnet, $bits);
         }
 
+        // IPv4 CIDR 匹配
+        if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
+            return $this->cidrMatchIPv4($ip, $subnet, $bits);
+        }
+
+        return false;
+    }
+
+    /**
+     * IPv4 CIDR 网段匹配
+     *
+     * @param string $ip IPv4 地址
+     * @param string $subnet 子网地址
+     * @param int $bits 前缀长度
+     * @return bool
+     */
+    protected function cidrMatchIPv4(string $ip, string $subnet, int $bits): bool
+    {
         $ipLong = ip2long($ip);
         $subnetLong = ip2long($subnet);
 
@@ -132,5 +153,51 @@ class IpMatcherService
         $subnetLong &= $mask;
 
         return ($ipLong & $mask) === $subnetLong;
+    }
+
+    /**
+     * IPv6 CIDR 网段匹配
+     *
+     * 使用 PHP 的 inet_pton 将 IPv6 地址转换为二进制字符串进行按位比较。
+     *
+     * @param string $ip IPv6 地址
+     * @param string $subnet 子网地址
+     * @param int $bits 前缀长度
+     * @return bool
+     */
+    protected function cidrMatchIPv6(string $ip, string $subnet, int $bits): bool
+    {
+        $ipBin = inet_pton($ip);
+        $subnetBin = inet_pton($subnet);
+
+        if ($ipBin === false || $subnetBin === false) {
+            return false;
+        }
+
+        // IPv6 地址为 128 位（16 字节）
+        if (strlen($ipBin) !== 16 || strlen($subnetBin) !== 16) {
+            return false;
+        }
+
+        // 按字节比较
+        $fullBytes = intdiv($bits, 8);
+        $remainingBits = $bits % 8;
+
+        // 先比较完整字节
+        for ($i = 0; $i < $fullBytes; $i++) {
+            if ($ipBin[$i] !== $subnetBin[$i]) {
+                return false;
+            }
+        }
+
+        // 如果有剩余位，比较不完整字节
+        if ($remainingBits > 0 && $fullBytes < 16) {
+            $mask = 0xFF << (8 - $remainingBits);
+            if ((ord($ipBin[$fullBytes]) & $mask) !== (ord($subnetBin[$fullBytes]) & $mask)) {
+                return false;
+            }
+        }
+
+        return true;
     }
 }

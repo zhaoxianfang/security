@@ -1,13 +1,13 @@
 <p align="center">
 
-![Security’s Logo](./resources/images/security.jpg)
+![Security's Logo](./resources/images/security.jpg)
 
 </p>
 
 # zxf/security - Laravel 安全中间件
 
 [![PHP](https://img.shields.io/badge/php-8.2+-8892bf)](https://php.net)
-[![Laravel](https://img.shields.io/badge/laravel-11+-ff2d20)](https://laravel.com)
+[![Laravel](https://img.shields.io/badge/laravel-11+|12|13-ff2d20)](https://laravel.com)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 **简洁、高效、智能的 Laravel 安全防护中间件**
@@ -17,14 +17,17 @@
 ## 特性
 
 - **14层安全防护** - 全面的安全检测体系，从URL路径到文件上传层层防护
-- **精准拦截** - 高危攻击（SQL注入、命令注入、路径遍历、NoSQL、SSTI）严格拦截
+- **精准拦截** - 高危攻击（SQL注入、命令注入、路径遍历、NoSQL、SSTI、SSRF）严格拦截
+- **SSRF检测** - 检测服务器端请求伪造攻击，包括内网IP、云元数据、危险协议等
 - **编码绕过检测** - 检测多重URL编码、UTF-8过度编码、空字节注入等绕过技术
+- **CRLF/Header注入检测** - 检测HTTP头注入和响应拆分攻击
 - **智能识别** - 自动识别Markdown文档内容，代码块内的标签不会误拦截
 - **零缓存依赖** - 不使用Redis/Memcached，直接使用Laravel原生功能
 - **高性能** - 单次请求处理耗时 < 1ms
-- **CIDR支持** - IP黑白名单支持网段格式（如 `192.168.0.0/16`）
+- **CIDR支持** - IP黑白名单支持IPv4和IPv6网段格式（如 `192.168.0.0/16`、`2001:db8::/32`）
 - **拦截回调** - 支持自定义拦截决策，实现动态放行策略
 - **自定义视图** - 支持自定义拦截页面，支持Blade视图/闭包/类方法
+- **安全响应头** - 拦截响应自动添加安全HTTP头（X-Content-Type-Options, X-Frame-Options 等）
 
 ---
 
@@ -57,10 +60,13 @@ SECURITY_RATE_LIMIT_ATTEMPTS=60
 中间件会自动注册。如需手动控制，编辑 `bootstrap/app.php`：
 
 ```php
+// Laravel 11+
 ->withMiddleware(function (Middleware $middleware) {
     $middleware->append(\zxf\Security\Middleware\SecurityMiddleware::class);
 })
 ```
+
+> ✅ 支持 Laravel 11、12、13
 
 ---
 
@@ -73,16 +79,19 @@ SECURITY_RATE_LIMIT_ATTEMPTS=60
 | URL路径攻击检测 | 直接检测URL中的路径遍历等攻击 |
 | 多重编码检测 | 检测空字节、UTF-8过度编码、多重URL编码等绕过技术 |
 | User-Agent检查 | 封禁已知恶意扫描器 |
-| HTTP头检查 | 验证Host头和禁止的头信息 |
+| HTTP头检查 | 验证Host头、禁止的头信息、CRLF注入检测 |
 | 请求体大小限制 | 防止内存溢出攻击 |
-| 速率限制 | 防止暴力破解、CC攻击 |
+| 速率限制 | 防止暴力破解、CC攻击（IP+路由组合key） |
 | SQL注入检测 | UNION注入、堆叠查询、时间盲注、错误注入 |
 | 命令注入检测 | 系统命令执行防护 |
 | 路径遍历检测 | `../../../etc/passwd` 等 |
 | NoSQL注入检测 | MongoDB等NoSQL数据库注入防护 |
 | SSTI检测 | 服务器端模板注入防护 |
+| SSRF检测 | 内网IP访问、云元数据、危险协议 |
+| CRLF/Header注入检测 | HTTP头注入和响应拆分攻击 |
 | XSS防护 | 智能识别Markdown代码块 |
 | 文件上传检查 | 禁止WebShell上传 |
+| 安全响应头 | 拦截响应添加 X-Content-Type-Options 等安全头 |
 
 ---
 

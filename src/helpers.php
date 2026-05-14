@@ -134,26 +134,28 @@ if (!function_exists('ip_in_cidr')) {
      * 检查IP地址是否在CIDR范围内
      *
      * CIDR（无类别域间路由）表示法如 192.168.1.0/24
-     * 本函数支持IPv4的精确匹配和网段匹配。
+     * 本函数支持IPv4和IPv6的精确匹配和网段匹配。
      *
      * 算法原理：
-     * 1. 将IP地址转换为32位整数
-     * 2. 计算掩码：-1 << (32 - 前缀长度)
-     * 3. IP和子网分别与掩码进行按位与
-     * 4. 比较结果是否相等
+     * IPv4: 将IP地址转换为32位整数，计算掩码并比较
+     * IPv6: 使用 inet_pton 转换为二进制，按位比较
      *
      * 性能说明：
      * - 精确匹配：O(1)字符串比较
      * - CIDR匹配：O(1)位运算，极快
      *
-     * @param string $ip    要检查的IP地址（IPv4）
+     * @param string $ip    要检查的IP地址（IPv4或IPv6）
      * @param string $cidr  CIDR范围，如 '192.168.1.0/24' 或单个IP '192.168.1.100'
      * @return bool true=IP在范围内，false=不在范围内
      *
      * @example
-     * // CIDR网段匹配
+     * // IPv4 CIDR网段匹配
      * $inRange = ip_in_cidr('192.168.1.50', '192.168.1.0/24'); // true
      * $inRange = ip_in_cidr('192.168.2.1', '192.168.1.0/24');  // false
+     *
+     * @example
+     * // IPv6 CIDR网段匹配
+     * $inRange = ip_in_cidr('2001:db8::1', '2001:db8::/32'); // true
      *
      * @example
      * // 精确匹配（不含斜杠）
@@ -177,6 +179,38 @@ if (!function_exists('ip_in_cidr')) {
         [$subnet, $prefixLength] = explode('/', $cidr);
         $prefixLength = (int) $prefixLength;
 
+        // IPv6处理
+        if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6)) {
+            $ipBin = inet_pton($ip);
+            $subnetBin = inet_pton($subnet);
+
+            if ($ipBin === false || $subnetBin === false) {
+                return false;
+            }
+
+            if (strlen($ipBin) !== 16 || strlen($subnetBin) !== 16) {
+                return false;
+            }
+
+            $fullBytes = intdiv($prefixLength, 8);
+            $remainingBits = $prefixLength % 8;
+
+            for ($i = 0; $i < $fullBytes; $i++) {
+                if ($ipBin[$i] !== $subnetBin[$i]) {
+                    return false;
+                }
+            }
+
+            if ($remainingBits > 0 && $fullBytes < 16) {
+                $mask = 0xFF << (8 - $remainingBits);
+                if ((ord($ipBin[$fullBytes]) & $mask) !== (ord($subnetBin[$fullBytes]) & $mask)) {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
         // IPv4处理
         if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
             // 将IP地址转换为32位长整数
@@ -199,7 +233,7 @@ if (!function_exists('ip_in_cidr')) {
             return ($ipLong & $mask) === $subnetLong;
         }
 
-        // IPv6暂不实现CIDR匹配，仅支持精确匹配
+        // 不支持的IP格式
         return false;
     }
 }

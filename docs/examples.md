@@ -437,6 +437,123 @@ class AutoBlockFailedLogins
 
 ---
 
+## SSRF检测配置
+
+### 基础SSRF防护
+
+SSRF（服务器端请求伪造）检测已内置在 `high_risk_patterns.ssrf` 中，开箱即用：
+
+```php
+// 检测类型包括：
+// - 内网IP访问（127.0.0.1, 10.x, 172.16-31.x, 192.168.x）
+// - 云元数据端点（169.254.169.254, metadata.google.internal）
+// - 危险协议（gopher, dict, file, ftp, ldap, tftp）
+// - DNS rebinding（nip.io, xip.io）
+// - 端口探测
+
+// 自定义SSRF检测规则
+'high_risk_patterns' => [
+    'ssrf' => [
+        // 添加额外的内网域名
+        '/\b(internal|localhost|localdomain)\b/i',
+        // 添加更多危险协议
+        '/\b(jar|netdoc|mailto|php):\/\//i',
+    ],
+],
+```
+
+### 自定义SSRF回调处理
+
+```php
+'before_block_callback' => function($context) {
+    // SSRF 尝试记录到专门的安全系统
+    if ($context->threatType === 'ssrf') {
+        \App\Models\SsrfAttempt::create([
+            'ip' => $context->clientIp,
+            'url' => $context->url,
+            'matched_content' => $context->matchedContent,
+            'created_at' => now(),
+        ]);
+    }
+
+    return true;
+},
+```
+
+---
+
+## CRLF/HTTP头注入检测
+
+### 基础CRLF防护
+
+CRLF注入检测在两层工作：
+1. **配置规则层**：检测请求参数中的CRLF特征
+2. **运行时检查层**：扫描所有HTTP头值中的 `\r` `\n` 字符
+
+```php
+// 运行时CRLF检测在 headers 配置中控制
+'headers' => [
+    'enabled' => true,
+    'detect_crlf' => true, // 启用头值CRLF扫描
+],
+```
+
+### 自定义CRLF处理
+
+```php
+'before_block_callback' => function($context) {
+    if ($context->threatType === 'header_injection') {
+        // CRLF注入通常来自恶意扫描器
+        \Log::channel('security')->warning('CRLF injection attempt', [
+            'ip' => $context->clientIp,
+            'matched' => $context->matchedContent,
+        ]);
+
+        // 自动加入临时黑名单
+        \Cache::put(
+            'crlf_blocked:' . $context->clientIp,
+            true,
+            now()->addHours(24)
+        );
+    }
+
+    return true;
+},
+```
+
+---
+
+## 安全响应头配置
+
+### 自定义安全响应头
+
+中间件在拦截响应中自动添加安全HTTP头。如需自定义：
+
+```php
+// 扩展中间件覆盖安全响应头方法
+namespace App\Http\Middleware;
+
+use zxf\Security\Middleware\SecurityMiddleware as BaseMiddleware;
+
+class CustomSecurityMiddleware extends BaseMiddleware
+{
+    protected function getSecurityResponseHeaders(): array
+    {
+        return [
+            'X-Content-Type-Options' => 'nosniff',
+            'X-Frame-Options' => 'SAMEORIGIN',  // 允许同源iframe
+            'X-XSS-Protection' => '1; mode=block',
+            'Referrer-Policy' => 'strict-origin-when-cross-origin',
+            'Cache-Control' => 'no-store, max-age=0',
+            'Pragma' => 'no-cache',
+            'X-Permitted-Cross-Domain-Policies' => 'none',
+        ];
+    }
+}
+```
+
+---
+
 ## 环境配置示例
 
 ### 生产环境
@@ -448,6 +565,12 @@ SECURITY_SHOW_DETAILS=false
 SECURITY_RATE_LIMIT_ENABLED=true
 SECURITY_RATE_LIMIT_ATTEMPTS=60
 SECURITY_RATE_LIMIT_DECAY=1
+SECURITY_RATE_LIMIT_KEY_PREFIX=production
+
+# SSRF 和 CRLF 检测默认始终启用
+# 如需关闭特定检测：
+# SECURITY_DETECT_HIGH_RISK=true
+# SECURITY_DETECT_HEADERS=true
 ```
 
 ### 开发环境
@@ -457,4 +580,5 @@ SECURITY_ENABLED=true
 SECURITY_LOG_ENABLED=true
 SECURITY_SHOW_DETAILS=true
 SECURITY_RATE_LIMIT_ENABLED=false
+SECURITY_RATE_LIMIT_KEY_PREFIX=development
 ```

@@ -62,6 +62,8 @@ readonly class InterceptionContext
         'blacklist' => '黑名单IP访问',
         'dangerous_upload' => '危险文件上传',
         'encoding_bypass' => '编码绕过攻击',
+        'encoding' => '编码绕过攻击',
+        'ssrf' => '服务器端请求伪造(SSRF)',
 
         // XSS攻击
         'xss' => '跨站脚本攻击(XSS)',
@@ -77,6 +79,7 @@ readonly class InterceptionContext
         'body_too_large' => '请求体过大',
         'invalid_method' => '非法HTTP方法',
         'invalid_headers' => '请求头不合法',
+        'header_injection' => 'HTTP头注入攻击',
 
         // 其他
         'bad_user_agent' => '恶意User-Agent',
@@ -92,14 +95,17 @@ readonly class InterceptionContext
         // 高危
         'sql' => 'high',
         'command' => 'high',
+        'path' => 'high',
         'blacklist' => 'high',
         'dangerous_upload' => 'high',
         'encoding_bypass' => 'high',
+        'encoding' => 'high',
         'xml' => 'high',
         'ssti' => 'high',
+        'ssrf' => 'high',
+        'header_injection' => 'high',
 
         // 中危
-        'path' => 'medium',
         'nosql' => 'medium',
         'xss' => 'medium',
         'xss_script' => 'medium',

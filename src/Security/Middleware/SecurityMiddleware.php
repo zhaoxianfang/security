@@ -125,7 +125,7 @@ class SecurityMiddleware
     {
         $levels = $this->config['threat_risk_levels'] ?? [];
         $defaultLevels = [
-            // 高危
+            // 高危 - 可能导致服务器被接管
             'sql' => 'high',
             'command' => 'high',
             'path' => 'high',
@@ -133,17 +133,17 @@ class SecurityMiddleware
             'ssti' => 'high',
             'blacklist' => 'high',
             'encoding_bypass' => 'high',
+            'dangerous_upload' => 'high',
 
-            // 中危
+            // 中危 - 可能造成数据泄露或损坏
             'nosql' => 'medium',
             'xss_script' => 'medium',
             'xss_dom' => 'medium',
             'xss_tag' => 'medium',
-            'dangerous_upload' => 'medium',
             'url_path_attack' => 'medium',
             'bad_user_agent' => 'medium',
 
-            // 低危
+            // 低危 - 可能是误报或低风险行为
             'ldap' => 'low',
             'xss_encoding' => 'low',
             'xss_framework' => 'low',
@@ -189,7 +189,12 @@ class SecurityMiddleware
         }
 
         // 生成唯一请求ID
-        $this->requestId = 'SEC_' . strtoupper(uniqid()) . '_' . substr(md5(random_bytes(8)), 0, 8);
+        try {
+            $randomBytes = random_bytes(8);
+        } catch (\Random\RandomException) {
+            $randomBytes = (string) random_int(10000000, 99999999);
+        }
+        $this->requestId = 'SEC_' . strtoupper(uniqid()) . '_' . substr(md5($randomBytes), 0, 8);
 
         // ========== 第二层：IP 黑名单检查 ==========
         if ($this->isBlacklisted($ip, $request)) {
@@ -367,7 +372,7 @@ class SecurityMiddleware
 
             // 正则表达式
             if (is_string($pattern) && str_starts_with($pattern, '/')) {
-                if (preg_match($pattern, $request->path())) {
+                if ($this->safePregMatch($pattern, $request->path())) {
                     return true;
                 }
                 continue;
@@ -468,14 +473,14 @@ class SecurityMiddleware
         $pathPatterns = $config['path_patterns'] ?? [];
 
         // 检查所有来源
-        foreach ($checkSources as $source => $strings) {
+        foreach ($checkSources as $_source => $strings) {
             foreach ($strings as $checkString) {
                 if (!is_string($checkString) || empty($checkString)) {
                     continue;
                 }
 
                 foreach ($pathPatterns as $pattern) {
-                    if (preg_match($pattern, $checkString)) {
+                    if ($this->safePregMatch($pattern, $checkString)) {
                         $this->lastMatchedPattern = $pattern;
                         $this->lastMatchedContent = substr($checkString, 0, 100);
                         return true;
@@ -563,10 +568,10 @@ class SecurityMiddleware
         // 检测无效的UTF-8序列（可能的UTF-8攻击）
         if ($config['detect_utf8_overlong'] ?? true) {
             $path = $request->path();
-            if (preg_match('/%[c-f][0-9a-f](?:%[8-9a-b][0-9a-f])+/i', $path)) {
+            if ($this->safePregMatch('/%[c-f][0-9a-f](?:%[8-9a-b][0-9a-f])+/i', $path)) {
                 // 可能是UTF-8过度编码攻击
                 $decoded = urldecode($path);
-                if (preg_match('/(?:\.\.\/|\.\.\\\\)/', $decoded)) {
+                if ($this->safePregMatch('/(?:\.\.\/|\.\.\\\\)/', $decoded)) {
                     $this->lastMatchedPattern = 'utf8_overlong_encoding';
                     $this->lastMatchedContent = substr($decoded, 0, 100);
                     return true;
@@ -606,7 +611,7 @@ class SecurityMiddleware
 
             // 正则表达式
             if (is_string($item) && str_starts_with($item, '/')) {
-                if (preg_match($item, $request->userAgent())) {
+                if ($this->safePregMatch($item, $request->userAgent())) {
                     return true;
                 }
                 continue;
@@ -644,6 +649,20 @@ class SecurityMiddleware
         foreach ($forbidden as $header) {
             if ($request->hasHeader($header)) {
                 return true;
+            }
+        }
+
+        // CRLF/Header注入检测 - 检查头部值中是否包含换行符
+        if ($headersConfig['detect_crlf'] ?? true) {
+            $allHeaders = $request->headers->all();
+            foreach ($allHeaders as $name => $values) {
+                foreach ((array) $values as $value) {
+                    if (str_contains($value, "\r") || str_contains($value, "\n")) {
+                        $this->lastMatchedPattern = 'crlf_injection_in_header:' . $name;
+                        $this->lastMatchedContent = substr($value, 0, 100);
+                        return true;
+                    }
+                }
             }
         }
 
@@ -711,7 +730,10 @@ class SecurityMiddleware
             return false;
         }
 
-        $key = 'security:' . $request->ip();
+        // 使用 IP + 路由路径组合作为限流 key，避免不同路由间的碰撞
+        // 同时支持配置自定义 key 前缀
+        $prefix = $rateLimit['key_prefix'] ?? 'security';
+        $key = $prefix . ':' . $request->ip() . ':' . md5($request->path());
         $maxAttempts = $rateLimit['max_attempts'] ?? 60;
         $decayMinutes = $rateLimit['decay_minutes'] ?? 1;
 
@@ -806,7 +828,7 @@ class SecurityMiddleware
 
         foreach ($patterns as $type => $typePatterns) {
             foreach ($typePatterns as $pattern) {
-                if (preg_match($pattern, $input, $matches)) {
+                if ($this->safePregMatch($pattern, $input, $matches)) {
                     $this->threats[] = $type;
                     $this->lastMatchedPattern = $pattern;
                     $this->lastMatchedContent = $this->sanitizeMatchedContent($matches[0] ?? '');
@@ -853,10 +875,6 @@ class SecurityMiddleware
         $rawInput = $this->truncateInput($rawInput);
         $cleanInput = $this->truncateInput($cleanInput);
 
-        if (empty($patterns)) {
-            return null;
-        }
-
         // 检查请求体输入
         $inputResult = $this->checkXssPatterns($patterns, $cleanInput, $rawInput);
         if ($inputResult !== null) {
@@ -882,7 +900,7 @@ class SecurityMiddleware
 
         foreach ($patterns as $type => $typePatterns) {
             foreach ($typePatterns as $pattern) {
-                if (preg_match($pattern, $input, $matches)) {
+                if ($this->safePregMatch($pattern, $input, $matches)) {
                     if ($this->isLikelyMarkdownContent($rawInput, $pattern)) {
                         continue;
                     }
@@ -963,7 +981,7 @@ class SecurityMiddleware
 
         $markdownSyntaxCount = 0;
         foreach ($markdownPatterns as $pattern) {
-            if (preg_match($pattern, $content)) {
+            if ($this->safePregMatch($pattern, $content)) {
                 $markdownSyntaxCount++;
             }
         }
@@ -994,7 +1012,7 @@ class SecurityMiddleware
         // 先找到匹配的行
         $matchedLineIndex = -1;
         foreach ($lines as $index => $line) {
-            if (preg_match($pattern, $line)) {
+            if ($this->safePregMatch($pattern, $line)) {
                 $matchedLineIndex = $index;
                 break;
             }
@@ -1026,6 +1044,40 @@ class SecurityMiddleware
     }
 
     // ==================== 辅助方法 ====================
+
+    /**
+     * 安全执行 preg_match，捕获并处理 PCRE 编译错误
+     *
+     * PCRE2（PHP 7.3+）不支持 \F, \L, \l, \N{name}, \U, \u 等转义序列。
+     * 如果用户配置的正则模式包含这些不支持的特性，preg_match 会返回 false 并产生警告。
+     * 本方法封装了错误处理，防止正则编译失败导致运行时崩溃。
+     *
+     * @param string $pattern 正则表达式模式
+     * @param string $subject 要匹配的字符串
+     * @param array|null $matches 匹配结果数组（引用）
+     * @return bool true=匹配成功，false=未匹配或正则错误
+     */
+    protected function safePregMatch(string $pattern, string $subject, ?array &$matches = null): bool
+    {
+        if (empty($pattern) || empty($subject)) {
+            return false;
+        }
+
+        // 使用 @ 抑制 PHP 警告，通过 preg_last_error 判断是否出错
+        $result = @preg_match($pattern, $subject, $matches);
+
+        if ($result === false) {
+            $errorMsg = preg_last_error_msg();
+            Log::warning('[Security] 正则表达式编译失败，已跳过该规则', [
+                'pattern' => substr($pattern, 0, 100),
+                'error' => $errorMsg,
+                'request_id' => $this->requestId,
+            ]);
+            return false;
+        }
+
+        return $result === 1;
+    }
 
     /**
      * 获取请求的输入字符串
@@ -1071,6 +1123,35 @@ class SecurityMiddleware
     }
 
     /**
+     * 安全执行 preg_replace，捕获并处理 PCRE 编译错误
+     *
+     * @param string $pattern 正则表达式模式
+     * @param string $replacement 替换字符串
+     * @param string $subject 要处理的字符串
+     * @return string 处理后的字符串，出错时返回原始字符串
+     */
+    protected function safePregReplace(string $pattern, string $replacement, string $subject): string
+    {
+        if (empty($pattern) || $subject === '') {
+            return $subject;
+        }
+
+        $result = @preg_replace($pattern, $replacement, $subject);
+
+        if ($result === null) {
+            $errorMsg = preg_last_error_msg();
+            Log::warning('[Security] 正则替换失败，保留原内容', [
+                'pattern' => substr($pattern, 0, 100),
+                'error' => $errorMsg,
+                'request_id' => $this->requestId,
+            ]);
+            return $subject;
+        }
+
+        return $result;
+    }
+
+    /**
      * 移除Markdown代码块
      *
      * @param string $content 原始内容
@@ -1078,15 +1159,20 @@ class SecurityMiddleware
      */
     protected function removeMarkdownCodeBlocks(string $content): string
     {
-        $content = preg_replace('/```[\s\S]*?```/', ' ', $content);
-        $content = preg_replace('/~~~[\s\S]*?~~~/', ' ', $content);
-        $content = preg_replace('/`[^`]+`/', ' ', $content);
+        $content = $this->safePregReplace('/```[\s\S]*?```/', ' ', $content);
+        $content = $this->safePregReplace('/~~~[\s\S]*?~~~/', ' ', $content);
+        $content = $this->safePregReplace('/`[^`]+`/', ' ', $content);
 
         return $content;
     }
 
     /**
      * 检查文件上传是否包含危险文件
+     *
+     * 检查维度：
+     * 1. 文件扩展名黑名单
+     * 2. 文件大小限制
+     * 3. MIME magic bytes 深度验证（防止扩展名伪装）
      *
      * @param Request $request HTTP请求对象
      * @return bool true=包含危险文件，false=文件安全或没有上传
@@ -1107,23 +1193,122 @@ class SecurityMiddleware
 
         $blockedExtensions = $upload['blocked_extensions'] ?? [];
         $maxSize = $upload['max_size'] ?? 10 * 1024 * 1024;
+        $checkMimeMagic = $upload['check_mime_magic'] ?? false;
 
         foreach ($files as $file) {
             $fileList = is_array($file) ? $file : [$file];
 
             foreach ($fileList as $singleFile) {
+                // 1. 扩展名检查
                 $extension = strtolower($singleFile->getClientOriginalExtension());
                 if (in_array($extension, $blockedExtensions, true)) {
                     return true;
                 }
 
+                // 2. 文件大小检查
                 if ($singleFile->getSize() > $maxSize) {
                     return true;
+                }
+
+                // 3. MIME magic bytes 深度验证（防止扩展名伪装）
+                if ($checkMimeMagic && $singleFile->isValid()) {
+                    if ($this->detectMimeTypeMismatch($singleFile)) {
+                        return true;
+                    }
                 }
             }
         }
 
         return false;
+    }
+
+    /**
+     * 检测文件MIME类型与实际内容不匹配（Magic Bytes检测）
+     *
+     * 通过读取文件头部魔数字节，验证文件扩展名是否与真实内容一致。
+     * 防止攻击者将 .php 文件改名为 .jpg 上传。
+     *
+     * @param \Illuminate\Http\UploadedFile $file 上传文件
+     * @return bool true=类型不匹配（危险），false=类型匹配或无法判断
+     */
+    protected function detectMimeTypeMismatch(\Illuminate\Http\UploadedFile $file): bool
+    {
+        $claimExt = strtolower($file->getClientOriginalExtension());
+
+        if (empty($claimExt)) {
+            return true; // 无扩展名，视为危险
+        }
+
+        // 从配置获取允许的MIME类型映射
+        $allowedExtensions = $this->config['upload']['allowed_extensions'] ?? [];
+        $mimeMap = $this->config['upload']['mime_magic_map'] ?? $this->getDefaultMimeMagicMap();
+
+        // 如果扩展名不在允许列表中，跳过 magic bytes 检查（扩展名检查会处理）
+        if (!in_array($claimExt, $allowedExtensions, true)) {
+            return false;
+        }
+
+        // 获取预期MIME类型
+        $expectedMime = $mimeMap[$claimExt] ?? null;
+
+        if ($expectedMime === null) {
+            return false; // 无预期映射，不做判断
+        }
+
+        $detectedMime = $file->getMimeType();
+
+        // 如果声明的扩展名对应的MIME不匹配实际MIME，可能被伪装
+        $expectedList = is_array($expectedMime) ? $expectedMime : [$expectedMime];
+
+        if (!in_array($detectedMime, $expectedList, true)) {
+            $this->lastMatchedPattern = 'mime_mismatch:' . $claimExt;
+            $this->lastMatchedContent = sprintf(
+                'Extension: %s → Expected: %s → Got: %s',
+                $claimExt,
+                implode('|', $expectedList),
+                $detectedMime ?? 'unknown'
+            );
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * 获取默认的 MIME magic bytes 映射表
+     *
+     * @return array<string, string|array<string>>
+     */
+    protected function getDefaultMimeMagicMap(): array
+    {
+        return [
+            // 图片类
+            'jpg' => ['image/jpeg', 'image/jpg'],
+            'jpeg' => ['image/jpeg', 'image/jpg'],
+            'png' => 'image/png',
+            'gif' => 'image/gif',
+            'webp' => 'image/webp',
+            'bmp' => 'image/bmp',
+
+            // 文档类
+            'pdf' => 'application/pdf',
+            'doc' => 'application/msword',
+            'docx' => 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            'xls' => 'application/vnd.ms-excel',
+            'xlsx' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'csv' => ['text/csv', 'text/plain'],
+            'txt' => 'text/plain',
+            'md' => ['text/markdown', 'text/plain'],
+
+            // 压缩包
+            'zip' => ['application/zip', 'application/x-zip-compressed'],
+            'rar' => 'application/vnd.rar',
+            'gz' => ['application/gzip', 'application/x-gzip'],
+
+            // 音视频
+            'mp3' => ['audio/mpeg', 'audio/mp3'],
+            'mp4' => 'video/mp4',
+        ];
     }
 
     /**
@@ -1156,20 +1341,45 @@ class SecurityMiddleware
             $showDetails
         );
 
+        // 安全响应头
+        $securityHeaders = $this->getSecurityResponseHeaders();
+
         // JSON 响应
         if ($request->expectsJson() || $request->is('api/*') || $request->ajax()) {
-            return response()->json($interceptionData, $status);
+            return response()->json($interceptionData, $status)
+                ->withHeaders($securityHeaders);
         }
 
         // 检查是否配置了自定义视图
         $viewConfig = $this->config['response']['view'] ?? null;
 
         if ($viewConfig !== null && $viewConfig !== '') {
-            return $this->renderViewResponse($viewConfig, $interceptionData, $status);
+            return $this->renderViewResponse($viewConfig, $interceptionData, $status)
+                ->withHeaders($securityHeaders);
         }
 
         // 使用默认的安全拦截视图 security::error
-        return response()->view('security::error', $interceptionData, $status);
+        return response()->view('security::error', $interceptionData, $status)
+            ->withHeaders($securityHeaders);
+    }
+
+    /**
+     * 获取安全响应头
+     *
+     * 在拦截响应中添加安全相关的HTTP头，增强整体安全性。
+     *
+     * @return array<string, string>
+     */
+    protected function getSecurityResponseHeaders(): array
+    {
+        return [
+            'X-Content-Type-Options' => 'nosniff',
+            'X-Frame-Options' => 'DENY',
+            'X-XSS-Protection' => '1; mode=block',
+            'Referrer-Policy' => 'no-referrer',
+            'Cache-Control' => 'no-store, no-cache, must-revalidate, max-age=0',
+            'Pragma' => 'no-cache',
+        ];
     }
 
     /**
@@ -1276,27 +1486,37 @@ class SecurityMiddleware
     protected function getThreatCategory(string $threatType): string
     {
         $categories = [
-            'sql_injection' => 'injection',
-            'command_injection' => 'injection',
-            'path_traversal' => 'path_attack',
+            'sql' => 'injection',
+            'command' => 'injection',
+            'path' => 'path_attack',
             'lfi' => 'path_attack',
             'rfi' => 'path_attack',
             'xss' => 'client_side',
+            'xss_script' => 'client_side',
+            'xss_dom' => 'client_side',
+            'xss_tag' => 'client_side',
+            'xss_encoding' => 'client_side',
+            'xss_framework' => 'client_side',
             'xxe' => 'xml_attack',
-            'ldap_injection' => 'injection',
-            'xpath_injection' => 'injection',
-            'nosql_injection' => 'injection',
+            'ldap' => 'injection',
+            'xpath' => 'injection',
+            'nosql' => 'injection',
             'ssti' => 'template_attack',
+            'ssrf' => 'ssrf',
+            'encoding' => 'evasion',
             'encoding_bypass' => 'evasion',
             'null_byte' => 'evasion',
+            'header_injection' => 'header_attack',
             'high_risk_pattern' => 'pattern_match',
-            'suspicious_user_agent' => 'reconnaissance',
-            'suspicious_header' => 'reconnaissance',
-            'rate_limit_exceeded' => 'rate_limit',
-            'http_method_not_allowed' => 'protocol_violation',
-            'url_length_exceeded' => 'protocol_violation',
-            'body_size_exceeded' => 'protocol_violation',
-            'ip_blacklist' => 'access_control',
+            'blacklist' => 'access_control',
+            'bad_user_agent' => 'reconnaissance',
+            'invalid_headers' => 'reconnaissance',
+            'dangerous_upload' => 'upload',
+            'rate_limit' => 'rate_limit',
+            'invalid_method' => 'protocol_violation',
+            'url_too_long' => 'protocol_violation',
+            'body_too_large' => 'protocol_violation',
+            'url_path_attack' => 'path_attack',
         ];
 
         return $categories[$threatType] ?? 'unknown';
@@ -1311,27 +1531,43 @@ class SecurityMiddleware
     protected function getThreatDescription(string $threatType): string
     {
         $descriptions = [
-            'sql_injection' => '检测到SQL注入攻击，试图通过输入字段操纵数据库查询',
-            'command_injection' => '检测到命令注入攻击，试图执行系统命令',
-            'path_traversal' => '检测到路径遍历攻击，试图访问受限文件系统路径',
+            // 高危攻击
+            'sql' => '检测到SQL注入攻击，试图通过输入字段操纵数据库查询',
+            'command' => '检测到命令注入攻击，试图执行系统命令',
+            'path' => '检测到路径遍历攻击，试图访问受限文件系统路径',
             'lfi' => '检测到本地文件包含攻击',
             'rfi' => '检测到远程文件包含攻击',
-            'xss' => '检测到跨站脚本攻击(XSS)，试图注入恶意脚本',
-            'xxe' => '检测到XML外部实体攻击',
-            'ldap_injection' => '检测到LDAP注入攻击',
-            'xpath_injection' => '检测到XPath注入攻击',
-            'nosql_injection' => '检测到NoSQL注入攻击',
+            'xml' => '检测到XML/XXE外部实体攻击',
+            'ldap' => '检测到LDAP注入攻击',
+            'nosql' => '检测到NoSQL注入攻击',
             'ssti' => '检测到服务器端模板注入攻击',
-            'encoding_bypass' => '检测到编码绕过尝试',
+            'ssrf' => '检测到服务器端请求伪造(SSRF)攻击',
+            'encoding' => '检测到编码绕过攻击',
+            'encoding_bypass' => '检测到编码绕过攻击',
             'null_byte' => '检测到空字节注入',
+            'header_injection' => '检测到HTTP头注入攻击',
             'high_risk_pattern' => '检测到高风险攻击模式',
-            'suspicious_user_agent' => '检测到可疑的用户代理',
-            'suspicious_header' => '检测到可疑的HTTP请求头',
-            'rate_limit_exceeded' => '请求频率超过限制',
-            'http_method_not_allowed' => '使用了不允许的HTTP方法',
-            'url_length_exceeded' => 'URL长度超过限制',
-            'body_size_exceeded' => '请求体大小超过限制',
-            'ip_blacklist' => 'IP地址在黑名单中',
+
+            // XSS攻击
+            'xss' => '检测到跨站脚本攻击(XSS)，试图注入恶意脚本',
+            'xss_script' => '检测到XSS脚本注入攻击',
+            'xss_dom' => '检测到DOM型XSS攻击',
+            'xss_tag' => '检测到XSS标签注入攻击',
+            'xss_encoding' => '检测到XSS编码绕过攻击',
+            'xss_framework' => '检测到框架特定XSS攻击',
+
+            // IP/访问控制
+            'blacklist' => 'IP地址在黑名单中，已被禁止访问',
+            'bad_user_agent' => '检测到恶意用户代理(User-Agent)',
+            'invalid_headers' => '检测到可疑的HTTP请求头',
+            'dangerous_upload' => '检测到危险文件上传',
+
+            // 请求限制
+            'rate_limit' => '请求频率超过限制',
+            'invalid_method' => '使用了不允许的HTTP方法',
+            'url_too_long' => 'URL长度超过限制',
+            'body_too_large' => '请求体大小超过限制',
+            'url_path_attack' => 'URL路径包含攻击特征',
         ];
 
         return $descriptions[$threatType] ?? '检测到未知的安全威胁';
@@ -1525,10 +1761,11 @@ class SecurityMiddleware
 
         $sensitivePatterns = [
             '/(password|passwd|pwd|token|secret|key)=\S+/i' => '$1=***',
+            '/(authorization|bearer)\s+\S+/i' => '$1 ***',
         ];
 
         foreach ($sensitivePatterns as $pattern => $replacement) {
-            $content = preg_replace($pattern, $replacement, $content);
+            $content = $this->safePregReplace($pattern, $replacement, $content);
         }
 
         return $content;
@@ -1558,7 +1795,7 @@ class SecurityMiddleware
             'user_agent' => $request->userAgent(),
             'details' => $details,
             'threat_type' => $this->currentThreatType,
-            'threat_type_text' => $this->context->getThreatTypeDescription(),
+            'threat_type_text' => isset($this->context) ? $this->context->getThreatTypeDescription() : '未知威胁',
             'risk_level' => $this->getRiskLevel($type),
             'request_id' => $this->requestId,
             'timestamp' => now()->toIso8601String(),

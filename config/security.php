@@ -162,6 +162,11 @@ return [
         // 例如设为1表示每分钟限制 max_attempts 次
         // 环境变量：SECURITY_RATE_LIMIT_DECAY
         'decay_minutes' => env('SECURITY_RATE_LIMIT_DECAY', 1),
+
+        // 限流 key 前缀（用于区分不同应用或环境）
+        // 例如多站点共享同一缓存后端时可设置不同前缀
+        // 环境变量：SECURITY_RATE_LIMIT_KEY_PREFIX
+        'key_prefix' => env('SECURITY_RATE_LIMIT_KEY_PREFIX', 'security'),
     ],
 
     /*
@@ -396,17 +401,23 @@ return [
         // ========== 编码绕过检测 ==========
         // 检测使用各种编码技术绕过WAF的攻击
         'encoding' => [
-            // 多重URL编码
-            // '/%25(?:25)*[0-9a-f]/i',
+            // 多重URL编码（双重/三重编码绕过）
+            '/%25(?:25)+[0-9a-f]{2}/i',
 
-            // Unicode规范化攻击（更多变体）
-            // '/%(?:c0[\x80-\xbf]|e0%80[\x80-\xbf])/i',
+            // Unicode规范化攻击
+            '/%(?:c0[\x80-\xbf]|e0%80[\x80-\xbf])/i',
 
             // 空字节注入（PHP/C风格字符串终止）
             '/%00|\x00|%00;/i',
 
             // HTML实体编码（潜在的XSS绕过）
             '/&#[xX]?[0-9a-f]+;/i',
+
+            // 混合编码攻击（URL编码+HTML实体）
+            '/%[0-9a-f]{2}.*&#x[0-9a-f]+;/i',
+
+            // UTF-16/UTF-32编码特征
+            '/%00%[0-9a-f]{2}/i',
         ],
 
         // ========== NoSQL注入检测 ==========
@@ -433,6 +444,42 @@ return [
 
             // 危险函数调用
             '/\{\{.*(eval|exec|system|shell_exec|passthru).*\}\}/i',
+        ],
+
+        // ========== SSRF检测 ==========
+        // 检测服务器端请求伪造攻击
+        'ssrf' => [
+            // 内网IP地址访问（常见SSRF目标）
+            '/\b(127\.0\.0\.1|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3})\b/',
+
+            // 云元数据服务端点
+            '/\b(169\.254\.169\.254|metadata\.google\.internal)\b/i',
+            '/\blatest\/meta-data\b/i',
+
+            // 常见SSRF利用协议
+            '/\b(gopher|dict|file|ftp|ldap|tftp):\/\//i',
+
+            // URL重定向到内网
+            '/\burl\s*=\s*[\'"]?\s*(http|https|ftp|gopher):\/\/(127\.|10\.|172\.1[6-9]|172\.2\d|172\.3[01]|192\.168\.)/i',
+
+            // DNS rebinding 特征
+            '/\b(rebind|dnsrebind|nip\.io|xip\.io)\b/i',
+
+            // 端口探测特征
+            '/\b(port\s*=|port\s*:)\s*\d{1,5}\b/i',
+        ],
+
+        // ========== CRLF/HTTP头注入检测 ==========
+        // 检测HTTP头注入和响应拆分攻击
+        'header_injection' => [
+            // CRLF 注入特征
+            '/(?:%0[dD]%0[aA]|%0[aA]%0[dD]|\\r\\n|%0[dD]|%0[aA])/i',
+
+            // HTTP 响应拆分 - 注入完整的HTTP头
+            '/(?:content-type|content-length|set-cookie|location|transfer-encoding)\s*:\s*[\'"]?\s*[^\'"]*\r?\n/i',
+
+            // 多行头注入
+            '/(?:<br\s*\/?>|\r\n|\n|\r)\s*(?:content-type|set-cookie):\s*/i',
         ],
     ],
 
@@ -505,14 +552,14 @@ return [
         // ========== 编码绕过 ==========
         // 检测常见的XSS编码绕过技术
         'encoding' => [
-            // Unicode转义
-            '/\\u[0-9a-f]{4}/i',
+            // Unicode转义（\\uXXXX 格式，PCRE2 兼容写法）
+            '/\\\\u[0-9a-f]{4}/i',
 
             // HTML实体（危险函数）
             '/&(#x?)?(0*4|0*1|0*105|0*97|0*108|0*101|0*114|0*116)/i',
 
             // URL编码的JavaScript伪协议
-            '(%6a|%4a)(%61|%41)(%76|%56)(%61|%41)(%73|%53)(%63|%43)(%72|%52)(%69|%49)(%70|%50)(%74|%54)/i',
+            '/(?:%6[aA]|%4[aA])(?:%61|%41)(?:%76|%56)(?:%61|%41)(?:%73|%53)(?:%63|%43)(?:%72|%52)(?:%69|%49)(?:%70|%50)(?:%74|%54)/i',
 
             // Base64数据URI（潜在的XSS载体）
             '/data:text\/html;base64,/i',
@@ -559,6 +606,15 @@ return [
         // 单个文件最大大小（字节）
         // 默认10MB，超过此大小会被拦截
         'max_size' => 10 * 1024 * 1024,
+
+        // 是否启用 MIME magic bytes 深度验证
+        // 启用后读取文件头部魔数字节，防止扩展名伪装
+        // 注意：会轻微增加 CPU 开销
+        // 环境变量：SECURITY_UPLOAD_CHECK_MIME
+        'check_mime_magic' => env('SECURITY_UPLOAD_CHECK_MIME', false),
+
+        // 许可的资源类型
+        'mime_magic_map' => [], // 空数组使用默认映射，可自定义覆盖
 
         // 允许的文件扩展名（白名单）
         // 注意：这不会覆盖 blocked_extensions，只是用于前端提示
@@ -726,6 +782,11 @@ return [
             'X-Debug',
             'X-Debug-Token',
         ],
+
+        // CRLF/Header注入检测
+        // 扫描所有HTTP头值中的换行符，防止HTTP响应拆分攻击
+        // 环境变量：SECURITY_DETECT_CRLF
+        'detect_crlf' => env('SECURITY_DETECT_CRLF', true),
 
         // Host头检查（防止Host头攻击）
         'host_validation' => [
@@ -988,7 +1049,7 @@ return [
             '/\.\.(\/|\\\\)(windows|winnt|system32|system|program files|programdata|inetpub)/i',
 
             // 其他匹配规则
-            '/\.(?:php|jsp|asp|sh|py|pl|exe|bat|cmd)(?=\b|$)/i', // 匹配 php、jsp、sh 等文件扩展名
+            '/\.(?:php|jsp|asp|sh|py|pl|exe|bat|cmd|env|bak)(?=\b|$)/i', // 匹配 php、jsp、sh 等文件扩展名
         ],
     ],
 
