@@ -1,5 +1,7 @@
 # 配置指南
 
+> 适用于 PHP 8.2 / 8.3 / 8.4 / 8.5 | Laravel 11 / 12 / 13
+
 ## 配置文件结构
 
 配置文件位于 `config/security.php`，包含以下主要部分：
@@ -373,11 +375,15 @@ class SecurityInterceptor
 
 ## 攻击检测配置
 
+> ⚠️ **v5.1+ 内存优化**：所有内置默认正则模式已从配置文件迁移至独立延迟加载数据文件。  
+> `high_risk_patterns`、`xss_patterns`、`url_path_detection.path_patterns` 默认为空数组。  
+> 仅在运行时首次检测时由 `PatternService` 按需加载，避免 `php artisan optimize` 内存溢出。
+
 ### high_risk_patterns
 
-高危攻击检测正则表达式。
+高危攻击检测自定义模式。在内置默认模式之外追加自定义正则。
 
-**已内置的检测类别**：
+**已内置的检测类别**（数据文件：`src/Security/Patterns/data/high_risk_patterns.php`）：
 
 | 类别 | 说明 |
 |------|------|
@@ -392,22 +398,24 @@ class SecurityInterceptor
 | `encoding` | 编码绕过攻击 |
 | `header_injection` | HTTP头注入和响应拆分 |
 
-**自定义规则示例**：
+**自定义规则示例**（追加到内置模式后）：
 
 ```php
 'high_risk_patterns' => [
-    'sql' => [
-        // 内置规则...
-        '/your_custom_pattern/i',  // 添加自定义规则
-    ],
+    // 追加到内置 sql 模式
+    'sql' => ['/your_custom_pattern/i'],
+    // 新增自定义类型
+    'custom_type' => ['/custom_regex_1/i', '/custom_regex_2/i'],
 ],
 ```
 
 ### xss_patterns
 
-XSS攻击检测配置。
+XSS攻击检测自定义模式。在内置默认模式之外追加自定义正则。
 
-**检测类别**：
+**预过滤优化**：每种 XSS 子类型都有预过滤关键词（如 `script` 预检 `<script`, `tag` 预检 `<iframe`），输入不包含关键词会跳过正则匹配，提升性能。
+
+**检测类别**（数据文件：`src/Security/Patterns/data/xss_patterns.php`）：
 
 | 类别 | 说明 |
 |------|------|
@@ -415,20 +423,14 @@ XSS攻击检测配置。
 | `dom` | DOM型XSS |
 | `tag` | 标签属性注入 |
 | `encoding` | 编码绕过 |
+| `framework` | 框架特定XSS（jQuery/Vue/Angular） |
 
-**智能Markdown识别**：
+**自定义示例**：
 
-中间件会自动识别Markdown代码块，代码块内的HTML标签不会触发XSS拦截。
-
-```markdown
-以下内容不会被拦截：
-
-```html
-<script>alert('示例代码')</script>
-```
-
-以下内容会被拦截（不在代码块内）：
-<script>alert('真实攻击')</script>
+```php
+'xss_patterns' => [
+    'script' => ['/extra_xss_pattern/i'],
+],
 ```
 
 ## 文件上传配置
@@ -652,29 +654,26 @@ Markdown智能识别配置。
 
 ### url_path_detection
 
+> ⚠️ v5.1+：默认 URL 路径模式已迁移至 `src/Security/Patterns/data/url_path_patterns.php`。  
+> `path_patterns` 默认为空数组，仅用于追加自定义模式。
+
 URL路径遍历攻击检测配置。
 
 ```php
-'path_patterns' => [
+'url_path_detection' => [
     'enabled' => env('SECURITY_URL_PATH_DETECTION', true),
+    'path_patterns' => [],
+],
+```
 
-    'path_patterns' => [
-        // 路径遍历检测正则模式
-        '/(\.\.\/){2,}/',
-        '/(\.\.\\\\){2,}/',
-        '/\.\.(\/|\\\\)\.\.(\/|\\\\)/',
+内置检测覆盖：经典路径遍历（`../../`）、Windows 路径遍历、URL 编码绕过、Unicode 绕过、敏感文件访问（`.env`, `.git`, `/etc/passwd` 等）、版本控制文件泄露等。
 
-        // 敏感文件访问检测模式
-        '/\/(etc|proc|sys|var|root|home|usr\/local)\/(passwd|shadow|hosts|id_rsa|authorized_keys|\.env|\.git|\.htaccess|config\.php|database\.php)\b/i',
-        '/\b(\.env|\.git\/)\b/i',
-        '/\b(\.svn|\.hg|\.bzr)\b/i',
-        '/\b(\.htaccess|\.htpasswd|web\.config)\b/i',
-        '/\b(composer\.json|composer\.lock|package\.json|package-lock\.json)\b/i',
-        '/\.\.(\/|\\\\)(windows|winnt|system32|system|program files|programdata|inetpub)/i',
+**自定义追加示例**：
 
-        // 其他匹配
-        // '/\.(php|jsp|sh)(?:[?#&\/]|$)/i', // 匹配 php、jsp、sh 等文件扩展名
-    ],
+```php
+'path_patterns' => [
+    // 匹配 php、jsp、sh 等文件扩展名
+    '/\.(php|jsp|sh)(?:[?#&\/]|$)/i',
 ],
 ```
 

@@ -6,6 +6,7 @@ use Throwable;
 use Illuminate\Support\ServiceProvider;
 use Illuminate\Foundation\Console\AboutCommand;
 use zxf\Security\Middleware\SecurityMiddleware;
+use zxf\Security\Patterns\PatternService;
 use Composer\InstalledVersions;
 
 /**
@@ -70,14 +71,23 @@ class SecurityServiceProvider extends ServiceProvider
             __DIR__ . '/../../../config/security.php',
             'security'
         );
+
+        // 注册模式服务（单例，延迟加载）
+        // PatternService 使用独立数据文件存储正则模式，
+        // 不会在 php artisan optimize 时加载，有效解决内存溢出问题
+        $this->app->singleton(PatternService::class, function () {
+            return new PatternService();
+        });
     }
 
     /**
      * 注册安全中间件
      *
-     * 将安全中间件注册到 Laravel 路由系统：
-     * 1. 注册中间件别名 'security'，可在路由中使用
-     * 2. 如配置启用，自动添加到全局中间件栈
+     * 使用全局中间件栈确保 SecurityMiddleware 在所有路由上执行。
+     * 不通过 middlewareGroup() 修改用户自定义组，避免与其他包冲突。
+     *
+     * ⚠️ 全局中间件在 Laravel Pipeline 中最先执行，早于任何路由组中间件。
+     *    如果路由使用了 withoutMiddleware($alias)，该路由会跳过安全检查。
      *
      * @return void
      */
@@ -85,40 +95,34 @@ class SecurityServiceProvider extends ServiceProvider
     {
         // 自动注册全局中间件
         // 仅当 security.enabled 为 true 时启用
-        if (config('security.enabled', true)) {
-            $router = $this->app['router'];
+        if (!config('security.enabled', true)) {
+            return;
+        }
 
-            // 注册唯一中间件别名（内部使用，不冲突）
-            $middleware = SecurityMiddleware::class;
-            $alias = 'zxf.security';
-            $router->aliasMiddleware($alias, $middleware);
+        $router = $this->app['router'];
+        $middleware = SecurityMiddleware::class;
+        $alias = 'zxf.security';
 
-            // ==============================================
-            // 🔥 终极保障 1：全局所有路由 强制附加中间件
-            // 无论路由有没有组、有没有中间件，全部执行！
-            // ==============================================
+        // 注册唯一中间件别名（内部使用，不冲突）
+        $router->aliasMiddleware($alias, $middleware);
+
+        // ==============================================
+        // 全局中间件：所有路由自动生效
+        // 这是最可靠的注册方式，不依赖中间件组
+        // ==============================================
+        $globals = $router->getMiddleware();
+        if (!in_array($alias, $globals, true)) {
             $router->middleware([$alias]);
+        }
 
-            // ==============================================
-            // 🔥 终极保障 2：安全注入所有存在的中间件组
-            // 自动判断组是否存在，不存在则跳过，绝对不报错
-            // ==============================================
-
-            // 系统默认核心组（全覆盖）
-            $defaultGroups = [
-                'web', 'api', 'auth', 'guest',
-                'sanctum', 'auth:sanctum', 'verified'
-            ];
-
-            // 获取项目实际已注册的所有组
-            $existsGroups = array_keys($router->getMiddlewareGroups());
-
-            // 合并去重
-            $allGroups = array_unique(array_merge($defaultGroups, $existsGroups));
-
-            // 循环：组存在才注入，不存在直接跳过
-            foreach ($allGroups as $group) {
-                if ($router->hasMiddlewareGroup($group)) {
+        // ==============================================
+        // 兜底：推送进 web 和 api 中间件组
+        // 如果用户移除了全局中间件，组内中间件仍会执行
+        // ==============================================
+        foreach (['web', 'api'] as $group) {
+            if ($router->hasMiddlewareGroup($group)) {
+                $items = $router->getMiddlewareGroups()[$group] ?? [];
+                if (!in_array($alias, $items, true)) {
                     $router->pushMiddlewareToGroup($group, $alias);
                 }
             }

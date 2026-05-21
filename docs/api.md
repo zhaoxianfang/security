@@ -375,60 +375,34 @@ class DatabaseIpChecker implements IpCheckerInterface
 
 ## 高级配置
 
+> ⚠️ v5.1+ 内存优化：所有内置正则模式已迁移至延迟加载数据文件（`src/Security/Patterns/data/`），  
+> 配置文件仅保留轻量参数。完整配置说明请参阅 [配置文档](./configuration.md#攻击检测配置)。
+
 ### URL路径攻击检测配置
 
-配置URL路径遍历攻击的检测参数：
-
 ```php
-'path_patterns' => [
+'url_path_detection' => [
     'enabled' => env('SECURITY_URL_PATH_DETECTION', true),
-
-    'path_patterns' => [
-        // 路径遍历检测正则模式
-        '/(\.\.\/){2,}/',
-        '/(\.\.\\\\){2,}/',
-        '/\.\.(\/|\\\\)\.\.(\/|\\\\)/',
-
-        // 敏感文件访问检测模式
-        '/\/(etc|proc|sys|var|root|home|usr\/local)\/(passwd|shadow|hosts|id_rsa|authorized_keys|\.env|\.git|\.htaccess|config\.php|database\.php)\b/i',
-        '/\b(\.env|\.git\/)\b/i',
-        '/\b(\.svn|\.hg|\.bzr)\b/i',
-        '/\b(\.htaccess|\.htpasswd|web\.config)\b/i',
-        '/\b(composer\.json|composer\.lock|package\.json|package-lock\.json)\b/i',
-        '/\.\.(\/|\\\\)(windows|winnt|system32|system|program files|programdata|inetpub)/i',
-
-        // 其他匹配
-        // '/\.(php|jsp|sh)(?:[?#&\/]|$)/i', // 匹配 php、jsp、sh 等文件扩展名
-    ],
-
+    'path_patterns' => [],  // v5.1+：默认内置模式自动加载，此处追加自定义模式
 ],
 ```
 
 ### 编码绕过攻击检测配置
 
-配置多重编码攻击的检测参数：
-
 ```php
 'encoding_detection' => [
     'enabled' => env('SECURITY_ENCODING_DETECTION', true),
-
-    // URL编码百分比阈值（0-1）
     'percent_threshold' => 0.30,
-
-    // 解码后检查的可疑模式
     'suspicious_patterns' => [
         '../', '..\\', '<script', 'javascript:',
         'onerror=', 'onload=',
     ],
-
     'detect_null_bytes' => true,
     'detect_utf8_overlong' => true,
 ],
 ```
 
 ### HTTP方法配置
-
-配置允许的HTTP请求方法：
 
 ```php
 'allowed_http_methods' => [
@@ -437,46 +411,15 @@ class DatabaseIpChecker implements IpCheckerInterface
 ],
 ```
 
-### 输入处理配置
-
-配置请求输入的处理参数：
-
-```php
-'input_processing' => [
-    // 最大输入长度（字节），防止正则回溯
-    'max_input_length' => 100 * 1024,
-
-    // 匹配内容最大长度（用于日志）
-    'max_match_content_length' => 200,
-
-    // Markdown检测最小内容长度
-    'markdown_min_length' => 100,
-
-    // Markdown语法模式
-    'markdown_patterns' => [
-        '/^#{1,6}\s+/m',
-        '/^[-*+]\s+/m',
-        // ... 更多模式
-    ],
-],
-```
-
 ### 威胁风险等级映射
-
-配置每种威胁类型的风险等级：
 
 ```php
 'threat_risk_levels' => [
-    // 高危
     'sql' => 'high',
     'command' => 'high',
     'path' => 'high',
-
-    // 中危
-    'nosql' => 'medium',
+    'ldap' => 'low',
     'xss_script' => 'medium',
-
-    // 低危
     'rate_limit' => 'low',
     'invalid_method' => 'low',
 ],

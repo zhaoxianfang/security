@@ -6,7 +6,7 @@
 
 # zxf/security - Laravel 安全中间件
 
-[![PHP](https://img.shields.io/badge/php-8.2+-8892bf)](https://php.net)
+[![PHP](https://img.shields.io/badge/php-8.2+|8.3|8.4|8.5-8892bf)](https://php.net)
 [![Laravel](https://img.shields.io/badge/laravel-11+|12|13-ff2d20)](https://laravel.com)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
@@ -23,7 +23,8 @@
 - **CRLF/Header注入检测** - 检测HTTP头注入和响应拆分攻击
 - **智能识别** - 自动识别Markdown文档内容，代码块内的标签不会误拦截
 - **零缓存依赖** - 不使用Redis/Memcached，直接使用Laravel原生功能
-- **高性能** - 单次请求处理耗时 < 1ms
+- **低内存占用** - 正则模式延迟加载，避免 `php artisan optimize` 内存溢出（v5.1+）
+- **高性能** - 单次请求处理耗时 < 1ms，支持预过滤快速跳过
 - **CIDR支持** - IP黑白名单支持IPv4和IPv6网段格式（如 `192.168.0.0/16`、`2001:db8::/32`）
 - **拦截回调** - 支持自定义拦截决策，实现动态放行策略
 - **自定义视图** - 支持自定义拦截页面，支持Blade视图/闭包/类方法
@@ -67,6 +68,30 @@ SECURITY_RATE_LIMIT_ATTEMPTS=60
 ```
 
 > ✅ 支持 Laravel 11、12、13
+
+### 内存优化（v5.1+）
+
+本包默认正则模式已从配置文件迁移至独立数据文件，实现**延迟加载**：
+
+- `php artisan optimize` 时不再加载任何正则模式 → **内存占用大幅降低**
+- 正则仅在首次安全检测时按需加载（请求时），并由进程级缓存复用
+- 配置文件体积精简至原来的 ~30%，仅保留轻量配置参数
+
+**添加自定义检测模式**：在配置中追加即可，会自动与内置模式合并：
+
+```php
+// config/security.php
+'high_risk_patterns' => [
+    'sql' => ['/your_custom_sql_pattern/i'],
+    'my_custom_type' => ['/custom_regex/i'],
+],
+'xss_patterns' => [
+    'script' => ['/extra_xss_pattern/i'],
+],
+'url_path_detection' => [
+    'path_patterns' => ['/custom_path_pattern/i'],
+],
+```
 
 ---
 

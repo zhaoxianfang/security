@@ -246,6 +246,35 @@ class CustomSecurityMiddleware extends BaseMiddleware
 2. 定期清理过长的 `blacklist` 数组
 3. 生产环境关闭 `log_enabled`（如使用外部WAF）
 
+### Q: 如何避免 `php artisan optimize` 内存溢出？
+
+v5.1+ 版本已解决此问题。所有内置正则模式从 `config/security.php` 迁移到了独立的延迟加载数据文件：
+
+- `src/Security/Patterns/data/high_risk_patterns.php` — 高危攻击检测模式
+- `src/Security/Patterns/data/xss_patterns.php` — XSS 攻击检测模式
+- `src/Security/Patterns/data/url_path_patterns.php` — URL 路径攻击模式
+
+这些数据文件**不会**在 `php artisan optimize` 时加载，仅在运行时由 `PatternService` 按需加载，并支持进程级静态缓存，避免每个请求重复读取文件。
+
+**配置变化：**
+
+`config/security.php` 中的 `high_risk_patterns`、`xss_patterns` 和 `url_path_detection.path_patterns` 现默认为**空数组**，仅用于存放用户自定义的追加模式。内置默认模式由 `PatternService` 自动加载并合并。
+
+**预过滤优化：**
+
+为减少不必要的正则匹配，每种检测类别都配有预过滤关键词（基于 `str_contains` 快速检查）：
+
+| 类型 | 预过滤关键词 |
+|------|-------------|
+| SQL注入 | `select`, `union`, `sleep`, `drop`, `truncate` |
+| 命令注入 | `system`, `exec`, `passthru`, `rm `, `wget`, `curl` |
+| XSS脚本 | `<script`, `javascript:`, `eval(` |
+| SSRF | `127.0.0.1`, `169.254`, `gopher`, `metadata` |
+| 路径遍历 | `../`, `..\\`, `.env`, `/etc/`, `/proc/` |
+| HTTP头注入 | `%0d`, `%0a`, `content-type:`, `set-cookie:` |
+
+不包含关键词的输入会跳过该类型的正则匹配，显著提升性能。
+
 ### Q: 可以关闭某些检测项吗？
 
 可以，移除对应配置即可：

@@ -1,948 +1,589 @@
 <?php
 
-use zxf\Security\Middleware\SecurityMiddleware;
-
 /**
- * Laravel 安全中间件配置文件
+ * ╔═══════════════════════════════════════════════════════════════════════════╗
+ * ║        Laravel 安全中间件 - 配置文件 (v5.2+)                                 ║
+ * ║        🔐 14层纵深安全防护，覆盖 OWASP Top 10 核心攻击向量                     ║
+ * ╚═══════════════════════════════════════════════════════════════════════════╝
  *
- * 配置说明：
- * 1. 所有配置项均支持通过环境变量（.env文件）覆盖
- * 2. 高危模式正则经过精心调校，确保高拦截率、低误报率
- * 3. 支持Markdown内容智能识别，文档类请求不会被误拦截
- * 4. IP黑白名单支持CIDR格式（如 192.168.1.0/24）
+ * 📦 支持的 PHP 版本：8.2 / 8.3 / 8.4 / 8.5； 支持的 Laravel 版本：11 / 12 / 13
  *
- * 快速配置建议：
- * - 开发环境：可关闭 rate_limit 避免调试时触发限流
- * - 生产环境：建议启用所有检测项，rate_limit 适当收紧
- * - 内网部署：将内网IP段加入 trusted_ips，提升性能
+ * 📖 配置优先级（从高到低）：
+ *    1. 环境变量（.env）       — 运行时覆盖，不同环境独立配置
+ *    2. 直接修改本文件         — 发布后自定义
+ *    3. 包内置默认值           — 零配置即可使用
  *
- * @see SecurityMiddleware
+ * 🚀 快速配置建议：
+ *    - 开发环境：关闭 rate_limit，log_level 设为 debug
+ *    - 测试环境：保持默认，rate_limit 适当宽松
+ *    - 生产环境：开启全部检测，rate_limit 收紧
+ *    - 内网部署：将内网IP段加入 trusted_ips
+ *
  */
 
 return [
 
     /*
     |--------------------------------------------------------------------------
-    | 基础开关配置
+    | 基础开关                                                 【配置项】
     |--------------------------------------------------------------------------
-    |
-    | 控制中间件的整体启用状态和日志记录功能。
-    | 可通过 .env 文件中的 SECURITY_ENABLED 和 SECURITY_LOG_ENABLED 覆盖。
-    |
     */
 
     // 主开关：是否启用安全中间件
-    // 设为 false 将完全禁用所有安全检查，请求直接通过
-    // 环境变量：SECURITY_ENABLED
     'enabled' => env('SECURITY_ENABLED', true),
 
     // 日志开关：是否记录安全威胁日志
-    // 记录到 Laravel 默认日志通道（通常 storage/logs/laravel.log）
-    // 环境变量：SECURITY_LOG_ENABLED
     'log_enabled' => env('SECURITY_LOG_ENABLED', true),
 
     // 日志级别：可选 'debug', 'info', 'warning', 'error', 'critical'
-    // 开发环境建议使用 'debug'，生产环境建议使用 'warning'
-    // 环境变量：SECURITY_LOG_LEVEL
     'log_level' => env('SECURITY_LOG_LEVEL', 'warning'),
 
     // 是否记录完整请求数据（含POST数据）
-    // 注意：生产环境开启可能记录敏感信息，请谨慎使用
-    // 环境变量：SECURITY_LOG_FULL_REQUEST
     'log_full_request' => env('SECURITY_LOG_FULL_REQUEST', false),
 
     /*
     |--------------------------------------------------------------------------
-    | 检测层级开关配置
+    | 🔍 检测层级开关                                           【配置项】
     |--------------------------------------------------------------------------
     |
-    | 允许单独启用/禁用特定的安全检测层级。
-    | 所有检测默认启用，可以按需关闭某些检测以减少误报或提升性能。
-    |
-    | 注意：
-    | - IP白名单和黑名单不受这些开关控制（始终启用）
-    | - 建议生产环境保持所有检测启用
-    |
+    | 精细控制每一层安全检测的启用/禁用。
+    | 使用场景：减少误报、性能优化、调试排查
+    | ⚠️ IP黑白名单不受这些开关控制（始终生效）
     */
 
     'detection_layers' => [
-        // URL路径攻击检测（路径遍历等）
-        'url_path' => env('SECURITY_DETECT_URL_PATH', true),
-
-        // 多重编码检测（编码绕过攻击）
-        'encoding' => env('SECURITY_DETECT_ENCODING', true),
-
-        // User-Agent检查
-        'user_agent' => env('SECURITY_DETECT_USER_AGENT', true),
-
-        // HTTP头检查
-        'headers' => env('SECURITY_DETECT_HEADERS', true),
-
-        // 请求体大小检查
-        'body_size' => env('SECURITY_DETECT_BODY_SIZE', true),
-
-        // 速率限制
-        'rate_limit' => env('SECURITY_DETECT_RATE_LIMIT', true),
-
-        // HTTP方法检查
-        'http_method' => env('SECURITY_DETECT_HTTP_METHOD', true),
-
-        // URL长度检查
-        'url_length' => env('SECURITY_DETECT_URL_LENGTH', true),
-
-        // 高危攻击检测（SQL注入、命令注入等）
-        'high_risk' => env('SECURITY_DETECT_HIGH_RISK', true),
-
-        // XSS攻击检测
-        'xss' => env('SECURITY_DETECT_XSS', true),
-
-        // 文件上传检查
-        'upload' => env('SECURITY_DETECT_UPLOAD', true),
+        'url_path'     => env('SECURITY_DETECT_URL_PATH', true),     // 是否开启 URL 路径攻击检测（路径遍历、敏感文件等）
+        'encoding'     => env('SECURITY_DETECT_ENCODING', true),     // 是否开启多重编码绕过检测（URL编码、空字节注入等）
+        'user_agent'   => env('SECURITY_DETECT_USER_AGENT', true),   // 是否开启 User-Agent 黑名单检测（恶意扫描器识别）
+        'headers'      => env('SECURITY_DETECT_HEADERS', true),      // 是否开启 HTTP 请求头安全检查（禁用头、CRLF注入等）
+        'body_size'    => env('SECURITY_DETECT_BODY_SIZE', true),    // 是否开启请求体大小检查（防止超大请求OOM）
+        'rate_limit'   => env('SECURITY_DETECT_RATE_LIMIT', true),   // 是否开启请求速率限制（防止暴力破解/CC攻击）
+        'http_method'  => env('SECURITY_DETECT_HTTP_METHOD', true),  // 是否开启 HTTP 方法检查（仅允许 GET/POST 等合法方法）
+        'url_length'   => env('SECURITY_DETECT_URL_LENGTH', true),   // 是否开启 URL 长度检查（防止缓冲区溢出攻击）
+        'high_risk'    => env('SECURITY_DETECT_HIGH_RISK', true),    // 是否开启高危攻击检测（SQL注入/命令注入/SSTI/SSRF等）
+        'xss'          => env('SECURITY_DETECT_XSS', true),          // 是否开启 XSS 跨站脚本攻击检测
+        'upload'       => env('SECURITY_DETECT_UPLOAD', true),       // 是否开启文件上传安全检查（扩展名/MIME/大小）
+        'redirect'     => env('SECURITY_DETECT_REDIRECT', false),    // 是否禁止重定向(true:禁止;false:允许)（默认运行，无重定向需求的业务易误报）
     ],
 
     /*
     |--------------------------------------------------------------------------
-    | 信任IP配置
+    | 🛡️ 信任 IP（安全关键）—— 跳过所有检测直接放行           【拦截规则】
     |--------------------------------------------------------------------------
     |
-    | trusted_ips 中的IP地址会跳过所有安全检查，直接放行。
-    | 适用于：内网环境、负载均衡器、监控探针、可信合作伙伴。
+    | 信任 IP 列表中的地址将跳过所有安全检查直接放行。适用于：本机服务间调用、CI/CD流水线等。
     |
-    | 支持格式：
-    | - 单个IP：'192.168.1.100'
-    | - CIDR网段：'192.168.0.0/16'（整个B类私网）
+    | ⚠️ 默认仅包含本机回环地址（127.0.0.1 / ::1）。
+    |    生产环境中请根据需要添加特定的负载均衡器/反向代理 IP， 切勿将整个内网段（10.0.0.0/8 等）添加到信任列表，
+    |    否则所有经由内网代理的请求都将跳过安全检查！
     |
-    | 警告：谨慎添加公网IP到白名单，这会让该IP绕过所有防护！
+    | 正确做法（按实际架构添加）：
+    |   'trusted_ips' => [
+    |       '127.0.0.1',       // 本机 IPv4
+    |       '::1',             // 本机 IPv6
+    |       '10.0.1.5',        // 仅添加 LB/Proxy 的具体 IP，不要加网段
+    |       '172.17.0.0/16',   // Docker 网段（仅当确认容器到容器通信安全时）
+    |   ],
     |
+    | 支持 IPv4、IPv6 和 CIDR 网段。
+    | ⚠️ 切勿将公网 IP 添加到信任列表！
     */
 
     'trusted_ips' => [
-       // IPv4 本地回环
-       '127.0.0.1',
-       // IPv6 本地回环
-       '::1',
-       // RFC1918 私有地址段 - A类（大型网络）
-       '10.0.0.0/8',
-       // RFC1918 私有地址段 - B类（中型网络）
-       '172.16.0.0/12',
-       // RFC1918 私有地址段 - C类（小型网络）
-       '192.168.0.0/16',
+        // '127.0.0.1',          // 本机 IPv4
+        // '::1',                // 本机 IPv6
     ],
 
     /*
     |--------------------------------------------------------------------------
-    | 速率限制配置
+    | ⏱️ 速率限制                                               【拦截规则】
     |--------------------------------------------------------------------------
     |
-    | 防止暴力破解、CC攻击、API滥用。
-    | 使用 Laravel 原生的 RateLimiter，支持多种缓存后端。
+    | 基于 IP + 路由路径组合限流（key: {prefix}:{IP}:{路由MD5}），
+    | 使用 Laravel 内置 RateLimiter，无需额外缓存驱动。
     |
-    | 触发限流后的行为：
-    | - 返回 HTTP 429 Too Many Requests
-    | - 客户端需等待 decay_minutes 时间后恢复
-    |
-    | 阈值建议：
-    | - 普通网站：60次/分钟
-    | - API服务：300次/分钟
-    | - 后台管理：20次/分钟（更严格）
-    |
+    | 推荐值：普通网站 60次/分，API 300次/分，后台 20次/分
     */
 
     'rate_limit' => [
-        // 是否启用速率限制
-        // 环境变量：SECURITY_RATE_LIMIT_ENABLED
-        'enabled' => env('SECURITY_RATE_LIMIT_ENABLED', true),
-
-        // 每 decay_minutes 分钟内允许的最大请求数
-        // 超过此数量将触发限流
-        // 环境变量：SECURITY_RATE_LIMIT_ATTEMPTS
-        'max_attempts' => env('SECURITY_RATE_LIMIT_ATTEMPTS', 60),
-
-        // 限流时间窗口（分钟）
-        // 例如设为1表示每分钟限制 max_attempts 次
-        // 环境变量：SECURITY_RATE_LIMIT_DECAY
-        'decay_minutes' => env('SECURITY_RATE_LIMIT_DECAY', 1),
-
-        // 限流 key 前缀（用于区分不同应用或环境）
-        // 例如多站点共享同一缓存后端时可设置不同前缀
-        // 环境变量：SECURITY_RATE_LIMIT_KEY_PREFIX
-        'key_prefix' => env('SECURITY_RATE_LIMIT_KEY_PREFIX', 'security'),
+        'max_attempts' => env('SECURITY_RATE_LIMIT_ATTEMPTS', 60),         // 时间窗口内最大请求数
+        'decay_minutes' => env('SECURITY_RATE_LIMIT_DECAY', 1),            // 时间窗口（分钟）
+        'key_prefix' => env('SECURITY_RATE_LIMIT_KEY_PREFIX', 'security'), // 限流 key 前缀
     ],
 
     /*
     |--------------------------------------------------------------------------
-    | IP 黑名单
+    | 🚫 IP 黑名单 —— 直接拦截（HTTP 403）                       【拦截规则】
     |--------------------------------------------------------------------------
     |
-    | 已知的恶意IP地址列表，这些IP会被立即拦截（HTTP 403）。
+    | 黑名单中的 IP 将被直接拦截（HTTP 403），不进行其他检查。
     |
-    | 支持格式：
-    | - 字符串IP：'192.168.1.100'
-    | - CIDR网段：'10.0.0.0/24'
-    | - 闭包函数：function($ip, $request) { return $ip === '1.1.1.1'; }
-    | - 类名（实现 IpCheckerInterface）：'App\Security\CustomIpChecker'
-    | - 可调用数组：['App\Security\IpChecker', 'isBlocked']
+    | 支持 5 种格式（按需选择）：
+    |   ① 静态 IP：'203.0.113.50'
+    |   ② CIDR 网段：'103.21.244.0/24'
+    |   ③ 闭包函数：function(string $ip, Request $request): bool { ... }
+    |   ④ 类名（实现 IpCheckerInterface）：App\Security\Checkers\BlacklistChecker::class
+    |   ⑤ 可调用数组：[App\Security\IpService::class, 'isBlocked']
     |
-    | 适用场景：
-    | - 封禁已确认的攻击者IP
-    | - 阻止已知的恶意爬虫、扫描器
-    | - 配合日志分析自动封禁暴力破解源
-    | - 从数据库/Redis动态获取黑名单
-    |
+    | 配置示例：
+    |   'blacklist' => [
+    |       '203.0.113.50',                     // 静态 IP：单个攻击者 IP
+    |       '198.51.100.0/24',                  // CIDR 网段：恶意 IP 段
+    |       function(string $ip, Request $request) {   // 数据库动态查询
+    |           return \App\Models\BannedIp::where('ip', $ip)->exists();
+    |       },
+    |   ],
     */
 
-    'blacklist' => [
-        // 示例：封禁单个IP
-        // '192.168.1.100',
-
-        // 示例：封禁整个网段
-        // '10.0.0.0/24',
-
-        // 示例：使用闭包动态判断
-        // function($ip, $request) {
-        //     return \App\Models\BlockedIp::where('ip', $ip)->exists();
-        // },
-
-        // 示例：使用自定义检查类
-        // \App\Security\DynamicBlacklistChecker::class,
-    ],
+    'blacklist' => [],
 
     /*
     |--------------------------------------------------------------------------
-    | IP 白名单
+    | ✅ IP 白名单 —— 业务层信任（合作方 API、支付回调）           【排除规则】
     |--------------------------------------------------------------------------
     |
-    | 与 trusted_ips 类似，但语义上用于特定的业务场景。
-    | 例如：合作伙伴API、支付回调IP、Webhook源等。
+    | 白名单语义上用于特定业务场景（合作伙伴API、支付回调等）。
     |
-    | 支持格式（同 blacklist）：
-    | - 字符串IP、CIDR网段、闭包、类、可调用数组
+    | trusted_ips vs whitelist 的区别：
+    |   - trusted_ips：系统层面信任（内网），跳过所有检查
+    |   - whitelist：业务层面信任（合作方），可单独审计
     |
-    | 注意：白名单IP也会跳过 rate_limit 检查！
-    | 如果只想跳过攻击检测但保留限流，应使用 trusted_ips。
+    | 支持格式与 blacklist 完全相同。
     |
+    | 配置示例：
+    |   'whitelist' => [
+    |       '198.51.100.50',                     // 支付网关回调 IP
+    |       '203.0.113.0/28',                    // 合作伙伴 IP 段
+    |       function(string $ip, $request) {     // 按 API Key 动态判断
+    |           return \App\Models\Partner::where('api_key',
+    |               $request->header('X-Partner-Key'))->exists();
+    |       },
+    |   ],
     */
 
-    'whitelist' => [
-        // 示例：合作伙伴服务器
-        // '203.0.113.50',
-
-        // 示例：支付网关回调IP段
-        // '198.51.100.0/24',
-
-        // 示例：使用闭包动态判断
-        // function($ip, $request) {
-        //     return \App\Models\PartnerIp::where('ip', $ip)->exists();
-        // },
-    ],
+    'whitelist' => [],
 
     /*
     |--------------------------------------------------------------------------
-    | 高危攻击模式检测
+    | 🎯 模式策略                                               【配置项】
     |--------------------------------------------------------------------------
     |
-    | 这些正则表达式用于检测直接威胁系统安全的攻击。
-    | 模式经过精心挑选，确保：
-    | 1. 高检出率 - 不漏过真实攻击
-    | 2. 低误报率 - 不误拦截正常请求
+    | 'merge'（默认）— 自定义模式与内置模式合并，追加到内置模式之后
+    | 'replace'      — 完全替换内置模式，仅使用自定义模式
     |
-    | 分类说明：
-    | - sql：SQL注入攻击（数据库安全）
-    | - command：命令注入（服务器安全）
-    | - path：路径遍历（文件系统安全）
-    | - ldap：LDAP注入（目录服务安全）
-    | - xml：XML注入/XXE（解析器安全）
+    | 三场景快速对照：
+    | ┌──────────────────────┬──────────────────────────────────────┐
+    | │ 叠加新规则             │ pattern_mode='merge'                 │
+    | │ 排除个别内置规则        │ 在 *_patterns 中添加自定义正则          │
+    | │                      │ 在 *_patterns_exclude 中列出排除项     │
+    | ├──────────────────────┼──────────────────────────────────────┤
+    | │ 完全自定义             │ pattern_mode='replace'               │
+    | │                      │ 在 *_patterns 中定义完整规则集          │
+    | └──────────────────────┴──────────────────────────────────────┘
+    */
+    'pattern_mode' => 'merge',
+
+    /*
+    |--------------------------------------------------------------------------
+    | ☣️ 高危攻击模式 — 自定义正则                                【追加规则】
+    |--------------------------------------------------------------------------
     |
+    | ⚠️ 内置默认正则模式已迁移至独立数据文件（延迟加载）。
+    |
+    | 内置检测类型及覆盖的攻击向量：
+    |   sql             — SQL注入（UNION/堆叠查询/时间盲注/报错注入/宽字节注入）
+    |   command         — 命令注入（system/exec/passthru + 危险命令）
+    |   path            — 路径遍历（../、URL编码、敏感文件泄露）
+    |   ldap            — LDAP注入（过滤器注入）
+    |   xml             — XML/XXE外部实体注入
+    |   nosql           — NoSQL注入（MongoDB操作符注入）
+    |   ssti            — 服务器端模板注入（{{}}/{% %}/<%= %>）
+    |   ssrf            — SSRF（内网IP/云元数据/危险协议）
+    |   encoding        — 编码绕过（多重URL编码/Unicode/HTML实体/NULL字节）
+    |   header_injection — CRLF/HTTP头注入与响应拆分
+    |   redirect        — 开放重定向（外部URL/协议绕过/CRLF+Location）
+    |
+    | 也支持自定义类型键名，将作为新类型追加到检测中。
+    |
+    | 配置示例：
+    |   'high_risk_patterns' => [
+    |       'sql' => ['/my_custom_sqli_regex/i'],          // 追加SQL规则
+    |       'graphql' => ['/(__schema|__type)\s*\{/'],     // 自定义GraphQL注入检测
+    |   ],
     */
 
-    'high_risk_patterns' => [
-
-        // ========== SQL注入检测 ==========
-        // 检测可能导致数据泄露、数据篡改、服务器接管的SQL攻击
-        // 核心原则：仅检测明确的攻击特征，避免正常SQL被误拦截
-        'sql' => [
-            // UNION注入 - 最常用的数据窃取技术
-            // 严格匹配：union + select 组合，且select后跟数字/null/十六进制（注入特征）
-            '/\bunion\s+(all\s+)?select\s+(null|\d+|0x[0-9a-f]+|\$\d+|\?)/i',
-
-            // 堆叠查询 - 执行多条SQL语句（SQL Server/PostgreSQL）
-            // 示例：'; DROP TABLE users;--
-            // 要求分号后紧跟危险操作，减少正常SQL误报
-            '/;\s*(drop|truncate)\s+(table|database)\b/i',
-
-            // SQL Server 特有危险功能 - xp_cmdshell 可直接执行操作系统命令
-            '/xp_cmdshell\s*\(/i',
-            '/sp_oamethod\s*/i',
-            '/sp_oacreate\s*/i',
-
-            // MySQL 文件操作 - 可能导致服务器文件泄露
-            // 示例：SELECT LOAD_FILE('/etc/passwd')
-            '/load_file\s*\(\s*[\'"]?\s*\//i',
-            '/into\s+(outfile|dumpfile)\s+[\'"]?\s*\//i',
-
-            // 时间盲注函数 - 用于无回显的数据窃取
-            // 必须跟具体数字参数才是攻击特征
-            '/sleep\s*\(\s*[\'"]?\d{2,}/i',  // 2位以上数字（正常sleep(1)可能是业务需求）
-            '/benchmark\s*\(\s*\d{5,}/i',     // 5位以上数字
-            '/pg_sleep\s*\(\s*[\'"]?\d{2,}/i',
-            '/waitfor\s+delay\s*[\'"]\d{2,}/i',  // SQL Server延时注入
-
-            // 错误注入 - 通过报错获取数据库信息
-            '/extractvalue\s*\(\s*[^,]+,\s*concat/i',
-            '/updatexml\s*\(\s*[^,]+,\s*concat/i',
-            '/floor\s*\(\s*rand\s*\(/i',
-
-            // 布尔盲注特征 - 条件判断+延时或报错函数
-            '/\bcase\s+when\s+.*then\s+(sleep|benchmark|pg_sleep)/i',
-            '/\bif\s*\(\s*.*,\s*(sleep|benchmark|pg_sleep)/i',
-
-            // 注释绕过 - 攻击者常用技巧（仅匹配明确的攻击模式）
-            '/\/\*!?\d{5,}\*\/\s*(union|select)\b/i',  // 长数字注释后跟SQL关键字
-            '/\/\*[^*]*\*\/\s*(and|or)\s+[\'"\d]/i',  // 注释后接条件
-
-            // 字符编码绕过
-            '/(charset|character\s+set)\s*=\s*utf8/i',  // 可能的编码攻击
-            '/unhex\s*\(/i',  // MySQL unhex函数常用于绕过
-
-            // 信息获取函数
-            '/@@(version|datadir|basedir|hostname)/i',
-            '/database\s*\(\s*\)/i',
-            '/user\s*\(\s*\)/i',
-            '/system_user\s*\(/i',
-
-            // 危险的SQL函数组合
-            '/group_concat\s*\(/i',
-            '/concat_ws\s*\(/i',
-        ],
-
-        // ========== 命令注入检测 ==========
-        // 检测可能在服务器上执行任意系统命令的攻击
-        // 核心原则：必须同时满足函数+危险命令才会触发
-        'command' => [
-            // PHP命令执行函数 + 危险命令组合
-            // 严格匹配：函数名( + 可选空格/引号 + 危险命令
-            '/\b(system|exec|shell_exec|passthru|proc_open|popen)\s*\(\s*[\'"`\s]*(rm\s+-|wget\s|curl\s|nc\s|netcat\s|bash\s|sh\s|cmd\s|powershell\s|python\s|perl\s)/i',
-
-            // 反引号执行（PHP/Shell）+ 危险命令
-            '/`\s*(rm\s|wget\s|curl\s|nc\s|netcat\s|bash\s|sh\s|python\s|perl\s)/i',
-
-            // 命令连接符 + 危险命令
-            // 示例：; rm -rf / 或 && wget http://evil.com/shell.sh
-            '/(;|\|\||&&)\s*(rm\s+-|wget\s|curl\s|nc\s|bash\s|sh\s|python\s|perl\s|cmd\s|powershell\s)/i',
-
-            // 文件包含导致的RCE（PHP）
-            // 匹配危险协议封装器
-            '/\b(include|require|include_once|require_once)\s*\(\s*[\'"]?\s*(php|data|expect|input):/i',
-        ],
-
-        // ========== 路径遍历检测 ==========
-        // 检测试图访问Web根目录外文件的攻击
-        // 注意：仅检测明确的攻击特征，避免正常相对路径被误拦截
-        'path' => [
-            // 经典路径遍历（至少两个../）
-            // 示例：../../../etc/passwd
-            '/(\.\.\/){2,}/',
-
-            // Windows路径遍历（至少两个..\）
-            '/(\.\.\\\\){2,}/',
-
-            // 混合路径遍历（UNIX/Windows混合）
-            '/\.\.(\/|\\\\)\.\.(\/|\\\\)/',
-
-            // URL编码的遍历（双重编码）
-            '/%2e%2e%2f/i',
-            '/%252e%252e%252f/i',
-            '/%2e%2e(%2f|%5c)/i',
-
-            // Unicode规范化攻击（常见绕过技术）
-            '/%c0%af/i',  // /的UTF-8过度编码
-            '/%ef%bc%8f/i',  // 全角斜线
-            '/%e0%80%af/i',  // 另一种UTF-8编码
-
-            // 敏感文件访问尝试（仅限Linux系统文件）
-            '/\/(etc|proc|sys|var|home|root|usr\/local)\/(passwd|shadow|hosts|id_rsa|authorized_keys|\.env|\.git|\.htaccess|config\.php|database\.php)\b/i',
-
-            // 版本控制/配置文件泄露（更全面的检测）
-            '/\b(\.env|\.git\/)\b/i',
-            '/\b(\.svn|\.hg|\.bzr)\b/i',
-            '/\b(\.htaccess|\.htpasswd|web\.config)\b/i',
-            '/\b(composer\.json|composer\.lock|package\.json|package-lock\.json)\b/i',
-
-            // Windows系统目录穿越
-            '/\.\.(\/|\\\\)(windows|winnt|system32|system|program files|programdata|inetpub)/i',
-
-            // 危险的文件扩展名访问
-            '/\.\.(\/|\\\\).*\.(exe|dll|bat|cmd|sh|php|py|pl|rb|jsp|asp|aspx)$/i',
-        ],
-
-        // ========== LDAP注入检测 ==========
-        // 检测针对LDAP目录服务的注入攻击
-        'ldap' => [
-            // LDAP过滤器注入
-            '/\*\s*\)\s*\(\s*\*/i',
-            '/\)\s*\(\s*\|\s*\(/i',
-            '/\)\s*\(\s*&\s*\(/i',
-        ],
-
-        // ========== XML注入/XXE检测 ==========
-        // 检测XML外部实体注入攻击
-        'xml' => [
-            // XXE声明
-            '/<!ENTITY\s+\w+\s+SYSTEM\s+[\'"]/i',
-            '/<!ENTITY\s+\w+\s+PUBLIC\s+[\'"]/i',
-
-            // 参数实体（更危险的XXE变体）
-            '/<!ENTITY\s+%\s+\w+\s+SYSTEM\s+[\'"]/i',
-
-            // 外部DTD
-            '/<!DOCTYPE\s+\w+\s+SYSTEM\s+[\'"]/i',
-        ],
-
-        // ========== 编码绕过检测 ==========
-        // 检测使用各种编码技术绕过WAF的攻击
-        'encoding' => [
-            // 多重URL编码（双重/三重编码绕过）
-            '/%25(?:25)+[0-9a-f]{2}/i',
-
-            // Unicode规范化攻击
-            '/%(?:c0[\x80-\xbf]|e0%80[\x80-\xbf])/i',
-
-            // 空字节注入（PHP/C风格字符串终止）
-            '/%00|\x00|%00;/i',
-
-            // HTML实体编码（潜在的XSS绕过）
-            '/&#[xX]?[0-9a-f]+;/i',
-
-            // 混合编码攻击（URL编码+HTML实体）
-            '/%[0-9a-f]{2}.*&#x[0-9a-f]+;/i',
-
-            // UTF-16/UTF-32编码特征
-            '/%00%[0-9a-f]{2}/i',
-        ],
-
-        // ========== NoSQL注入检测 ==========
-        // 检测MongoDB等NoSQL数据库注入攻击
-        'nosql' => [
-            // MongoDB操作符注入
-            '/\$\s*(eq|ne|gt|gte|lt|lte|in|nin|regex|where|or|and)\s*:/i',
-
-            // JavaScript执行
-            '/\$where\s*:\s*[\'"]\s*function\s*\(/i',
-
-            // 数组操作符注入
-            '/\$\s*(exists|type|mod|all|size)\s*:/i',
-        ],
-
-        // ========== 模板注入(SSTI)检测 ==========
-        // 检测服务器端模板注入攻击
-        'ssti' => [
-            // Twig/Laravel Blade 模板注入
-            '/\{\{\s*.*\|.*(raw|escape|filter)\s*\}\}/i',
-
-            // PHP代码执行
-            '/\{\{\s*\$\w+\s*->\s*\w+\s*\([^)]*\)\s*\}\}/i',
-
-            // 危险函数调用
-            '/\{\{.*(eval|exec|system|shell_exec|passthru).*\}\}/i',
-        ],
-
-        // ========== SSRF检测 ==========
-        // 检测服务器端请求伪造攻击
-        'ssrf' => [
-            // 内网IP地址访问（常见SSRF目标）
-            '/\b(127\.0\.0\.1|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3})\b/',
-
-            // 云元数据服务端点
-            '/\b(169\.254\.169\.254|metadata\.google\.internal)\b/i',
-            '/\blatest\/meta-data\b/i',
-
-            // 常见SSRF利用协议
-            '/\b(gopher|dict|file|ftp|ldap|tftp):\/\//i',
-
-            // URL重定向到内网
-            '/\burl\s*=\s*[\'"]?\s*(http|https|ftp|gopher):\/\/(127\.|10\.|172\.1[6-9]|172\.2\d|172\.3[01]|192\.168\.)/i',
-
-            // DNS rebinding 特征
-            '/\b(rebind|dnsrebind|nip\.io|xip\.io)\b/i',
-
-            // 端口探测特征
-            '/\b(port\s*=|port\s*:)\s*\d{1,5}\b/i',
-        ],
-
-        // ========== CRLF/HTTP头注入检测 ==========
-        // 检测HTTP头注入和响应拆分攻击
-        'header_injection' => [
-            // CRLF 注入特征
-            '/(?:%0[dD]%0[aA]|%0[aA]%0[dD]|\\r\\n|%0[dD]|%0[aA])/i',
-
-            // HTTP 响应拆分 - 注入完整的HTTP头
-            '/(?:content-type|content-length|set-cookie|location|transfer-encoding)\s*:\s*[\'"]?\s*[^\'"]*\r?\n/i',
-
-            // 多行头注入
-            '/(?:<br\s*\/?>|\r\n|\n|\r)\s*(?:content-type|set-cookie):\s*/i',
-        ],
-    ],
+    'high_risk_patterns' => [],
 
     /*
     |--------------------------------------------------------------------------
-    | XSS攻击模式检测
+    | ❌ 高危模式 — 排除内置正则                                   【排除规则】
     |--------------------------------------------------------------------------
     |
-    | 检测跨站脚本攻击，但智能识别Markdown文档中的合法代码示例。
+    | 指定要从内置默认模式中移除的正则表达式（精确字符串匹配）。
+    | 当业务正常使用某个敏感函数时，可排除对应规则避免误报。
     |
-    | 核心区别：
-    | - 执行性XSS（拦截）：<script>alert(1)</script>、<img onerror=alert(1)>
-    | - 文档示例（放行）：```html <script>example</script> ```
+    | 格式：['类型键名' => ['要排除的正则1', '要排除的正则2']]
     |
-    | 实现原理：
-    | 中间件会先移除Markdown代码块，再执行XSS检测。
-    | 因此代码块内的标签不会触发拦截。
+    | 内置类型键名（对应 src/Security/Patterns/data/high_risk_patterns.php）：
+    |   sql, command, path, ldap, xml, nosql, ssti, ssrf,
+    |   encoding, header_injection, redirect, file_include
     |
+    | 配置示例：
+    |   'high_risk_patterns_exclude' => [
+    |       // SQL注入：排除误报规则
+    |       'sql' => [
+    |           '/unhex\s*\(/i',           // 业务使用 unhex() 做密码哈希
+    |           '/benchmark\s*\(/i',       // 业务使用 benchmark 做性能测试
+    |       ],
+    |       // 命令注入：排除合法命令
+    |       'command' => [
+    |           '/\b(wget\s|curl\s)/i',    // 业务使用 wget/curl 获取资源
+    |       ],
+    |       // 路径遍历：排除 Windows 特定规则误报
+    |       'path' => [
+    |           '/(\\.\\.\\\\\\){2,}/',    // Windows 路径遍历在企业内网正常
+    |       ],
+    |       'encoding' => [
+    |           '/%25(?:25)+[0-9a-f]{2}/i',
+    |           '/%(?:c0[\x80-\xbf]|e0%80[\x80-\xbf])/i',
+    |       ],
+    |       // SSRF：排除误报协议或内网地址
+    |       'ssrf' => [
+    |           '/\/\/[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.[a-z]{2,}(?:\/|$|\?|&)/i', // 排除协议省略型
+    |       ],
+    |   ],
+    |
+    | ⚠️ 排除规则时务必评估安全风险！
+    */
+    'high_risk_patterns_exclude' => [],
+
+    /*
+    |--------------------------------------------------------------------------
+    | 🏷️ XSS 攻击模式 — 自定义正则                                【追加规则】
+    |--------------------------------------------------------------------------
+    |
+    | ⚠️ 内置默认正则模式已迁移至独立数据文件（延迟加载）。
+    |
+    | ⚡ 预过滤优化：每种 XSS 子类型都有预过滤关键词
+    |    （如 script 预检 <script，tag 预检 <iframe），不包含则跳过正则匹配。
+    |
+    | 内置检测类型：
+    |   script    — 脚本标签注入（<script>/javascript:/vbscript: 伪协议）
+    |   dom       — DOM型XSS（onerror/onload/onfocus 等事件处理器）
+    |   tag       — 标签注入（<iframe>/<object>/<embed>/<svg>/<img>等）
+    |   encoding  — 编码绕过（Unicode转义/HTML实体/Base64 data URI）
+    |   framework — 框架特定XSS（jQuery/Vue v-html/Angular沙箱逃逸）
+    |
+    | 配置示例：
+    |   'xss_patterns' => [
+    |       'script' => ['/custom_xss_regex/i'],
+    |   ],
     */
 
-    'xss_patterns' => [
-
-        // ========== 反射型/存储型XSS ==========
-        // 检测可能在页面中执行的脚本注入
-        'script' => [
-            // 完整的script标签（包含执行性内容）
-            // 严格匹配：script标签内包含执行函数调用（有括号）
-            '/<script\b[^>]*>[^<]*(alert|confirm|prompt|eval)\s*\(/i',
-
-            // document相关危险操作
-            '/<script\b[^>]*>[^<]*document\.(write|cookie|location)\s*=/i',
-
-            // JavaScript伪协议
-            '/javascript:\s*(alert|confirm|prompt|eval)\s*\(/i',
-        ],
-
-        // ========== DOM型XSS ==========
-        // 检测可能通过DOM操作触发的XSS
-        'dom' => [
-            // 危险属性 + 事件处理器 + 执行函数
-            // 严格匹配：on事件=执行代码（必须有括号或敏感关键字）
-            '/\b(on(error|load|click|mouseover|focus|blur|change|submit|keydown|keyup|keypress|mousemove|mouseout|unload))\s*=\s*[\'"]?\s*(alert|confirm|prompt|eval|document\.cookie|window\.location)\s*\(/i',
-
-            // innerHTML/outerHTML赋值为HTML标签或脚本
-            '/\.(innerHTML|outerHTML)\s*=\s*[\'"]?\s*<\s*(script|img|iframe|svg)/i',
-        ],
-
-        // ========== 标签注入 ==========
-        // 检测通过HTML标签属性进行的XSS
-        'tag' => [
-            // iframe src=javascript:
-            '/<iframe\b[^>]*src\s*=\s*[\'"]?\s*javascript:/i',
-
-            // object/data注入
-            '/<object\b[^>]*data\s*=\s*[\'"]?\s*javascript:/i',
-
-            // embed src注入
-            '/<embed\b[^>]*src\s*=\s*[\'"]?\s*javascript:/i',
-
-            // SVG onload事件
-            '/<svg\b[^>]*onload\s*=\s*[\'"]?\s*(alert|confirm|prompt|eval)/i',
-
-            // 图片错误事件
-            '/<img\b[^>]*onerror\s*=\s*[\'"]?\s*(alert|confirm|prompt|eval)/i',
-
-            // 输入框焦点事件
-            '/<input\b[^>]*onfocus\s*=\s*[\'"]?\s*(alert|confirm|prompt|eval)/i',
-        ],
-
-        // ========== 编码绕过 ==========
-        // 检测常见的XSS编码绕过技术
-        'encoding' => [
-            // Unicode转义（\\uXXXX 格式，PCRE2 兼容写法）
-            '/\\\\u[0-9a-f]{4}/i',
-
-            // HTML实体（危险函数）
-            '/&(#x?)?(0*4|0*1|0*105|0*97|0*108|0*101|0*114|0*116)/i',
-
-            // URL编码的JavaScript伪协议
-            '/(?:%6[aA]|%4[aA])(?:%61|%41)(?:%76|%56)(?:%61|%41)(?:%73|%53)(?:%63|%43)(?:%72|%52)(?:%69|%49)(?:%70|%50)(?:%74|%54)/i',
-
-            // Base64数据URI（潜在的XSS载体）
-            '/data:text\/html;base64,/i',
-            '/data:image\/svg\+xml;base64,/i',
-        ],
-
-        // ========== 框架/库特定XSS ==========
-        'framework' => [
-            // jQuery原型污染相关
-            '/jQuery\.fn\.(init|extend)\s*\(\s*["\']\s*<script/i',
-
-            // Angular表达式注入
-            '/\{\{\s*.*constructor\s*\./i',
-            '/\[\s*constructor\s*\]\s*\[\s*"prototype"\s*\]/i',
-
-            // Vue.js模板注入
-            '/v-html\s*=\s*["\']\s*</i',
-        ],
-    ],
+    'xss_patterns' => [],
 
     /*
     |--------------------------------------------------------------------------
-    | 文件上传安全
+    | ❌ XSS 模式 — 排除内置正则                                   【排除规则】
     |--------------------------------------------------------------------------
     |
-    | 控制上传文件的安全检查规则。
+    | 格式与 high_risk_patterns_exclude 相同，精确字符串匹配。
     |
-    | 检查维度：
-    | 1. 文件扩展名 - 禁止可执行脚本
-    | 2. 文件大小 - 防止DoS攻击
-    | 3. MIME类型（可选）- 深度验证
+    | 内置类型键名（对应 src/Security/Patterns/data/xss_patterns.php）：
+    |   script, dom, tag, encoding, framework
     |
-    | 安全建议：
-    | - 上传目录不应具有执行权限
-    | - 建议重命名上传文件（避免原始文件名）
-    | - 图片文件应进行二次处理（压缩/转换），清除可能的恶意代码
+    | 配置示例：
+    |   'xss_patterns_exclude' => [
+    |       'script' => [
+    |           '/<script\b[^>]*>[^<]*(alert|confirm|prompt|eval)\s*\(/i', // 富文本编辑器
+    |       ],
+    |       'tag' => [
+    |           '/<iframe\b[^>]*src\s*=\s*[\'"]?\s*javascript:/i',  // 内嵌合法视频
+    |           '/<img\b[^>]*onerror\s*=\s*[\'"]?\s*(alert|confirm|prompt|eval)/i', // 图片上传预览
+    |       ],
+    |       'dom' => [
+    |           '/\b(on(error|load|click|mouseover|focus|blur|change|submit|keydown|keyup|keypress|mousemove|mouseout|unload))\s*=\s*[\'"]?\s*(alert|confirm|prompt|eval|document\.cookie|window\.location)\s*\(/i',
+    |       ],
+    |       'encoding' => [
+    |           '/\\\\u[0-9a-f]{4}/i',     // Unicode 转义在 JSON API 中正常
+    |       ],
+    |   ],
+    */
+    'xss_patterns_exclude' => [],
+
+    /*
+    |--------------------------------------------------------------------------
+    | 📁 文件上传安全                                            【拦截规则】
+    |--------------------------------------------------------------------------
     |
+    | 四层防护：扩展名白名单 + 黑名单 + 大小限制 + MIME魔术字节验证
+    |
+    | 安全建议：上传目录无执行权限、文件改名、图片二次处理
     */
 
     'upload' => [
-        // 是否启用上传检查
-        'enabled' => true,
+        'max_size' => 50 * 1024 * 1024,                              // 单文件最大 50MB
+        'check_mime_magic' => env('SECURITY_UPLOAD_CHECK_MIME', false), // 深度MIME验证（防止扩展名伪装）
+        'mime_magic_map' => [],                                      // 自定义MIME映射（留空使用内置）
 
-        // 单个文件最大大小（字节）
-        // 默认10MB，超过此大小会被拦截
-        'max_size' => 10 * 1024 * 1024,
-
-        // 是否启用 MIME magic bytes 深度验证
-        // 启用后读取文件头部魔数字节，防止扩展名伪装
-        // 注意：会轻微增加 CPU 开销
-        // 环境变量：SECURITY_UPLOAD_CHECK_MIME
-        'check_mime_magic' => env('SECURITY_UPLOAD_CHECK_MIME', false),
-
-        // 许可的资源类型
-        'mime_magic_map' => [], // 空数组使用默认映射，可自定义覆盖
-
-        // 允许的文件扩展名（白名单）
-        // 注意：这不会覆盖 blocked_extensions，只是用于前端提示
+        // 允许上传文件后缀
         'allowed_extensions' => [
-            // 图片
             'jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp',
-
-            // 文档
             'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx',
             'txt', 'rtf', 'csv', 'md',
-
-            // 压缩包
             'zip', 'rar', '7z', 'tar', 'gz',
-
-            // 音视频
             'mp3', 'mp4', 'avi', 'mov', 'wmv', 'flv',
         ],
 
-        // 禁止的文件扩展名（黑名单）
-        // 这些扩展名的文件会被直接拒绝
+        // 禁止上传文件后缀
         'blocked_extensions' => [
-            // Web脚本（高危）
+            // Web脚本
             'php', 'php3', 'php4', 'php5', 'php7', 'php8', 'phtml', 'phar',
             'jsp', 'jspx', 'jsw', 'jsv', 'jspf',
             'asp', 'aspx', 'ascx', 'ashx', 'asmx', 'axd',
             'cfm', 'cfml', 'cfc', 'dbm',
-
-            // 其他脚本
             'pl', 'pm', 'cgi',
             'py', 'pyc', 'pyo',
             'rb', 'rhtml',
+            // Shell/脚本
             'sh', 'bash', 'zsh', 'csh', 'tcsh',
             'ps1', 'psm1', 'bat', 'cmd', 'vbs', 'vbe', 'js', 'jse', 'wsf', 'wsh',
-
             // 可执行文件
             'exe', 'dll', 'bin', 'so', 'dylib', 'msi', 'com', 'scr',
-
-            // 配置文件（可能泄露敏感信息）
+            // 配置/数据
             'htaccess', 'htpasswd', 'config', 'ini', 'log',
-
-            // 数据库文件
             'sql', 'sqlite', 'sqlite3', 'mdb', 'accdb',
-
-            // 序列化数据（可能包含恶意对象）
             'xml', 'yaml', 'yml', 'toml',
         ],
+
+        /*
+        | 从黑名单中排除特定扩展名（精确字符串匹配）                   【排除规则】
+        | ====================================================
+        |
+        | 示例：
+        |   'blocked_extensions_exclude' => [
+        |       'yml',      // 配置管理工具需上传 .yml
+        |       'xml',      // 业务需要 XML 数据导入
+        |       'log',      // 运维需上传日志
+        |   ],
+        |
+        | ⚠️ 仔细评估安全风险后再排除！
+        */
+        'blocked_extensions_exclude' => [],
+
+        /*
+        | 追加自定义禁止上传的扩展名                                   【追加规则】
+        | ====================================================
+        |
+        | 示例：
+        |   'blocked_extensions_add' => [
+        |       'war',      // Tomcat WAR 部署包
+        |       'ear',      // Java EE EAR 包
+        |       'jar',      // Java JAR 包
+        |       'swf',      // Flash SWF
+        |   ],
+        */
+        'blocked_extensions_add' => [],
     ],
 
     /*
     |--------------------------------------------------------------------------
-    | URL长度限制
+    | 📏 URL 长度限制                                           【拦截规则】
     |--------------------------------------------------------------------------
     |
-    | 限制URL最大长度，防止：
-    | 1. 缓冲区溢出攻击
-    | 2. 日志注入攻击
-    | 3. 绕过WAF规则（通过超长字符串分割关键字）
-    |
-    | 浏览器限制参考：
-    | - IE: 2048字符
-    | - Chrome: ~32K字符
-    | - Firefox: ~64K字符
-    |
-    | 推荐值：2048（兼容所有浏览器，足够正常使用）
-    |
+    | 超过此长度的 URL 将被拦截（防缓冲区溢出/DoS 攻击）。
     */
 
-    'max_url_length' => 2048,
+    'max_url_length' => [
+        'limit' => 2048,                                            // 最大字符数
+    ],
 
     /*
     |--------------------------------------------------------------------------
-    | 请求体大小限制
+    | 📦 请求体大小限制                                          【拦截规则】
     |--------------------------------------------------------------------------
     |
-    | 限制请求体最大大小，防止：
-    | 1. 内存溢出攻击
-    | 2. 超大POST数据导致的DoS
-    | 3. 文件上传绕过检查
-    |
-    | 注意：此限制应在Web服务器（Nginx/Apache）层首先设置
-    | 这里的限制作为二次防护
-    |
+    | 防止超大请求体导致内存耗尽，通过 Content-Length 头部判断。
     */
 
     'max_body_size' => [
-        // 是否启用检查
-        'enabled' => true,
-
-        // 最大请求体大小（字节）
-        // 默认 10MB
-        'limit' => 10 * 1024 * 1024,
+        'limit' => 50 * 1024 * 1024,       // 默认 50MB
     ],
 
     /*
     |--------------------------------------------------------------------------
-    | User-Agent 黑名单
+    | 🤖 User-Agent 黑名单                                      【拦截规则】
     |--------------------------------------------------------------------------
     |
-    | 封禁已知的恶意User-Agent，如扫描器、爬虫工具等。
+    | 已知恶意扫描器/攻击工具的 User-Agent 特征串（不区分大小写部分匹配）。
+    | 支持字符串、正则（以/开头）、闭包三种格式。
     |
-    | 支持格式：
-    | - 字符串：完全匹配或包含匹配
-    | - 正则表达式：'/scann(er|ing)/i'
-    | - 闭包：function($ua, $request) { return str_contains($ua, 'BadBot'); }
-    |
-    | 常见恶意UA示例：
-    | - SQLMap、Nmap、Nikto、DirBuster
-    | - 各种扫描器和爬虫
-    |
+    | 自定义追加示例：
+    |   'user_agent_blacklist' => [
+    |       '/python-requests/i',              // 正则：Python 脚本
+    |       '/Go-http-client/i',               // 正则：Go HTTP 客户端
+    |       function($ua, $request) {          // 闭包：空UA且POST请求视为可疑
+    |           return empty($ua) && $request->isMethod('POST');
+    |       },
+    |   ],
     */
 
     'user_agent_blacklist' => [
-        // 扫描工具
-        'sqlmap',
-        'nmap',
-        'nikto',
-        'dirbuster',
-        'burp',
-        'wpscan',
-        'acunetix',
-        'nessus',
-        'openvas',
-        'zgrab',
-        'masscan',
-        'censys',
-        'shodan',
-
-        // 爬虫（可选，视业务需求）
-        // 'scrapy',
-        // 'curl',
-        // 'wget',
-
-        // 自定义正则
-        // '/(scanner|bot|crawler|spider)/i',
-
-        // 自定义闭包
-        // function($ua, $request) {
-        //     return strlen($ua) < 10 || strlen($ua) > 500;
-        // },
+        'sqlmap',        // SQLMap 注入工具
+        'nmap',          // Nmap 扫描器
+        'nikto',         // Nikto Web扫描器
+        'dirbuster',     // DirBuster 目录扫描
+        'burp',          // Burp Suite 安全测试
+        'wpscan',        // WPScan WordPress扫描
+        'acunetix',      // Acunetix 漏洞扫描器
+        'nessus',        // Nessus 漏洞扫描器
+        'openvas',       // OpenVAS 漏洞扫描器
+        'zgrab',         // ZGrab 扫描器
+        'masscan',       // Masscan 端口扫描
+        'censys',        // Censys 搜索引擎
+        'shodan',        // Shodan 搜索引擎
     ],
 
     /*
     |--------------------------------------------------------------------------
-    | HTTP 头安全检查
+    | ❌ UA 黑名单 — 排除内置条目                                   【排除规则】
     |--------------------------------------------------------------------------
     |
-    | 检查HTTP请求头中的安全隐患。
+    | 精确字符串匹配，从内置 UA 黑名单中排除特定工具。
+    | 适用于：公司内部使用某款安全扫描器做自动化测试。
     |
+    | 配置示例：
+    |   'user_agent_blacklist_exclude' => [
+    |       'burp',        // 企业内部安全团队使用 Burp Suite 做授权测试
+    |       'nessus',      // Nessus 定期扫描
+    |   ],
+    |
+    | ⚠️ 这里仅支持排除内置字符串条目，不支持排除正则/闭包条目。
+    */
+    'user_agent_blacklist_exclude' => [],
+
+
+    /*
+    |--------------------------------------------------------------------------
+    | 🔒 HTTP 头安全检查                                         【拦截规则】
+    |--------------------------------------------------------------------------
+    |
+    | 检查维度：禁止的请求头、CRLF注入（HTTP响应拆分）、Host头验证
+    |
+    | Host 验证配置示例：
+    |   'host_validation' => [
+    |       'enabled' => true,
+    |       'allowed_hosts' => [
+    |           'example.com',
+    |           'www.example.com',
+    |           '*.cdn.example.com',   // 通配符子域名
+    |       ],
+    |   ],
     */
 
     'headers' => [
-        // 是否启用头检查
-        'enabled' => true,
-
-        // 必须包含的头（如特定API密钥头）
-        // 'required' => ['X-API-Key'],
-
-        // 禁止的头（可能用于攻击）
         'forbidden' => [
-            // 代理相关（可能被用于绕过IP限制）
-            // 'X-Forwarded-Host',  // 如需使用请根据环境配置
-            // 'X-HTTP-Host-Override',
-
-            // 调试头
-            'X-Debug',
-            'X-Debug-Token',
+            'X-Debug',           // Symfony/Laravel 调试头
+            'X-Debug-Token',     // Symfony 调试 Token
         ],
-
-        // CRLF/Header注入检测
-        // 扫描所有HTTP头值中的换行符，防止HTTP响应拆分攻击
-        // 环境变量：SECURITY_DETECT_CRLF
-        'detect_crlf' => env('SECURITY_DETECT_CRLF', true),
-
-        // Host头检查（防止Host头攻击）
+        'detect_crlf' => env('SECURITY_DETECT_CRLF', true),  // CRLF/HTTP响应拆注入检测
         'host_validation' => [
-            'enabled' => false,  // 默认关闭，需配置允许的主机名
-            'allowed_hosts' => [
-                // 'example.com',
-                // '*.example.com',
-            ],
+            'enabled' => false,             // 默认关闭，按需开启
+            'allowed_hosts' => [],
         ],
     ],
 
     /*
     |--------------------------------------------------------------------------
-    | 路由排除配置
+    | 🚏 路由排除                                                  【排除规则】
     |--------------------------------------------------------------------------
     |
-    | 指定哪些路由跳过安全检查。
+    | 排除列表中的路径将跳过所有安全检查直接放行。
+    | 适用于：健康检查、Webhook回调、管理后台等。
     |
     | 支持格式：
-    | - 字符串：'webhook/*'（匹配模式）
-    | - 正则：'/^webhook\//'
-    | - 闭包：function($request) { return $request->is('webhook/*'); }
+    |   ① 字符串（支持 * 通配符）：'api/health*'、'webhook/*'
+    |   ② 正则（以 / 开头）：'/^api\/v1\/health$/'
+    |   ③ 闭包函数：function(Request $request): bool { ... }
     |
-    | 警告：谨慎使用，确保排除的路由有独立的安全措施！
+    | ⚠️ 不要将整个 /api/* 排除，风险过高！
     |
+    | 配置示例：
+    |   'excluded_routes' => [
+    |       'api/health',            // 健康检查
+    |       'api/healthz',           // Kubernetes 健康探测
+    |       'webhook/stripe',        // Stripe 支付回调
+    |       'webhook/github',        // GitHub Webhook
+    |   ],
     */
 
-    'excluded_routes' => [
-        // 示例：排除webhook路由
-        // 'webhook/*',
-        // 'api/webhook/*',
-
-        // 示例：使用闭包
-        // function($request) {
-        //     return $request->is('health-check') || $request->header('X-Internal-Request') === 'true';
-        // },
-    ],
+    'excluded_routes' => [],
 
     /*
     |--------------------------------------------------------------------------
-    | 拦截前回调配置
+    | 🎛️ 拦截前回调                                              【配置项】
     |--------------------------------------------------------------------------
     |
-    | 在正式拦截请求前，会调用此回调函数，允许开发者自定义拦截决策。
+    | 在正式拦截前执行的自定义回调，支持灵活拦截决策。
     |
-    | 配置格式支持：
-    | - false/null：禁用回调，直接拦截
-    | - 布尔值 true：启用默认处理（直接拦截）
-    | - 类名字符串：'App\\Security\\CustomInterceptor'（需实现 __invoke 方法）
-    | - 可调用数组：['App\\Security\\CustomInterceptor', 'handle']
-    | - 闭包函数：function(InterceptionContext $context): ?bool { ... }
+    | 返回值含义：
+    |   false  → 放行请求
+    |   其他   → 拦截请求（true/null/无返回均视为拦截）
     |
-    | 回调返回值：
-    | - false：放行请求（不拦截），继续后续处理
-    | - true/null：拦截请求，返回拦截响应给用户
+    | 支持格式：
+    |   null/false              → 禁用回调，直接拦截
+    |   闭包函数                  → function(InterceptionContext $context): ?bool { ... }
+    |   类名字符串                → 'App\\Security\\CustomInterceptor'（需实现 __invoke）
+    |   可调用数组                → ['App\\Security\\CustomInterceptor', 'handle']
     |
-    | 回调参数 InterceptionContext 包含：
-    | - threat_type: 威胁类型
-    | - threat_description: 威胁描述
-    | - risk_level: 风险等级 (high/medium/low)
-    | - client_ip: 客户端IP
-    | - method: HTTP方法
-    | - url: 请求URL
-    | - matched_pattern: 匹配的正则模式
-    | - all_threats: 所有检测到的威胁
+    | 配置示例：
+    |   // 仅拦截高危威胁，中低风险放行
+    |   'before_block_callback' => function($context) {
+    |       return $context->getRiskLevel() === 'high';
+    |       // 低风险请求放行
+    |       if ($context->getRiskLevel() === 'low') {
+    |           return false; // 放行
+    |       }
+    |   },
     |
-    | 使用场景：
-    | 1. 记录拦截日志到数据库或外部服务
-    | 2. 对特定IP或用户进行例外处理
-    | 3. 实现动态威胁评分，低危请求自动放行
-    | 4. 发送安全告警通知（短信、邮件、钉钉等）
-    |
-    | 示例配置：
-    |
-    | 'before_block_callback' => function($context) {
-    |     // 记录到数据库
-    |     SecurityLog::create($context->toArray());
-    |
-    |     // 低风险请求放行
-    |     if ($context->getRiskLevel() === 'low') {
-    |         return false; // 放行
-    |     }
-    |
-    |     // 发送告警（异步）
-    |     SecurityAlertJob::dispatch($context);
-    |
-    |     return true; // 拦截
-    | },
-    |
+    |   // 内网IP放行 + 记录到数据库
+    |   'before_block_callback' => function($context) {
+    |       \App\Models\SecurityLog::create($context->toArray());
+    |       if (str_starts_with($context->clientIp, '192.168.')) {
+    |           return false;
+    |       }
+    |       return true;
+    |   },
     */
 
     'before_block_callback' => null,
 
     /*
     |--------------------------------------------------------------------------
-    | HTTP响应配置
+    | 📤 HTTP 响应配置                                           【配置项】
     |--------------------------------------------------------------------------
     |
-    | 配置拦截请求时返回的HTTP状态码、消息和视图。
-    |
-    | 状态码说明：
-    | - 403 Forbidden：请求被理解但拒绝执行（通用拦截）
-    | - 429 Too Many Requests：速率限制触发
-    |
-    | 视图配置支持以下格式：
-    | 1. 字符串视图名：'errors.security'（使用 resources/views/errors/security.blade.php）
-    | 2. 闭包函数：function($data) { return view('errors.block', $data); }
-    | 3. 类方法数组：['App\Http\Controllers\SecurityController', 'block']
-    | 4. 可调用类：App\Security\CustomResponseHandler::class
-    |
-    | 视图接收的数据：
-    | - message: 拦截提示消息
-    | - blocked: true
-    | - threats: 威胁类型数组
-    | - matched_pattern: 匹配的正则模式
-    | - matched_content: 匹配的内容片段
-    |
+    | 拦截时的自定义响应消息和状态码。
+    | view 配置支持：字符串视图名、闭包、类方法数组、可调用类。
     */
 
     'response' => [
-        // 通用拦截状态码
-        'blocked_status' => 403,
+        'blocked_status' => 403,                                     // 通用拦截 HTTP 状态码
+        'rate_limit_status' => 429,                                  // 速率限制状态码
+        'message' => '请求被拒绝：检测到潜在的安全威胁',                // 默认拦截提示
+        'show_threat_details' => env('SECURITY_SHOW_DETAILS', false), // 生产环境切勿开启
 
-        // 速率限制状态码
-        'rate_limit_status' => 429,
-
-        // 默认拦截消息（Web请求）
-        'message' => '请求被拒绝：检测到潜在的安全威胁',
-
-        // 是否显示详细威胁信息（生产环境建议关闭）
-        'show_threat_details' => env('SECURITY_SHOW_DETAILS', false),
-
-        // 多语言支持：拦截消息配置
-        // 支持根据威胁类型返回不同的拦截消息
-        // 键名为威胁类型，键值为消息内容
-        // 如果某个类型未配置，将使用上面的默认 message
         'messages' => [
-            // IP相关
             'blacklist' => '您的IP地址已被列入黑名单，禁止访问',
             'whitelist' => 'IP白名单检查通过',
-
-            // 请求限制
             'rate_limit' => '请求过于频繁，请稍后再试',
             'body_too_large' => '请求体过大，超过服务器限制',
             'url_too_long' => '请求URL过长',
             'invalid_method' => '不支持的HTTP请求方法',
-
-            // 请求头相关
             'bad_user_agent' => '检测到恶意User-Agent',
             'invalid_headers' => '请求头信息不合法',
-
-            // URL攻击
             'url_path_attack' => 'URL路径包含非法内容',
             'encoding_bypass' => '请求包含编码绕过特征',
-
-            // 高危攻击
             'sql' => '检测到SQL注入攻击，请求已被拦截',
             'command' => '检测到命令注入攻击，请求已被拦截',
             'path' => '检测到路径遍历攻击，请求已被拦截',
@@ -951,140 +592,150 @@ return [
             'nosql' => '检测到NoSQL注入攻击，请求已被拦截',
             'ssti' => '检测到模板注入攻击，请求已被拦截',
             'encoding' => '检测到编码绕过攻击，请求已被拦截',
-
-            // XSS攻击
+            'redirect' => '检测到开放重定向攻击，请求已被拦截',
+            'file_include' => '检测到文件包含攻击，请求已被拦截',
             'xss_script' => '检测到脚本注入攻击，请求已被拦截',
             'xss_dom' => '检测到DOM型XSS攻击，请求已被拦截',
             'xss_tag' => '检测到标签注入攻击，请求已被拦截',
             'xss_encoding' => '检测到XSS编码绕过攻击，请求已被拦截',
             'xss_framework' => '检测到框架特定XSS攻击，请求已被拦截',
-
-            // 文件上传
             'dangerous_upload' => '检测到危险文件上传，请求已被拦截',
-
-            // 通用
             'unknown' => '请求包含潜在的安全威胁，已被拦截',
         ],
 
-        // 自定义视图配置（可选）
-        // 设为 null 或空字符串则使用默认文本响应
-        // 支持格式：视图名、闭包、类方法数组、可调用类
-        //
-        // 示例1：使用 Blade 视图
-        // 'view' => 'security::error',
-        //
-        // 示例2：使用闭包函数
-        // 'view' => function($data) {
-        //     return view('errors.blocked', [
-        //         'message' => $data['message'],
-        //         'threats' => $data['threats'],
-        //     ]);
-        // },
-        //
-        // 示例3：使用类方法
-        // 'view' => ['App\Http\Controllers\SecurityController', 'renderBlockPage'],
-        //
-        // 示例4：使用可调用类, 需要实现  __invoke 方法
-        // 'view' => \App\Security\BlockResponseHandler::class,
-        'view' => null,
+        'view' => null,  // 自定义拦截视图：'errors.security' 或闭包
     ],
 
     /*
     |--------------------------------------------------------------------------
-    | 高级配置：Markdown内容识别
+    | 📝 Markdown 内容智能识别                                   【排除规则】
     |--------------------------------------------------------------------------
     |
-    | 控制中间件对Markdown格式内容的智能识别功能。
+    | 智能识别 Markdown 文档，避免代码示例被误判为攻击。
+    | 适用于：文档系统、Wiki、博客、论坛等。
     |
-    | 启用后，中间件会：
-    | 1. 检测内容是否包含Markdown语法
-    | 2. 识别代码块区域（``` 或 ~~~ 包裹的部分）
-    | 3. 对代码块内的HTML标签放宽XSS检测
+    | 双层控制：
+    |   allow_script_in_markdown         — XSS 脚本标签旁路
+    |   allow_dangerous_code_in_markdown — 高危代码旁路（SQL/命令等）
     |
-    | 适用场景：
-    | - 内容管理系统（CMS）
-    | - 文档协作平台
-    | - 开发者社区
-    | - 知识库系统
-    |
+    | ⚠️ 仅文档提交场景开启，开放评论/留言场景建议保持 false。
     */
 
     'markdown' => [
-        // 是否启用Markdown智能识别
-        // 设为 true 可减少文档类内容的误拦截
-        'smart_detection' => true,
+        'smart_detection' => env('SECURITY_MARKDOWN_SMART_DETECT', true),
+        'allow_script_in_markdown' => env('SECURITY_MARKDOWN_ALLOW_SCRIPT', false),
+        'allow_dangerous_code_in_markdown' => env('SECURITY_MARKDOWN_ALLOW_DANGEROUS_CODE', false),
 
-        // 代码块标记
+        // 高危代码旁路适用的攻击类型
+        'dangerous_code_types' => [
+            'sql', 'command', 'path', 'nosql', 'ldap', 'file_include',
+        ],
+
+        // 围栏式代码块标记
         'code_block_markers' => ['```', '~~~'],
 
         // 行内代码标记
         'inline_code_marker' => '`',
-    ],
 
-    /*
-    |--------------------------------------------------------------------------
-    | URL路径攻击检测配置
-    |--------------------------------------------------------------------------
-    |
-    | 配置URL路径和查询参数中的路径遍历攻击检测模式。
-    |
-    */
+        // Markdown 识别最小内容长度
+        'min_length' => 80,
 
-    'url_path_detection' => [
-        'enabled' => env('SECURITY_URL_PATH_DETECTION', true),
+        // Markdown 语法特征最低匹配分数
+        'min_syntax_score' => 2,
 
-        'path_patterns' => [
-            // 路径遍历检测正则模式
-            '/(\.\.\/){2,}/',
-            '/(\.\.\\\\){2,}/',
-            '/\.\.(\/|\\\\)\.\.(\/|\\\\)/',
-            '/%2e%2e(%2f|%5c)/i', // URL 编码（兼容 Windows） ../ 或 ..\
-
-            // 敏感文件访问检测模式
-            '/\/(etc|proc|sys|var|root|home|usr\/local)\/(passwd|shadow|hosts|id_rsa|authorized_keys|\.env|\.git|\.htaccess|config\.php|database\.php)\b/i',
-            '/\b(\.env|\.git\/)\b/i',
-            '/\b(\.svn|\.hg|\.bzr)\b/i',
-            '/\b(\.htaccess|\.htpasswd|web\.config)\b/i',
-            '/\b(composer\.json|composer\.lock|package\.json|package-lock\.json)\b/i',
-            '/\.\.(\/|\\\\)(windows|winnt|system32|system|program files|programdata|inetpub)/i',
-
-            // 其他匹配规则
-            '/\.(?:php|jsp|asp|sh|py|pl|exe|bat|cmd|env|bak)(?=\b|$)/i', // 匹配 php、jsp、sh 等文件扩展名
+        // Markdown 语法识别正则                                       【拦截规则】
+        'syntax_patterns' => [
+            '/^#{1,6}\s+/m',          // 标题
+            '/^[-*+]\s+/m',           // 无序列表
+            '/\[.+?\]\(.+?\)/',        // 链接
+            '/^\s*>\s+/m',            // 引用块
+            '/^\s*\|\s*[-:]+\s*\|/m', // 表格
+            '/!\[.*?\]\(.*?\)/',      // 图片
+            '/\*\*.*?\*\*/',          // 粗体
+            '/\*[^*]+\*/',            // 斜体
+            '/^---\s*$/m',            // 水平线 / frontmatter
+            '/^- \[[ x]\] /m',        // 任务列表
+            '/\[\^.+?\]:?/m',         // 脚注
+            '/\~\~.*?\~\~/',          // 删除线
+            '/^`{3,}\s*\w*/m',        // 代码块开始
+            '/<!--[\s\S]*?-->/',      // HTML 注释
+            '/^\d+\.\s+/m',           // 有序列表
+            '/^:{1,3}\s+\S/m',        // 定义列表
         ],
     ],
 
     /*
     |--------------------------------------------------------------------------
-    | 编码绕过攻击检测配置
+    | 🔗 URL 路径攻击检测                                         【拦截规则】
     |--------------------------------------------------------------------------
     |
-    | 配置多重编码攻击的检测参数。
+    | ⚠️ 默认正则模式已迁移至独立数据文件（延迟加载）。
+    | 内置检测覆盖：经典路径遍历、Windows路径遍历、URL编码绕过、
+    | Unicode绕过、敏感文件（.env/.git等）、版本控制文件泄露、
+    | WebShell特征、数据库管理工具暴露、备份/日志文件泄露等。
     |
+    | path_patterns：追加自定义正则（格式：扁平数组）
+    | path_patterns_exclude：排除内置正则（精确字符串匹配）
+    |
+    | 自定义追加示例：
+    |   'path_patterns' => ['/my_custom_regex/i'],
+    |
+    | 排除示例（对应 url_path_patterns.php 中的具体规则）：
+    |   'path_patterns_exclude' => [
+    |       '/(\.\.\/){2,}/',                                        // 业务接口正常使用多级路径
+    |       '/\b(\.env|\.git\/|\.git\/config)\b/i',                  // 镜像了 .git 仓库的文档站
+    |       '/\.(?:php\d*|phtml|phar|shtml|jsp|...)/i',             // 排除脚本扩展名检测
+    |   ],
+    */
+
+    'url_path_detection' => [
+        'path_patterns' => [],                                       // 自定义追加的路径检测正则
+        'path_patterns_exclude' => [],                               // 排除的内置路径检测正则
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | 🔐 编码绕过攻击检测（Layer 4 — 请求级编码异常）               【拦截规则】
+    |--------------------------------------------------------------------------
+    |
+    | 与 Layer 11 high_risk_patterns.encoding 互补（Layer 4 请求级 / Layer 11 内容级）。
     */
 
     'encoding_detection' => [
-        'enabled' => env('SECURITY_ENCODING_DETECTION', true),
+        'percent_threshold' => 0.30,                                 // %占比阈值
 
-        // URL编码百分比阈值（0-1）
-        'percent_threshold' => 0.30,
-
-        // 解码后检查的可疑模式
+        // 解码后检查的可疑模式                                          【拦截规则】
         'suspicious_patterns' => [
             '../', '..\\', '<script', 'javascript:',
             'onerror=', 'onload=', 'onfocus=',
         ],
 
-        'detect_null_bytes' => true,
-        'detect_utf8_overlong' => true,
+        // 编码检测正则                                                 【拦截规则】
+        'encoding_patterns' => [],
+
+        // 排除检测维度 或 排除特定正则（精确字符串匹配）                  【排除规则】
+        // 维度名：'null_byte' / 'percent_threshold' / 'multi_encoding' / 'utf8_overlong'
+        // 正则串：从 encoding_patterns 中排除特定正则
+        //
+        // 示例（排除整组）：'encoding_patterns_exclude' => ['multi_encoding'],
+        // 示例（排除单条）：'encoding_patterns_exclude' => ['/regex/here/i'],
+        //
+        // ⚠️ 不影响 Layer 11，需同时配置 high_risk_patterns_exclude['encoding']
+        'encoding_patterns_exclude' => [
+            '/%25(?:25)+[0-9a-f]{2}/i', // 第三方回调时把回调地址URL使用 urlencode($url) 处理可能会使用到，需要排除此规则
+        ],
     ],
 
     /*
     |--------------------------------------------------------------------------
-    | HTTP方法配置
+    | 🔧 HTTP 方法限制                                          【拦截规则】
     |--------------------------------------------------------------------------
     |
-    | 配置允许的HTTP请求方法。
+    | 不在列表中的 HTTP 方法将被拦截。
+    | 如需禁用某个方法，直接从数组中移除即可。
     |
+    | 示例（禁用 DELETE 和 PATCH）：
+    |   'allowed_http_methods' => ['GET', 'POST', 'PUT', 'HEAD', 'OPTIONS'],
     */
 
     'allowed_http_methods' => [
@@ -1093,47 +744,32 @@ return [
 
     /*
     |--------------------------------------------------------------------------
-    | 输入处理配置
+    | ⚙️ 输入处理                                                【配置项】
     |--------------------------------------------------------------------------
     |
-    | 配置请求输入的处理参数。
-    |
+    | 控制输入截断与日志脱敏。
     */
 
     'input_processing' => [
-        // 最大输入长度（字节），防止正则回溯
-        'max_input_length' => 100 * 1024,
-
-        // 匹配内容最大长度（用于日志）
-        'max_match_content_length' => 200,
-
-        // Markdown检测最小内容长度
-        'markdown_min_length' => 100,
-
-        // Markdown语法模式
-        'markdown_patterns' => [
-            '/^#{1,6}\s+/m',
-            '/^[-*+]\s+/m',
-            '/\[.+?\]\(.+?\)/',
-            '/^\s*>\s+/m',
-            '/^\s*\|\s*[-:]+\s*\|/m',
-            '/!\[.*?\]\(.*?\)/',
-            '/\*\*.*?\*\*/',
-        ],
+        'max_input_length' => 100 * 1024,                     // 最大输入长度（防止正则回溯）
+        'max_match_content_length' => 200,                    // 日志中匹配内容最大长度（脱敏）
     ],
 
     /*
     |--------------------------------------------------------------------------
-    | 威胁风险等级映射
+    | 📊 威胁风险等级映射                                         【配置项】
     |--------------------------------------------------------------------------
     |
-    | 配置每种威胁类型的风险等级（high, medium, low）
-    | 不配置(空数组) 表示使用默认配置
+    | 自定义每种威胁类型的风险等级：high / medium / low
+    | 空数组 = 使用内置默认等级。
     |
+    | 配置示例：
+    |   'threat_risk_levels' => [
+    |       'sql' => 'high',           // SQL注入 → 高危
+    |       'xss_script' => 'medium',  // XSS脚本 → 中危
+    |       'rate_limit' => 'low',     // 速率限制 → 低危
+    |   ],
     */
 
-    'threat_risk_levels' => [
-        // 'sql' => 'high', // 高危
-    ],
-
+    'threat_risk_levels' => [],
 ];

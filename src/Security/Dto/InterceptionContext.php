@@ -12,6 +12,7 @@ use Illuminate\Http\Request;
  *
  * @package zxf\Security\Dto
  * @since 4.0.0
+ * @version 5.3.0
  */
 readonly class InterceptionContext
 {
@@ -64,6 +65,9 @@ readonly class InterceptionContext
         'encoding_bypass' => '编码绕过攻击',
         'encoding' => '编码绕过攻击',
         'ssrf' => '服务器端请求伪造(SSRF)',
+        'header_injection' => 'HTTP头注入攻击',
+        'redirect' => '开放重定向攻击',
+        'file_include' => '文件包含攻击(LFI/RFI)',
 
         // XSS攻击
         'xss' => '跨站脚本攻击(XSS)',
@@ -79,7 +83,6 @@ readonly class InterceptionContext
         'body_too_large' => '请求体过大',
         'invalid_method' => '非法HTTP方法',
         'invalid_headers' => '请求头不合法',
-        'header_injection' => 'HTTP头注入攻击',
 
         // 其他
         'bad_user_agent' => '恶意User-Agent',
@@ -104,8 +107,10 @@ readonly class InterceptionContext
         'ssti' => 'high',
         'ssrf' => 'high',
         'header_injection' => 'high',
+        'file_include' => 'high',
 
         // 中危
+        'redirect' => 'medium',
         'nosql' => 'medium',
         'xss' => 'medium',
         'xss_script' => 'medium',
