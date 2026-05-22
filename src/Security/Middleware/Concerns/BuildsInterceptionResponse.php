@@ -190,6 +190,9 @@ trait BuildsInterceptionResponse
         $data['matched_pattern'] = $this->lastMatchedPattern;
         $data['matched_content'] = $this->lastMatchedContent;
 
+        // 联系我们链接
+        $data['contact_url'] = $this->config['contact_url'] ?? '';
+
         return $data;
     }
 

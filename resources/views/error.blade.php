@@ -185,6 +185,9 @@
             </div>
             <div class="actions">
                 <a href="/" class="btn btn-primary"><svg viewBox="0 0 24 24"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg>返回首页</a>
+                @if(!empty($contact_url))
+                <a href="{{ $contact_url }}" class="btn btn-primary"><svg viewBox="0 0 24 24"><path d="M20 2H4c-1.1 0-1.99.9-1.99 2L2 22l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm-2 12H6v-2h12v2zm0-3H6V9h12v2zm0-3H6V6h12v2z"/></svg>联系我们</a>
+                @endif
                 <a href="javascript:history.back()" class="btn btn-secondary"><svg viewBox="0 0 24 24"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg>返回上页</a>
             </div>
             <div class="footer">
