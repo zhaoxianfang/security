@@ -4,13 +4,16 @@
 
 </p>
 
-# zxf/security - Laravel 安全中间件
+# zxf/security - Laravel / ThinkPHP 安全中间件
 
-[![PHP](https://img.shields.io/badge/php-8.2+|8.3|8.4|8.5-8892bf)](https://php.net)
-[![Laravel](https://img.shields.io/badge/laravel-11+|12|13-ff2d20)](https://laravel.com)
+[![PHP](https://img.shields.io/badge/php->=8.2-8892bf)](https://php.net)
+[![Laravel](https://img.shields.io/badge/laravel->=11-ff2d20)](https://laravel.com)
+[![ThinkPHP](https://img.shields.io/badge/thinkphp->=8-3eaf7c)](https://www.thinkphp.cn)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-**简洁、高效、智能的 Laravel 安全防护中间件**
+**简洁、高效、智能的跨框架安全防护中间件**
+
+同时支持 **Laravel 11+** 和 **ThinkPHP 8+**，通过统一的桥接层自动适配当前运行框架。
 
 ---
 
@@ -22,13 +25,14 @@
 - **编码绕过检测** - 检测多重URL编码、UTF-8过度编码、空字节注入等绕过技术
 - **CRLF/Header注入检测** - 检测HTTP头注入和响应拆分攻击
 - **智能识别** - 自动识别Markdown文档内容，代码块内的标签不会误拦截
-- **零缓存依赖** - 不使用Redis/Memcached，直接使用Laravel原生功能
+- **零缓存依赖** - 不使用Redis/Memcached，直接使用框架原生功能
 - **低内存占用** - 正则模式延迟加载，避免 `php artisan optimize` 内存溢出（v5.1+）
 - **高性能** - 单次请求处理耗时 < 1ms，支持预过滤快速跳过
 - **CIDR支持** - IP黑白名单支持IPv4和IPv6网段格式（如 `192.168.0.0/16`、`2001:db8::/32`）
 - **拦截回调** - 支持自定义拦截决策，实现动态放行策略
-- **自定义视图** - 支持自定义拦截页面，支持Blade视图/闭包/类方法
+- **自定义视图** - 支持自定义拦截页面，支持Blade视图/ThinkPHP模板/闭包/类方法
 - **安全响应头** - 拦截响应自动添加安全HTTP头（X-Content-Type-Options, X-Frame-Options 等）
+- **跨框架兼容** - 同一套代码支持 Laravel 11+ 和 ThinkPHP 8+（v6.1+）
 
 ---
 
@@ -40,7 +44,7 @@
 composer require zxf/security
 ```
 
-### 配置
+### Laravel 配置
 
 ```bash
 # 发布配置文件
@@ -56,18 +60,60 @@ SECURITY_RATE_LIMIT_ENABLED=true
 SECURITY_RATE_LIMIT_ATTEMPTS=60
 ```
 
-### 使用
+#### Laravel 11+ 中间件注册（推荐）
 
-中间件会自动注册。如需手动控制，编辑 `bootstrap/app.php`：
+由于 Laravel 11+ 调整了 `Router::middleware()` 的行为，ServiceProvider 的自动全局注册在 Laravel 11+ 下会降级为组级注册（web / api）。**强烈建议在 `bootstrap/app.php` 中手动注册全局中间件**，确保所有路由（包括非 web/api 路由）都受到保护：
 
 ```php
-// Laravel 11+
+// bootstrap/app.php
+use Illuminate\Foundation\Configuration\Middleware;
+
 ->withMiddleware(function (Middleware $middleware) {
     $middleware->append(\zxf\Security\Middleware\SecurityMiddleware::class);
 })
 ```
 
+> ⚠️ **Laravel 11+ 注意事项**：
+> - `bootstrap/app.php` 手动注册是**唯一可靠的全局中间件注册方式**
+> - ServiceProvider 仍会自动将中间件推入 `web` 和 `api` 组作为兜底
+> - 如果存在 `global` 中间件组，也会自动推入
+
 > ✅ 支持 Laravel 11、12、13
+
+### ThinkPHP 8+ 配置
+
+1. **发布配置文件**
+
+   将 `vendor/zxf/security/config/security.php` 复制到项目 `config/security.php`。
+
+2. **注册中间件**
+
+   在 `app/middleware.php` 中添加：
+
+   ```php
+   return [
+       // ... 其他中间件
+       \zxf\Security\Middleware\SecurityMiddleware::class,
+   ];
+   ```
+
+   或者通过服务类自动注册（在 `app/AppService.php` 的 `init()` 中）：
+
+   ```php
+   \zxf\Security\Providers\ThinkPHPSecurityServiceProvider::register($this->app);
+   ```
+
+3. **配置环境变量**
+
+   ThinkPHP 下在 `.env` 中添加：
+
+   ```env
+   SECURITY_ENABLED=true
+   SECURITY_LOG_ENABLED=true
+   SECURITY_RATE_LIMIT_ENABLED=true
+   ```
+
+> 📖 详细 ThinkPHP 使用指南：[docs/thinkphp.md](docs/thinkphp.md)
 
 ### 内存优化（v5.1+）
 
@@ -269,6 +315,7 @@ $context->toArray()            // 转为数组格式
 - [API参考](docs/api.md)
 - [常见问题](docs/faq.md)
 - [使用示例](docs/examples.md)
+- [ThinkPHP 8+ 使用指南](docs/thinkphp.md)
 
 ---
 

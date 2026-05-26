@@ -3,7 +3,7 @@
 namespace zxf\Security\Middleware\Concerns;
 
 use DateTimeImmutable;
-use Illuminate\Support\Facades\Log;
+use zxf\Security\Bridge\FrameworkBridge;
 use zxf\Security\Dto\InterceptionContext;
 use zxf\Security\ThreatData;
 
@@ -11,27 +11,30 @@ use zxf\Security\ThreatData;
  * 拦截响应构建与安全审计
  *
  * 负责：
- *  - 构建标准化拦截响应（JSON / Blade 视图）
+ *  - 构建标准化拦截响应（JSON / 视图）
  *  - 自定义视图渲染（支持闭包/类/视图名）
  *  - 拦截决策回调（before_block_callback）
  *  - 安全威胁日志记录（多级别、可选完整请求数据）
  *  - 拦截上下文对象创建
  *
+ * 跨框架兼容：所有 Request/Response/Log/View 操作均通过 FrameworkBridge 封装，
+ * 支持 Laravel 11+ 和 ThinkPHP 8+。
+ *
  * @package zxf\Security\Middleware\Concerns
- * @since 5.4.0
+ * @since 6.1.0
  */
 trait BuildsInterceptionResponse
 {
     /**
      * 拦截请求并返回响应
      *
-     * @param \Illuminate\Http\Request $request HTTP请求对象
+     * @param object $request HTTP请求对象（Laravel Request 或 ThinkPHP Request）
      * @param string $message 拦截提示消息
      * @param int $status HTTP状态码
      * @param string $threatType 威胁类型
-     * @return \Illuminate\Http\JsonResponse|\Illuminate\Http\Response
+     * @return object 响应对象（跨框架兼容）
      */
-    protected function blockRequest(\Illuminate\Http\Request $request, string $message, int $status = 403, string $threatType = '')
+    protected function blockRequest(object $request, string $message, int $status = 403, string $threatType = '')
     {
         $defaultStatus = $this->config['response']['blocked_status'] ?? 403;
         $status = $status === 429
@@ -56,33 +59,45 @@ trait BuildsInterceptionResponse
         $securityHeaders = ThreatData::getResponseHeaders();
 
         // JSON 响应（CLI 模式或 API 请求优先返回 JSON）
-        if ($request->expectsJson() || $request->is('api/*') || $request->ajax() || $this->isCliMode()) {
-            return response()->json($interceptionData, $status)
-                ->withHeaders($securityHeaders);
+        if (FrameworkBridge::requestExpectsJson($request)
+            || FrameworkBridge::requestIsApi($request)
+            || FrameworkBridge::requestIsAjax($request)
+            || $this->isCliMode()
+        ) {
+            return FrameworkBridge::responseWithHeaders(
+                FrameworkBridge::jsonResponse($interceptionData, $status),
+                $securityHeaders
+            );
         }
 
         // 检查是否配置了自定义视图
         $viewConfig = $this->config['response']['view'] ?? null;
 
         if ($viewConfig !== null && $viewConfig !== '') {
-            return $this->renderViewResponse($viewConfig, $interceptionData, $status)
-                ->withHeaders($securityHeaders);
+            return FrameworkBridge::responseWithHeaders(
+                $this->renderViewResponse($viewConfig, $interceptionData, $status),
+                $securityHeaders
+            );
         }
 
         // 使用默认的安全拦截视图 security::error
         // CLI 或视图未注册时降级为 JSON 响应，避免抛出 View 异常终止进程
         try {
-            return response()->view('security::error', $interceptionData, $status)
-                ->withHeaders($securityHeaders);
+            return FrameworkBridge::responseWithHeaders(
+                FrameworkBridge::viewResponse('security::error', $interceptionData, $status),
+                $securityHeaders
+            );
         } catch (\Throwable $e) {
             if ($this->config['log_enabled'] ?? true) {
-                Log::warning('[Security] 默认拦截视图渲染失败，已降级为 JSON 响应', [
+                FrameworkBridge::logWarning('[Security] 默认拦截视图渲染失败，已降级为 JSON 响应', [
                     'exception' => $e->getMessage(),
                     'request_id' => $this->requestId ?? '',
                 ]);
             }
-            return response()->json($interceptionData, $status)
-                ->withHeaders($securityHeaders);
+            return FrameworkBridge::responseWithHeaders(
+                FrameworkBridge::jsonResponse($interceptionData, $status),
+                $securityHeaders
+            );
         }
     }
 
@@ -143,9 +158,9 @@ trait BuildsInterceptionResponse
     /**
      * 构建标准化的拦截响应数据
      *
-     * 统一 JSON 和 Blade 响应的数据结构，确保一致性
+     * 统一 JSON 和视图响应的数据结构，确保一致性
      *
-     * @param \Illuminate\Http\Request $request 请求对象
+     * @param object $request 请求对象（跨框架兼容）
      * @param string $message 拦截消息
      * @param string $threatType 威胁类型
      * @param int $status HTTP状态码
@@ -153,7 +168,7 @@ trait BuildsInterceptionResponse
      * @return array 标准化的响应数据
      */
     protected function buildInterceptionData(
-        \Illuminate\Http\Request $request,
+        object $request,
         string $message,
         string $threatType,
         int $status,
@@ -168,16 +183,16 @@ trait BuildsInterceptionResponse
             'blocked' => true,
             'message' => $message,
             'request_id' => $this->requestId,
-            'timestamp' => now()->toIso8601String(),
+            'timestamp' => FrameworkBridge::nowIso8601(),
             'http_status' => $status,
         ];
 
         // 请求元数据
         $data['request'] = [
-            'url' => $request->fullUrl(),
-            'method' => $request->method(),
-            'ip' => $request->ip() ?? 'unknown',
-            'user_agent' => $request->userAgent() ?? '',
+            'url' => FrameworkBridge::requestFullUrl($request),
+            'method' => FrameworkBridge::requestMethod($request),
+            'ip' => FrameworkBridge::requestIp($request) ?? 'unknown',
+            'user_agent' => FrameworkBridge::requestUserAgent($request) ?? '',
         ];
 
         // 威胁信息（始终包含基础信息）
@@ -205,6 +220,9 @@ trait BuildsInterceptionResponse
         // 联系我们链接
         $data['contact_url'] = $this->config['contact_url'] ?? '';
 
+        // 框架无关的应用名称（避免视图中直接调用 config()）
+        $data['app_name'] = FrameworkBridge::config('app.name', 'Security System');
+
         return $data;
     }
 
@@ -220,9 +238,9 @@ trait BuildsInterceptionResponse
      * @param mixed $viewConfig 视图配置
      * @param array $data 响应数据
      * @param int $status HTTP状态码
-     * @return \Illuminate\Http\Response
+     * @return object 响应对象（跨框架兼容）
      */
-    protected function renderViewResponse(mixed $viewConfig, array $data, int $status): \Illuminate\Http\Response
+    protected function renderViewResponse(mixed $viewConfig, array $data, int $status): object
     {
         try {
             // 1. 闭包函数
@@ -233,40 +251,40 @@ trait BuildsInterceptionResponse
 
             // 2. 可调用数组 [类名, 方法名]
             if (is_array($viewConfig) && count($viewConfig) === 2) {
-                $instance = function_exists('app') ? app($viewConfig[0]) : new $viewConfig[0]();
+                $instance = FrameworkBridge::appMake($viewConfig[0]) ?? new $viewConfig[0]();
                 $result = $instance->{$viewConfig[1]}($data);
                 return $this->normalizeViewResponse($result, $status);
             }
 
             // 3. 类名字符串（自动实例化并调用 __invoke）
             if (is_string($viewConfig) && class_exists($viewConfig)) {
-                $instance = function_exists('app') ? app($viewConfig) : new $viewConfig();
+                $instance = FrameworkBridge::appMake($viewConfig) ?? new $viewConfig();
                 $result = $instance($data);
                 return $this->normalizeViewResponse($result, $status);
             }
 
             // 4. 字符串视图名
-            if (is_string($viewConfig) && view()->exists($viewConfig)) {
-                return response()->view($viewConfig, $data, $status);
+            if (is_string($viewConfig) && FrameworkBridge::viewExists($viewConfig)) {
+                return FrameworkBridge::viewResponse($viewConfig, $data, $status);
             }
 
             // 配置无效，返回默认响应
             if ($this->config['log_enabled'] ?? true) {
-                Log::warning('[Security] 自定义视图配置无效，使用默认响应', [
+                FrameworkBridge::logWarning('[Security] 自定义视图配置无效，使用默认响应', [
                     'view_config' => $viewConfig,
                 ]);
             }
 
-            return response($data['message'], $status);
+            return FrameworkBridge::plainResponse($data['message'], $status);
         } catch (\Throwable $e) {
             if ($this->config['log_enabled'] ?? true) {
-                Log::error('[Security] 自定义视图渲染失败', [
+                FrameworkBridge::logError('[Security] 自定义视图渲染失败', [
                     'exception' => $e->getMessage(),
                     'view_config' => $viewConfig,
                 ]);
             }
 
-            return response($data['message'], $status);
+            return FrameworkBridge::plainResponse($data['message'], $status);
         }
     }
 
@@ -275,19 +293,24 @@ trait BuildsInterceptionResponse
      *
      * @param mixed $result 视图返回结果
      * @param int $status HTTP状态码
-     * @return \Illuminate\Http\Response
+     * @return object 响应对象（跨框架兼容）
      */
-    protected function normalizeViewResponse(mixed $result, int $status): \Illuminate\Http\Response
+    protected function normalizeViewResponse(mixed $result, int $status): object
     {
-        if ($result instanceof \Illuminate\Http\Response) {
-            return $result;
+        if (is_object($result)) {
+            // Laravel Response / ThinkPHP Response
+            if (method_exists($result, 'getContent') || method_exists($result, 'withHeaders')) {
+                return $result;
+            }
+
+            // Laravel View / ThinkPHP View
+            if (method_exists($result, 'render')) {
+                $rendered = $result->render();
+                return FrameworkBridge::plainResponse(is_string($rendered) ? $rendered : (string) $rendered, $status);
+            }
         }
 
-        if ($result instanceof \Illuminate\View\View) {
-            return response($result->render(), $status);
-        }
-
-        return response((string) $result, $status);
+        return FrameworkBridge::plainResponse((string) $result, $status);
     }
 
     // ==================== 拦截决策回调 ====================
@@ -320,7 +343,7 @@ trait BuildsInterceptionResponse
             return true;
         } catch (\Throwable $e) {
             if ($this->config['log_enabled'] ?? true) {
-                Log::error('[Security] 拦截回调执行异常', [
+                FrameworkBridge::logError('[Security] 拦截回调执行异常', [
                     'exception' => $e->getMessage(),
                     'threat_type' => $context->threatType,
                     'ip' => $context->clientIp,
@@ -342,7 +365,7 @@ trait BuildsInterceptionResponse
     protected function executeCallback(mixed $callback, InterceptionContext $context): mixed
     {
         if (is_string($callback) && class_exists($callback)) {
-            $instance = function_exists('app') ? app($callback) : new $callback();
+            $instance = FrameworkBridge::appMake($callback) ?? new $callback();
             return $instance($context);
         }
 
@@ -352,8 +375,8 @@ trait BuildsInterceptionResponse
 
         // 不可调用的配置值，视为默认拦截（避免 fatal error）
         if ($this->config['log_enabled'] ?? true) {
-            Log::warning('[Security] before_block_callback 配置值不可调用，默认执行拦截', [
-                'type' => gettype($callback),
+            FrameworkBridge::logWarning('[Security] before_block_callback 配置值不可调用，默认执行拦截', [
+                'type' => get_debug_type($callback),
             ]);
         }
         return true;
@@ -362,16 +385,16 @@ trait BuildsInterceptionResponse
     /**
      * 创建拦截上下文对象
      *
-     * @param \Illuminate\Http\Request $request HTTP请求对象
+     * @param object $request HTTP请求对象（跨框架兼容）
      * @param string $threatType 威胁类型
      * @return InterceptionContext 拦截上下文对象
      */
-    protected function createInterceptionContext(\Illuminate\Http\Request $request, string $threatType): InterceptionContext
+    protected function createInterceptionContext(object $request, string $threatType): InterceptionContext
     {
         $requestData = [
-            'query_keys' => array_keys($request->query()),
-            'post_keys' => array_keys($request->post()),
-            'content_type' => $request->header('Content-Type') ?? '',
+            'query_keys' => array_keys(FrameworkBridge::requestQuery($request)),
+            'post_keys' => array_keys(FrameworkBridge::requestPost($request)),
+            'content_type' => FrameworkBridge::requestGetHeader($request, 'Content-Type') ?? '',
         ];
 
         return new InterceptionContext(
@@ -380,9 +403,9 @@ trait BuildsInterceptionResponse
             timestamp: new DateTimeImmutable(),
             matchedPattern: $this->lastMatchedPattern,
             matchedContent: $this->lastMatchedContent,
-            clientIp: $request->ip() ?? '',
-            method: $request->method(),
-            url: $request->fullUrl(),
+            clientIp: FrameworkBridge::requestIp($request) ?? '',
+            method: FrameworkBridge::requestMethod($request),
+            url: FrameworkBridge::requestFullUrl($request),
             allThreats: array_unique($this->threats),
             requestData: $requestData,
             request_id: $this->requestId,
@@ -394,11 +417,11 @@ trait BuildsInterceptionResponse
     /**
      * 记录安全威胁日志
      *
-     * @param \Illuminate\Http\Request $request HTTP请求对象
+     * @param object $request HTTP请求对象（跨框架兼容）
      * @param string $type 威胁类型
      * @param string $details 详细信息
      */
-    protected function logThreat(\Illuminate\Http\Request $request, string $type, string $details): void
+    protected function logThreat(object $request, string $type, string $details): void
     {
         if (!($this->config['log_enabled'] ?? true)) {
             return;
@@ -410,34 +433,42 @@ trait BuildsInterceptionResponse
 
             $logData = [
                 'type' => $type,
-                'ip' => $request->ip() ?? 'unknown',
-                'method' => $request->method(),
-                'url' => $request->fullUrl(),
-                'user_agent' => $request->userAgent() ?? '',
+                'ip' => FrameworkBridge::requestIp($request) ?? 'unknown',
+                'method' => FrameworkBridge::requestMethod($request),
+                'url' => FrameworkBridge::requestFullUrl($request),
+                'user_agent' => FrameworkBridge::requestUserAgent($request) ?? '',
                 'details' => $details,
                 'threat_type' => $this->currentThreatType,
                 'threat_type_text' => isset($this->context) ? $this->context->getThreatTypeDescription() : '未知威胁',
                 'risk_level' => $this->getRiskLevel($type),
                 'request_id' => $this->requestId,
-                'timestamp' => now()->toIso8601String(),
+                'timestamp' => FrameworkBridge::nowIso8601(),
             ];
 
             // 如果开启完整请求记录，添加更多数据
             if ($logFullRequest) {
-                $logData['headers'] = $request->headers->all();
-                $logData['query'] = $request->query();
-                $logData['body'] = $request->except(['password', 'token', 'secret']);
+                $logData['headers'] = FrameworkBridge::requestHeaders($request);
+                $logData['query'] = FrameworkBridge::requestQuery($request);
+                // 兼容 ThinkPHP（无 except 方法）：手动排除敏感字段
+                $allInput = array_merge(
+                    FrameworkBridge::requestQuery($request),
+                    FrameworkBridge::requestPost($request)
+                );
+                foreach (['password', 'token', 'secret'] as $key) {
+                    unset($allInput[$key]);
+                }
+                $logData['body'] = $allInput;
                 $logData['matched_pattern'] = $this->lastMatchedPattern;
                 $logData['matched_content'] = $this->lastMatchedContent;
             }
 
             // 根据日志级别使用不同的日志方法
             match ($logLevel) {
-                'debug' => Log::debug('[Security] 安全威胁检测', $logData),
-                'info' => Log::info('[Security] 安全威胁检测', $logData),
-                'error' => Log::error('[Security] 安全威胁检测', $logData),
-                'critical' => Log::critical('[Security] 安全威胁检测', $logData),
-                default => Log::warning('[Security] 安全威胁检测', $logData),
+                'debug' => FrameworkBridge::logDebug('[Security] 安全威胁检测', $logData),
+                'info' => FrameworkBridge::logInfo('[Security] 安全威胁检测', $logData),
+                'error' => FrameworkBridge::logError('[Security] 安全威胁检测', $logData),
+                'critical' => FrameworkBridge::logCritical('[Security] 安全威胁检测', $logData),
+                default => FrameworkBridge::logWarning('[Security] 安全威胁检测', $logData),
             };
         } catch (\Throwable) {
             // 日志系统异常（如磁盘满、驱动不可用）时不应阻断正常流程。

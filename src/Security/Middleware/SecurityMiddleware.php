@@ -3,7 +3,7 @@
 namespace zxf\Security\Middleware;
 
 use Closure;
-use Illuminate\Http\Request;
+use zxf\Security\Bridge\FrameworkBridge;
 use zxf\Security\Dto\InterceptionContext;
 use zxf\Security\Services\IpMatcherService;
 use zxf\Security\Patterns\PatternService;
@@ -16,15 +16,16 @@ use zxf\Security\Middleware\Concerns\HandlesFileUploads;
 use zxf\Security\Middleware\Concerns\BuildsInterceptionResponse;
 
 /**
- * Laravel 安全拦截中间件
+ * 安全拦截中间件（跨框架版）
  *
  * 核心设计理念：
  * 1. 高危操作精准拦截 - 采用高置信度检测模式，确保攻击被拦截
  * 2. 低误报率 - 智能识别合法内容（如Markdown文档中的代码示例）
- * 3. 零缓存依赖 - 不使用任何自定义缓存，直接使用 Laravel 原生功能
+ * 3. 零缓存依赖 - 不使用任何自定义缓存，直接使用框架原生功能
  * 4. 高性能 - 精简逻辑，单次请求处理耗时 < 1ms
  * 5. 灵活配置 - 支持回调、动态规则、路由排除
  * 6. 模块化架构 - 按功能拆分为 7 个 Trait，提高可读性和可维护性
+ * 7. 跨框架兼容 - 支持 Laravel 11+ 和 ThinkPHP 8+
  *
  * 安全防护层级（按执行顺序）：
  *  1. 路由排除检查    → HandlesAccessControl
@@ -52,7 +53,7 @@ use zxf\Security\Middleware\Concerns\BuildsInterceptionResponse;
  *  - Concerns/BuildsInterceptionResponse.php  拦截响应 + 日志 + 回调
  *
  * @package zxf\Security\Middleware
- * @version 6.0.0
+ * @version 6.1.0
  */
 class SecurityMiddleware
 {
@@ -136,7 +137,7 @@ class SecurityMiddleware
      */
     public function __construct()
     {
-        $loadedConfig = config('security', []);
+        $loadedConfig = FrameworkBridge::config('security', []);
 
         // 防御：如果配置文件未正确合并，强制重新加载
         if (empty($loadedConfig) || !isset($loadedConfig['enabled'])) {
@@ -148,10 +149,15 @@ class SecurityMiddleware
 
             // 如果仍然为空，记录日志并使用安全默认值
             if (empty($loadedConfig) || !is_array($loadedConfig)) {
-                if (config('security.log_enabled', true)) {
-                    \Illuminate\Support\Facades\Log::warning(
+                // 配置加载失败时，直接使用已读取的 $loadedConfig 判断日志开关
+                // 避免在容器尚未就绪时调用 FrameworkBridge::config() 可能不准确
+                $logEnabled = is_array($loadedConfig) && isset($loadedConfig['log_enabled'])
+                    ? $loadedConfig['log_enabled']
+                    : true;
+                if ($logEnabled) {
+                    FrameworkBridge::logWarning(
                         '[Security] 安全配置加载失败，将使用最小安全默认值运行',
-                        ['config_path' => $configPath]
+                        ['config_path' => $configPath ?? '']
                     );
                 }
                 // 最小安全默认值：仅启用基础检测
@@ -169,7 +175,7 @@ class SecurityMiddleware
 
         $this->config = $loadedConfig;
         $this->ipMatcher = new IpMatcherService();
-        $this->patternService = function_exists('app') ? app(PatternService::class) : new PatternService();
+        $this->patternService = FrameworkBridge::appMake(PatternService::class) ?? new PatternService();
     }
 
     /**
@@ -196,11 +202,13 @@ class SecurityMiddleware
      * 这是中间件的核心方法，按顺序执行各项安全检查。
      * 任何一项检查失败都会立即拦截请求，不再继续后续检查。
      *
-     * @param Request $request HTTP请求对象
+     * 跨框架兼容：$request 参数声明为 object，支持 Laravel Request 和 ThinkPHP Request。
+     *
+     * @param object $request HTTP请求对象
      * @param Closure $next 下一个中间件处理程序
      * @return mixed 响应对象或向下传递请求
      */
-    public function handle(Request $request, Closure $next)
+    public function handle(object $request, Closure $next)
     {
         // 检查中间件是否被禁用
         if (!($this->config['enabled'] ?? true)) {
@@ -213,7 +221,7 @@ class SecurityMiddleware
         }
 
         // 获取客户端真实IP地址（防御 CLI 或异常请求中 ip() 返回 null）
-        $ip = $request->ip() ?? '';
+        $ip = FrameworkBridge::requestIp($request) ?? '';
 
         // ========== 第一层：IP 白名单检查 ==========
         if ($ip !== '' && $this->isWhitelisted($ip, $request)) {
@@ -226,7 +234,7 @@ class SecurityMiddleware
         // ========== 第二层：IP 黑名单检查 ==========
         if ($ip !== '' && $this->isBlacklisted($ip, $request)) {
             return $this->handleThreatDetection($request, $next, 'blacklist', function ($request) {
-                $this->logThreat($request, 'blacklist', 'IP地址位于黑名单中: ' . ($request->ip() ?? 'unknown'));
+                $this->logThreat($request, 'blacklist', 'IP地址位于黑名单中: ' . (FrameworkBridge::requestIp($request) ?? 'unknown'));
                 return $this->blockRequest($request, 'IP已被禁止访问', 403, 'blacklist');
             });
         }
@@ -250,7 +258,7 @@ class SecurityMiddleware
         // ========== 第五层：User-Agent检查 ==========
         if ($this->isDetectionEnabled('user_agent') && $this->isBadUserAgent($request)) {
             return $this->handleThreatDetection($request, $next, 'bad_user_agent', function ($request) {
-                $this->logThreat($request, 'bad_user_agent', '恶意User-Agent: ' . $request->userAgent());
+                $this->logThreat($request, 'bad_user_agent', '恶意User-Agent: ' . (FrameworkBridge::requestUserAgent($request) ?? ''));
                 return $this->blockRequest($request, '请求被拒绝', 403, 'bad_user_agent');
             });
         }
@@ -282,7 +290,7 @@ class SecurityMiddleware
         // ========== 第九层：HTTP方法检查 ==========
         if ($this->isDetectionEnabled('http_method') && $this->hasInvalidMethod($request)) {
             return $this->handleThreatDetection($request, $next, 'invalid_method', function ($request) {
-                $this->logThreat($request, 'invalid_method', '非法HTTP方法: ' . $request->method());
+                $this->logThreat($request, 'invalid_method', '非法HTTP方法: ' . FrameworkBridge::requestMethod($request));
                 return $this->blockRequest($request, '不支持的请求方法', 403, 'invalid_method');
             });
         }
@@ -334,13 +342,13 @@ class SecurityMiddleware
      *
      * 消除 13 层检查中重复的"记录threats → 设置currentThreatType → 创建context → shouldBlock决策"逻辑
      *
-     * @param Request $request HTTP请求对象
+     * @param object $request HTTP请求对象
      * @param Closure $next 下一个中间件
      * @param string $threatType 威胁类型
      * @param callable $onBlock 拦截时执行的回调（日志+响应）
      * @return mixed
      */
-    protected function handleThreatDetection(Request $request, Closure $next, string $threatType, callable $onBlock)
+    protected function handleThreatDetection(object $request, Closure $next, string $threatType, callable $onBlock)
     {
         $this->threats[] = $threatType;
         $this->currentThreatType = $threatType;
@@ -356,16 +364,19 @@ class SecurityMiddleware
     /**
      * 生成唯一请求ID
      *
-     * @return string 格式：SEC_{uniqid}_{8位hash}
+     * 使用 PHP 8.2+ 现代随机 API，替代已不推荐的 uniqid() + md5() 组合。
+     * 格式：SEC_{时间戳}_{10位随机hex}
+     *
+     * @return string 唯一请求标识符
      */
     protected function generateRequestId(): string
     {
         try {
-            $randomBytes = random_bytes(8);
+            $randomPart = strtoupper(bin2hex(random_bytes(5)));
         } catch (\Random\RandomException) {
-            $randomBytes = (string) random_int(10000000, 99999999);
+            $randomPart = (string) random_int(1000000000, 9999999999);
         }
 
-        return 'SEC_' . strtoupper(uniqid()) . '_' . substr(md5($randomBytes), 0, 8);
+        return 'SEC_' . date('YmdHis') . '_' . $randomPart;
     }
 }

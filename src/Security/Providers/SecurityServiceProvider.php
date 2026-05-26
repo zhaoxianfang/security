@@ -96,6 +96,10 @@ class SecurityServiceProvider extends ServiceProvider
      * ⚠️ 全局中间件在 Laravel Pipeline 中最先执行，早于任何路由组中间件。
      *    如果路由使用了 withoutMiddleware($alias)，该路由会跳过安全检查。
      *
+     * ⚠️ Laravel 11+ 变更：$router->middleware() 返回 PendingMiddleware，
+     *    不再修改全局中间件栈。本方法在 Laravel 11+ 下自动降级为组级注册，
+     *    并记录日志提示用户在 bootstrap/app.php 中手动注册全局中间件。
+     *
      * @return void
      */
     protected function registerMiddleware(): void
@@ -113,27 +117,68 @@ class SecurityServiceProvider extends ServiceProvider
         // 注册唯一中间件别名（内部使用，不冲突）
         $router->aliasMiddleware($alias, $middleware);
 
+        // 检测 Laravel 版本
+        $laravelVersion = $this->getLaravelVersion();
+        $isLaravel11Plus = $laravelVersion !== null && version_compare($laravelVersion, '11.0.0', '>=');
+
         // ==============================================
         // 全局中间件：所有路由自动生效
-        // 这是最可靠的注册方式，不依赖中间件组
         // ==============================================
+        // 注意：getMiddleware() 返回的是已解析的类名字符串，不是别名。
+        // 因此需同时检查别名和实际类名，防止重复注册。
         $globals = $router->getMiddleware();
-        if (!in_array($alias, $globals, true)) {
-            $router->middleware([$alias]);
+        $globalAliases = array_keys($globals);
+        $globalClasses = array_values($globals);
+        $alreadyGlobal = in_array($alias, $globalAliases, true) || in_array($middleware, $globalClasses, true);
+
+        if (!$alreadyGlobal) {
+            if ($isLaravel11Plus) {
+                // Laravel 11+：$router->middleware() 返回 PendingMiddleware，不修改全局栈。
+                // 不在此处调用，避免静默无效。依赖下方组级兜底 + 用户手动注册。
+                if ($this->app->bound('log') || class_exists('Illuminate\Support\Facades\Log')) {
+                    \Illuminate\Support\Facades\Log::warning('[Security] Laravel 11+ 检测到。ServiceProvider 自动全局中间件注册已不可用。请在 bootstrap/app.php 中手动注册：->withMiddleware(function (\Illuminate\Foundation\Configuration\Middleware $middleware) { $middleware->append(' . SecurityMiddleware::class . '::class); })');
+                }
+            } else {
+                // Laravel 10 及以下：$router->middleware() 可靠地添加全局中间件
+                $router->middleware([$alias]);
+            }
         }
 
         // ==============================================
-        // 兜底：推送进 web 和 api 中间件组
-        // 如果用户移除了全局中间件，组内中间件仍会执行
+        // 兜底：推送进 web / api / global 中间件组
+        // Laravel 11+ 下这是 ServiceProvider 唯一能自动生效的注册方式
         // ==============================================
-        foreach (['web', 'api'] as $group) {
+        foreach (['global', 'web', 'api'] as $group) {
             if ($router->hasMiddlewareGroup($group)) {
                 $items = $router->getMiddlewareGroups()[$group] ?? [];
-                if (!in_array($alias, $items, true)) {
+                $hasAlias = false;
+                foreach ($items as $item) {
+                    if ($item === $alias || $item === $middleware) {
+                        $hasAlias = true;
+                        break;
+                    }
+                }
+                if (!$hasAlias) {
                     $router->pushMiddlewareToGroup($group, $alias);
                 }
             }
         }
+    }
+
+    /**
+     * 获取当前 Laravel 框架版本号
+     *
+     * @return string|null 版本号字符串，无法检测时返回 null
+     */
+    protected function getLaravelVersion(): ?string
+    {
+        try {
+            if (class_exists('Illuminate\Foundation\Application')) {
+                return \Illuminate\Foundation\Application::VERSION;
+            }
+        } catch (\Throwable) {
+        }
+        return null;
     }
 
     /**

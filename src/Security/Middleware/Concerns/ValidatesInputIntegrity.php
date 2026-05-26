@@ -2,7 +2,7 @@
 
 namespace zxf\Security\Middleware\Concerns;
 
-use Illuminate\Support\Facades\RateLimiter;
+use zxf\Security\Bridge\FrameworkBridge;
 
 /**
  * 请求输入完整性验证
@@ -12,8 +12,12 @@ use Illuminate\Support\Facades\RateLimiter;
  *
  * 这些检查关注请求本身的形式合法性，不涉及内容模式匹配。
  *
+ * 跨框架兼容：所有方法接受 object 类型请求对象，内部通过 FrameworkBridge 统一访问。
+ * ThinkPHP 8+ 下速率限制使用 Cache 门面模拟。
+ *
  * @package zxf\Security\Middleware\Concerns
  * @since 5.4.0
+ * @version 6.1.0
  */
 trait ValidatesInputIntegrity
 {
@@ -22,10 +26,10 @@ trait ValidatesInputIntegrity
     /**
      * 检查User-Agent是否在黑名单中
      *
-     * @param \Illuminate\Http\Request $request HTTP请求对象
+     * @param object $request HTTP请求对象
      * @return bool true=恶意UA，false=正常
      */
-    protected function isBadUserAgent(\Illuminate\Http\Request $request): bool
+    protected function isBadUserAgent(object $request): bool
     {
         $uaList = \zxf\Security\Config\DefaultConfig::getUserAgentBlacklist($this->config);
 
@@ -33,14 +37,24 @@ trait ValidatesInputIntegrity
             return false;
         }
 
-        $rawUserAgent = $request->userAgent() ?? '';
+        $rawUserAgent = FrameworkBridge::requestUserAgent($request) ?? '';
         $userAgent = strtolower($rawUserAgent);
 
         foreach ($uaList as $item) {
             // 闭包函数
             if ($item instanceof \Closure) {
-                if ($item($rawUserAgent, $request) === true) {
-                    return true;
+                try {
+                    if ($item($rawUserAgent, $request) === true) {
+                        return true;
+                    }
+                } catch (\Throwable $e) {
+                    // 用户自定义闭包异常不应阻断请求流程，记录日志后继续
+                    if ($this->config['log_enabled'] ?? true) {
+                        FrameworkBridge::logWarning('[Security] UA黑名单闭包执行异常', [
+                            'error' => $e->getMessage(),
+                            'request_id' => $this->requestId ?? '',
+                        ]);
+                    }
                 }
                 continue;
             }
@@ -54,7 +68,8 @@ trait ValidatesInputIntegrity
             }
 
             // 字符串匹配（不区分大小写，支持部分匹配）
-            if (is_string($item) && str_contains($userAgent, strtolower($item))) {
+            // 防御：空字符串会导致所有 UA 被匹配，必须过滤
+            if (is_string($item) && $item !== '' && str_contains($userAgent, strtolower($item))) {
                 return true;
             }
         }
@@ -67,24 +82,24 @@ trait ValidatesInputIntegrity
     /**
      * 检查HTTP头是否存在安全问题
      *
-     * @param \Illuminate\Http\Request $request HTTP请求对象
+     * @param object $request HTTP请求对象
      * @return bool true=存在安全问题，false=正常
      */
-    protected function hasInvalidHeaders(\Illuminate\Http\Request $request): bool
+    protected function hasInvalidHeaders(object $request): bool
     {
         $headersConfig = $this->config['headers'] ?? [];
 
         // 检查禁止的头
         $forbidden = $headersConfig['forbidden'] ?? [];
         foreach ($forbidden as $header) {
-            if ($request->hasHeader($header)) {
+            if (FrameworkBridge::requestHasHeader($request, $header)) {
                 return true;
             }
         }
 
         // CRLF/Header注入检测 - 检查头部值中是否包含换行符
         if ($headersConfig['detect_crlf'] ?? true) {
-            $allHeaders = $request->headers->all();
+            $allHeaders = FrameworkBridge::requestHeaders($request);
             foreach ($allHeaders as $name => $values) {
                 foreach ((array) $values as $value) {
                     if (str_contains($value, "\r") || str_contains($value, "\n")) {
@@ -100,7 +115,7 @@ trait ValidatesInputIntegrity
         $hostValidation = $headersConfig['host_validation'] ?? ['enabled' => false];
         if ($hostValidation['enabled'] ?? false) {
             $allowedHosts = $hostValidation['allowed_hosts'] ?? [];
-            $host = $request->getHost() ?? '';
+            $host = FrameworkBridge::requestGetHost($request) ?? '';
 
             // 防御：无法获取 Host 时视为非法（防止 Host 头缺失绕过）
             if ($host === '') {
@@ -134,14 +149,14 @@ trait ValidatesInputIntegrity
     /**
      * 检查请求体是否过大
      *
-     * @param \Illuminate\Http\Request $request HTTP请求对象
+     * @param object $request HTTP请求对象
      * @return bool true=过大，false=正常
      */
-    protected function isBodyTooLarge(\Illuminate\Http\Request $request): bool
+    protected function isBodyTooLarge(object $request): bool
     {
         $bodyConfig = $this->config['max_body_size'] ?? [];
         $limit = $bodyConfig['limit'] ?? 10 * 1024 * 1024;
-        $contentLength = (int) $request->header('Content-Length', 0);
+        $contentLength = (int) FrameworkBridge::requestGetHeader($request, 'Content-Length', 0);
 
         return $contentLength > $limit;
     }
@@ -149,29 +164,31 @@ trait ValidatesInputIntegrity
     /**
      * 检查请求是否超过速率限制
      *
-     * @param \Illuminate\Http\Request $request HTTP请求对象
+     * ThinkPHP 8+ 下使用 Cache 门面模拟限流桶行为。
+     *
+     * @param object $request HTTP请求对象
      * @return bool true=超过限制需要拦截，false=未超过限制
      */
-    protected function isRateLimited(\Illuminate\Http\Request $request): bool
+    protected function isRateLimited(object $request): bool
     {
         $rateLimit = $this->config['rate_limit'] ?? [];
 
         // 使用 IP + 路由路径组合作为限流 key，避免不同路由间的碰撞
         $prefix = $rateLimit['key_prefix'] ?? 'security';
-        $key = $prefix . ':' . ($request->ip() ?? 'unknown') . ':' . md5($request->path());
+        $key = $prefix . ':' . (FrameworkBridge::requestIp($request) ?? 'unknown') . ':' . hash('xxh3', FrameworkBridge::requestPath($request));
         $maxAttempts = $rateLimit['max_attempts'] ?? 60;
         $decayMinutes = $rateLimit['decay_minutes'] ?? 1;
 
         try {
-            if (RateLimiter::tooManyAttempts($key, $maxAttempts)) {
+            if (FrameworkBridge::rateLimitTooManyAttempts($key, $maxAttempts)) {
                 return true;
             }
 
-            RateLimiter::hit($key, $decayMinutes * 60);
+            FrameworkBridge::rateLimitHit($key, $decayMinutes * 60);
         } catch (\Throwable $e) {
             // 限流服务（如 Redis）异常时不应阻断正常请求，记录日志后降级放行
             if ($this->config['log_enabled'] ?? true) {
-                \Illuminate\Support\Facades\Log::warning('[Security] 速率限制服务异常，已降级放行', [
+                FrameworkBridge::logWarning('[Security] 速率限制服务异常，已降级放行', [
                     'error' => $e->getMessage(),
                     'request_id' => $this->requestId ?? '',
                 ]);
@@ -184,30 +201,30 @@ trait ValidatesInputIntegrity
     /**
      * 检查HTTP方法是否合法
      *
-     * @param \Illuminate\Http\Request $request HTTP请求对象
+     * @param object $request HTTP请求对象
      * @return bool true=方法非法，false=方法合法
      */
-    protected function hasInvalidMethod(\Illuminate\Http\Request $request): bool
+    protected function hasInvalidMethod(object $request): bool
     {
         $allowedMethods = \zxf\Security\Config\DefaultConfig::getAllowedHttpMethods($this->config);
 
-        return !in_array($request->method(), $allowedMethods, true);
+        return !in_array(FrameworkBridge::requestMethod($request), $allowedMethods, true);
     }
 
     /**
      * 检查URL长度是否超过限制
      *
-     * @param \Illuminate\Http\Request $request HTTP请求对象
+     * @param object $request HTTP请求对象
      * @return bool true=URL过长，false=URL长度正常
      */
-    protected function isUrlTooLong(\Illuminate\Http\Request $request): bool
+    protected function isUrlTooLong(object $request): bool
     {
         $urlConfig = $this->config['max_url_length'] ?? 2048;
 
         // 数组格式：['limit' => 2048]，标量格式：向后兼容旧版
         $maxLength = is_array($urlConfig) ? ($urlConfig['limit'] ?? 2048) : (int) $urlConfig;
 
-        return strlen($request->fullUrl()) > $maxLength;
+        return strlen(FrameworkBridge::requestFullUrl($request)) > $maxLength;
     }
 
     // ==================== 编码绕过检测 ====================
@@ -219,13 +236,13 @@ trait ValidatesInputIntegrity
      * 支持通过 encoding_detection.encoding_patterns_exclude 排除特定检测模式
      * （如第三方回调需要 %25 双重编码）
      *
-     * @param \Illuminate\Http\Request $request HTTP请求对象
+     * @param object $request HTTP请求对象
      * @return bool true=检测到攻击，false=正常
      */
-    protected function detectMultiEncodingAttacks(\Illuminate\Http\Request $request): bool
+    protected function detectMultiEncodingAttacks(object $request): bool
     {
         $config = $this->config['encoding_detection'] ?? [];
-        $rawUrl = $request->fullUrl();
+        $rawUrl = FrameworkBridge::requestFullUrl($request);
 
         // 获取排除的编码绕过检测维度列表（统一由 encoding_patterns_exclude 控制）
         $excludePatterns = $config['encoding_patterns_exclude'] ?? [];
@@ -272,7 +289,7 @@ trait ValidatesInputIntegrity
 
         // 检测无效的UTF-8序列（可能的UTF-8攻击）
         if (!in_array('utf8_overlong', $excludePatterns, true)) {
-            $path = $request->path();
+            $path = FrameworkBridge::requestPath($request);
             if ($this->safePregMatch('/%[c-f][0-9a-f](?:%[8-9a-b][0-9a-f])+/i', $path)) {
                 // 可能是UTF-8过度编码攻击
                 $decoded = urldecode($path);

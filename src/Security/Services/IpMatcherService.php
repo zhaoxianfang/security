@@ -2,7 +2,6 @@
 
 namespace zxf\Security\Services;
 
-use Illuminate\Http\Request;
 use zxf\Security\Contracts\IpCheckerInterface;
 
 /**
@@ -14,7 +13,10 @@ use zxf\Security\Contracts\IpCheckerInterface;
  * 3. 类名（实现 IpCheckerInterface）
  * 4. 可调用数组 [类名, 方法名]
  *
+ * 跨框架兼容：$request 参数声明为 object，支持 Laravel 和 ThinkPHP 请求对象。
+ *
  * @package zxf\Security\Services
+ * @since 6.1.0
  */
 class IpMatcherService
 {
@@ -23,14 +25,20 @@ class IpMatcherService
      *
      * @param string $ip 要检查的IP
      * @param array $list IP列表（支持多种格式）
-     * @param Request $request HTTP请求对象
+     * @param object $request HTTP请求对象
      * @return bool true=在列表中
      */
-    public function matches(string $ip, array $list, Request $request): bool
+    public function matches(string $ip, array $list, object $request): bool
     {
         foreach ($list as $item) {
-            if ($this->matchItem($ip, $item, $request)) {
-                return true;
+            try {
+                if ($this->matchItem($ip, $item, $request)) {
+                    return true;
+                }
+            } catch (\Throwable) {
+                // IP 检查器（闭包、类方法等）异常时不应阻断正常请求，记录后继续
+                // 静默跳过异常项，避免单个错误配置导致整个访问控制失效
+                continue;
             }
         }
 
@@ -42,27 +50,13 @@ class IpMatcherService
      *
      * @param string $ip IP地址
      * @param mixed $item 列表项（字符串、闭包、类等）
-     * @param Request $request HTTP请求
+     * @param object $request HTTP请求
      * @return bool
      */
-    protected function matchItem(string $ip, mixed $item, Request $request): bool
+    protected function matchItem(string $ip, mixed $item, object $request): bool
     {
-        // 1. 字符串IP或CIDR
-        if (is_string($item)) {
-            return $this->ipInRange($ip, $item);
-        }
-
-        // 2. 闭包函数
-        if ($item instanceof \Closure) {
-            return $item($ip, $request) === true;
-        }
-
-        // 3. 实现接口的类实例
-        if ($item instanceof IpCheckerInterface) {
-            return $item->check($ip, $request);
-        }
-
-        // 4. 类名字符串（自动实例化）
+        // 1. 类名字符串（自动实例化）— 必须在普通字符串之前检查，
+        //    否则所有字符串都会被 ipInRange 拦截，导致类名配置永不可达
         if (is_string($item) && class_exists($item)) {
             $instance = function_exists('app') ? app($item) : new $item();
             if ($instance instanceof IpCheckerInterface) {
@@ -72,6 +66,22 @@ class IpMatcherService
             if (is_callable($instance)) {
                 return $instance($ip, $request) === true;
             }
+            return false;
+        }
+
+        // 2. 字符串IP或CIDR
+        if (is_string($item)) {
+            return $this->ipInRange($ip, $item);
+        }
+
+        // 3. 闭包函数
+        if ($item instanceof \Closure) {
+            return $item($ip, $request) === true;
+        }
+
+        // 4. 实现接口的类实例
+        if ($item instanceof IpCheckerInterface) {
+            return $item->check($ip, $request);
         }
 
         // 5. 可调用数组 [类名, 方法名]
@@ -153,6 +163,13 @@ class IpMatcherService
         if ($ipLong === false || $subnetLong === false) {
             return false;
         }
+
+        // 防御 64 位 PHP 的 ip2long() 符号扩展问题：
+        // ip2long() 返回有符号 32 位整数，在 64 位系统上会被符号扩展。
+        // 当 IP > 127.255.255.255 时结果为负，与掩码的按位与可能出错。
+        // 通过 & 0xFFFFFFFF 强制截断为无符号 32 位值，确保 CIDR 匹配正确。
+        $ipLong = $ipLong & 0xFFFFFFFF;
+        $subnetLong = $subnetLong & 0xFFFFFFFF;
 
         $mask = -1 << (32 - $bits);
         $subnetLong &= $mask;

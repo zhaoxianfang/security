@@ -192,9 +192,9 @@
             </div>
             <div class="footer">
                 <div class="request-meta">
-                    <div class="request-id-box"><svg viewBox="0 0 24 24"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/></svg>请求ID: <code>{{ $request_id ?? uniqid('SEC_') }}</code></div>
-                    <div class="timestamp">安全系统于 {{ now()->format('Y-m-d H:i:s T') }} 拦截此请求</div>
-                    <div class="powered-by">Protected by {{ config('app.name','YOC.CN') }}</div>
+                    <div class="request-id-box"><svg viewBox="0 0 24 24"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/></svg>请求ID: <code>{{ $request_id ?? 'SEC_' . date('YmdHis') . '_' . strtoupper(substr(hash('xxh3', random_bytes(8)), 0, 10)) }}</code></div>
+                    <div class="timestamp">安全系统于 {{ $timestamp }} 拦截此请求</div>
+                    <div class="powered-by">Protected by {{ $app_name ?? 'Security System' }}</div>
                 </div>
             </div>
         </div>

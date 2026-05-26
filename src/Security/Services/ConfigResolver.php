@@ -30,47 +30,53 @@ class ConfigResolver
      */
     public static function resolve(mixed $config): array
     {
-        // 1. 闭包函数
-        if ($config instanceof \Closure) {
-            $result = $config();
-            return is_array($result) ? $result : [];
-        }
-
-        // 2. 可调用数组 [类名/实例, 方法名] — 必须在普通数组之前检查
-        if (is_array($config) && count($config) === 2 && is_callable($config)) {
-            $result = $config();
-            return is_array($result) ? $result : [];
-        }
-
-        // 3. 已经是普通数组，直接返回
-        if (is_array($config)) {
-            return $config;
-        }
-
-        // 4. 可调用对象（传入实例且实现了 __invoke）
-        if (is_object($config) && is_callable($config)) {
-            $result = $config();
-            return is_array($result) ? $result : [];
-        }
-
-        // 5. 类名字符串
-        if (is_string($config) && class_exists($config)) {
-            $instance = function_exists('app') ? app($config) : new $config();
-
-            // 5a. 优先尝试约定方法（getItems / getConfig / resolve / toArray / all）
-            foreach (['getItems', 'getConfig', 'resolve', 'toArray', 'all'] as $method) {
-                if (method_exists($instance, $method)) {
-                    $result = $instance->{$method}();
-                    return is_array($result) ? $result : [];
-                }
-            }
-
-            // 5b. 若未实现约定方法，再尝试可调用对象
-            if (is_callable($instance)) {
-                $result = $instance();
+        try {
+            // 1. 闭包函数
+            if ($config instanceof \Closure) {
+                $result = $config();
                 return is_array($result) ? $result : [];
             }
 
+            // 2. 可调用数组 [类名/实例, 方法名] — 必须在普通数组之前检查
+            if (is_array($config) && count($config) === 2 && is_callable($config)) {
+                $result = $config();
+                return is_array($result) ? $result : [];
+            }
+
+            // 3. 已经是普通数组，直接返回
+            if (is_array($config)) {
+                return $config;
+            }
+
+            // 4. 可调用对象（传入实例且实现了 __invoke）
+            if (is_object($config) && is_callable($config)) {
+                $result = $config();
+                return is_array($result) ? $result : [];
+            }
+
+            // 5. 类名字符串
+            if (is_string($config) && class_exists($config)) {
+                $instance = function_exists('app') ? app($config) : new $config();
+
+                // 5a. 优先尝试约定方法（getItems / getConfig / resolve / toArray / all）
+                foreach (['getItems', 'getConfig', 'resolve', 'toArray', 'all'] as $method) {
+                    if (method_exists($instance, $method)) {
+                        $result = $instance->{$method}();
+                        return is_array($result) ? $result : [];
+                    }
+                }
+
+                // 5b. 若未实现约定方法，再尝试可调用对象
+                if (is_callable($instance)) {
+                    $result = $instance();
+                    return is_array($result) ? $result : [];
+                }
+
+                return [];
+            }
+        } catch (\Throwable) {
+            // 用户配置的闭包/类在解析时抛出异常不应阻断安全中间件运行。
+            // 静默返回空数组，依赖框架其他机制或默认行为继续处理。
             return [];
         }
 

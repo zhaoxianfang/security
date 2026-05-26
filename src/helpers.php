@@ -11,7 +11,7 @@
  * 这些函数可在应用任何地方调用，无需引入额外命名空间。
  */
 
-use Illuminate\Support\Facades\Log;
+use zxf\Security\Bridge\FrameworkBridge;
 
 // ==================== 日志记录函数 ====================
 
@@ -19,8 +19,10 @@ if (!function_exists('security_log')) {
     /**
      * 记录安全事件日志
      *
-     * 将安全相关事件记录到 Laravel 日志系统，便于后续分析和审计。
+     * 将安全相关事件记录到框架日志系统，便于后续分析和审计。
      * 日志级别为 WARNING，可通过通道过滤快速定位安全事件。
+     *
+     * 跨框架兼容：通过 FrameworkBridge 自动适配 Laravel 或 ThinkPHP 日志系统。
      *
      * 使用场景：
      * - 记录自定义安全检查的结果
@@ -52,24 +54,30 @@ if (!function_exists('security_log')) {
     {
         try {
             // 检查日志功能是否启用（通过配置控制）
-            if (!config('security.log_enabled', true)) {
+            if (!FrameworkBridge::config('security.log_enabled', true)) {
                 return;
             }
 
             // 尝试获取当前请求对象，自动补充请求信息
-            $request = function_exists('request') ? request() : null;
+            // 兼容 Laravel (request()) 和 ThinkPHP (\think\facade\Request::instance())
+            $request = null;
+            if (function_exists('request')) {
+                $request = request();
+            } elseif (class_exists('think\facade\Request')) {
+                $request = \think\facade\Request::instance();
+            }
 
             // 构建日志数据
             $logData = array_merge([
                 'type' => $type,
-                'ip' => $request?->ip() ?? 'unknown',
-                'url' => $request?->fullUrl() ?? '',
-                'method' => $request?->method() ?? 'CLI',
-                'user_agent' => $request ? substr($request->userAgent() ?? '', 0, 200) : null,
+                'ip' => $request ? (FrameworkBridge::requestIp($request) ?? 'unknown') : 'unknown',
+                'url' => $request ? FrameworkBridge::requestFullUrl($request) : '',
+                'method' => $request ? FrameworkBridge::requestMethod($request) : 'CLI',
+                'user_agent' => $request ? substr(FrameworkBridge::requestUserAgent($request) ?? '', 0, 200) : null,
             ], $context);
 
-            // 记录到 Laravel 日志，使用 WARNING 级别便于区分
-            Log::warning("[Security] {$type}: {$message}", $logData);
+            // 记录到框架日志，使用 WARNING 级别便于区分
+            FrameworkBridge::logWarning("[Security] {$type}: {$message}", $logData);
         } catch (\Throwable) {
             // CLI 模式下日志驱动异常（如磁盘满、syslog 不可用）不应阻断业务流程。
             // 静默降级：安全日志失败不是致命错误，继续执行。
@@ -227,6 +235,11 @@ if (!function_exists('ip_in_cidr')) {
                 return false;
             }
 
+            // 防御 64 位 PHP 的 ip2long() 符号扩展问题
+            // 强制截断为无符号 32 位值，避免 >127.255.255.255 的 IP 匹配错误
+            $ipLong = $ipLong & 0xFFFFFFFF;
+            $subnetLong = $subnetLong & 0xFFFFFFFF;
+
             // 计算子网掩码
             // 例如 /24 对应掩码 0xFFFFFFFF << 8 = 0xFFFFFF00
             $mask = -1 << (32 - $prefixLength);
@@ -261,7 +274,13 @@ if (!function_exists('security_hash_ip')) {
      */
     function security_hash_ip(string $ip): string
     {
-        $key = config('app.key', 'default-key');
+        // 优先使用应用密钥；若未配置，使用随机生成的运行时密钥（每次进程不同），
+        // 避免硬编码弱密钥导致哈希可被彩虹表破解。
+        $key = FrameworkBridge::config('app.key');
+        if (empty($key) || !is_string($key)) {
+            $key = bin2hex(random_bytes(32));
+        }
+
         $hash = hash_hmac('sha256', $ip, $key);
         return substr($hash, 0, 16);
     }

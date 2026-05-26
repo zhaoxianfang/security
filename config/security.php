@@ -2,11 +2,12 @@
 
 /**
  * ╔═══════════════════════════════════════════════════════════════════════════╗
- * ║        Laravel 安全中间件 - 配置文件 (v6.0)                                  ║
+ * ║        Laravel / ThinkPHP 安全中间件 - 配置文件 (v6.1)                       ║
  * ║        🔐 14层纵深安全防护，覆盖 OWASP Top 10 核心攻击向量                     ║
  * ╚═══════════════════════════════════════════════════════════════════════════╝
  *
- * 📦 支持的 PHP 版本：8.2 / 8.3 / 8.4 / 8.5； 支持的 Laravel 版本：11 / 12 / 13
+ * 📦 支持的 PHP 版本：8.2 / 8.3 / 8.4 / 8.5
+ * 📦 支持的框架版本：Laravel 11 / 12 / 13，ThinkPHP 8+
  *
  * 📖 配置优先级（从高到低）：
  *    1. 环境变量（.env）       — 运行时覆盖
@@ -20,7 +21,6 @@
  *    - 内网部署：将内网IP段加入 trusted_ips
  */
 
-use Illuminate\Http\Request;
 use zxf\Security\Config\DefaultConfig;
 
 return [
@@ -89,7 +89,7 @@ return [
     |
     | 支持格式：
     |   ① 静态IP/CIDR：'127.0.0.1', '10.0.1.0/24'
-    |   ② 闭包函数：function(string $ip, Request $request): bool { ... }
+    |   ② 闭包函数：function(string $ip, object $request): bool { ... }
     |   ③ 类名字符串：App\Security\IpChecker::class
     |   ④ 可调用数组：[App\Security\IpService::class, 'isTrusted']
     |
@@ -128,7 +128,7 @@ return [
     |   'blacklist' => [
     |       '203.0.113.50',
     |       '198.51.100.0/24',
-    |       function(string $ip, Request $request) {
+    |       function(string $ip, object $request) {
     |           return \App\Models\BannedIp::where('ip', $ip)->exists();
     |       },
     |   ],
@@ -254,7 +254,7 @@ return [
     | 支持格式：
     |   ① 静态字符串：'sqlmap', 'nmap'
     |   ② 正则表达式（以/开头）：'/python-requests/i'
-    |   ③ 闭包函数：function(string $ua, Request $request): bool { ... }
+    |   ③ 闭包函数：function(string $ua, object $request): bool { ... }
     |   ④ 类名字符串 / 可调用数组（通过 ConfigResolver 解析）
     |
     | 默认列表在 @see DefaultConfig::USER_AGENT_BLACKLIST 中定义，此处可覆盖。
@@ -291,7 +291,7 @@ return [
     | 支持格式：
     |   ① 字符串（支持 * 通配符）：'api/health*'
     |   ② 正则（以 / 开头）：'/^api\/v1\/health$/'
-    |   ③ 闭包函数：function(Request $request): bool { ... }
+    |   ③ 闭包函数：function(object $request): bool { ... }
     |
     | ⚠️ 不要将整个 /api/* 排除，风险过高！
     */

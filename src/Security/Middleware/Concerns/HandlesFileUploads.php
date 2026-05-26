@@ -2,6 +2,8 @@
 
 namespace zxf\Security\Middleware\Concerns;
 
+use zxf\Security\Bridge\FrameworkBridge;
+
 /**
  * 文件上传安全检查
  *
@@ -10,22 +12,25 @@ namespace zxf\Security\Middleware\Concerns;
  *  2. 文件大小限制
  *  3. MIME magic bytes 深度验证（防止扩展名伪装）
  *
+ * 跨框架兼容：通过 FrameworkBridge::requestAllFiles() 统一获取上传文件，
+ * 支持 Laravel 11+ 和 ThinkPHP 8+。
+ *
  * @package zxf\Security\Middleware\Concerns
- * @since 5.4.0
+ * @since 6.1.0
  */
 trait HandlesFileUploads
 {
     /**
      * 检查文件上传是否包含危险文件
      *
-     * @param \Illuminate\Http\Request $request HTTP请求对象
+     * @param object $request HTTP请求对象（跨框架兼容）
      * @return bool true=包含危险文件，false=文件安全或没有上传
      */
-    protected function hasDangerousUpload(\Illuminate\Http\Request $request): bool
+    protected function hasDangerousUpload(object $request): bool
     {
         $upload = $this->config['upload'] ?? [];
 
-        $files = $request->allFiles();
+        $files = FrameworkBridge::requestAllFiles($request);
 
         if (empty($files)) {
             return false;
@@ -39,19 +44,24 @@ trait HandlesFileUploads
             $fileList = is_array($file) ? $file : [$file];
 
             foreach ($fileList as $singleFile) {
+                // 防御：跳过非对象项（极端情况下可能混入原生数组或其他类型）
+                if (!is_object($singleFile)) {
+                    continue;
+                }
+
                 // 1. 扩展名检查
-                $extension = strtolower($singleFile->getClientOriginalExtension());
+                $extension = FrameworkBridge::fileGetClientOriginalExtension($singleFile);
                 if (in_array($extension, $blockedExtensions, true)) {
                     return true;
                 }
 
                 // 2. 文件大小检查
-                if ($singleFile->getSize() > $maxSize) {
+                if (FrameworkBridge::fileGetSize($singleFile) > $maxSize) {
                     return true;
                 }
 
                 // 3. MIME magic bytes 深度验证（防止扩展名伪装）
-                if ($checkMimeMagic && $singleFile->isValid()) {
+                if ($checkMimeMagic && FrameworkBridge::fileIsValid($singleFile)) {
                     if ($this->detectMimeTypeMismatch($singleFile)) {
                         return true;
                     }
@@ -68,12 +78,14 @@ trait HandlesFileUploads
      * 通过读取文件头部魔数字节，验证文件扩展名是否与真实内容一致。
      * 防止攻击者将 .php 文件改名为 .jpg 上传。
      *
-     * @param \Illuminate\Http\UploadedFile $file 上传文件
+     * 跨框架兼容：不依赖 Laravel UploadedFile 强类型，支持 ThinkPHP 文件对象。
+     *
+     * @param object $file 上传文件对象
      * @return bool true=类型不匹配（危险），false=类型匹配或无法判断
      */
-    protected function detectMimeTypeMismatch(\Illuminate\Http\UploadedFile $file): bool
+    protected function detectMimeTypeMismatch(object $file): bool
     {
-        $claimExt = strtolower($file->getClientOriginalExtension());
+        $claimExt = FrameworkBridge::fileGetClientOriginalExtension($file);
 
         if (empty($claimExt)) {
             return true; // 无扩展名，视为危险
@@ -95,7 +107,7 @@ trait HandlesFileUploads
             return false; // 无预期映射，不做判断
         }
 
-        $detectedMime = $file->getMimeType();
+        $detectedMime = FrameworkBridge::fileGetMimeType($file);
 
         // 如果声明的扩展名对应的MIME不匹配实际MIME，可能被伪装
         $expectedList = is_array($expectedMime) ? $expectedMime : [$expectedMime];

@@ -38,9 +38,8 @@ echo "\n═══ [2] HTTP 专属检测层在 CLI 下自动禁用 ═══\n";
 $ref = new ReflectionClass(SecurityMiddleware::class);
 $middleware = $ref->newInstanceWithoutConstructor();
 
-// 注入最小配置
+// 注入最小配置（PHP 8.1+ 反射属性默认可访问，无需 setAccessible）
 $prop = $ref->getProperty('config');
-$prop->setAccessible(true);
 $prop->setValue($middleware, [
     'enabled' => true,
     'detection_layers' => [
@@ -64,7 +63,6 @@ $prop->setValue($middleware, [
 ]);
 
 $method = $ref->getMethod('isDetectionEnabled');
-$method->setAccessible(true);
 
 // CLI 下应禁用的层
 $cliDisabled = ['user_agent', 'headers', 'body_size', 'rate_limit', 'http_method', 'url_length', 'upload'];
@@ -80,7 +78,6 @@ foreach ($cliEnabled as $layer) {
 
 echo "\n═══ [3] isCliMode() 方法存在且返回 true ═══\n";
 $cliMethod = $ref->getMethod('isCliMode');
-$cliMethod->setAccessible(true);
 assertEq('isCliMode() 返回 true', $cliMethod->invoke($middleware), true);
 
 echo "\n═══ [4] 源码级 try/catch 防御检查 ═══\n";
@@ -92,9 +89,9 @@ $buildsFile = file_get_contents($srcDir . '/Security/Middleware/Concerns/BuildsI
 assertEq('logThreat() 包含 try/catch', str_contains($buildsFile, 'protected function logThreat(') && str_contains($buildsFile, 'catch (\\Throwable)'), true);
 assertEq('blockRequest() 包含 try/catch', str_contains($buildsFile, "catch (\\Throwable") && str_contains($buildsFile, '默认拦截视图渲染失败，已降级为 JSON 响应'), true);
 assertEq('blockRequest() CLI 优先 JSON', str_contains($buildsFile, '$this->isCliMode()'), true);
-assertEq('buildInterceptionData ip 防御 null', str_contains($buildsFile, "'ip' => \$request->ip() ?? 'unknown',"), true);
-assertEq('buildInterceptionData ua 防御 null', str_contains($buildsFile, "'user_agent' => \$request->userAgent() ?? '',"), true);
-assertEq('createInterceptionContext content_type 防御 null', str_contains($buildsFile, "'content_type' => \$request->header('Content-Type') ?? '',"), true);
+assertEq('buildInterceptionData ip 防御 null', str_contains($buildsFile, "FrameworkBridge::requestIp(\$request) ?? 'unknown',"), true);
+assertEq('buildInterceptionData ua 防御 null', str_contains($buildsFile, "FrameworkBridge::requestUserAgent(\$request) ?? '',"), true);
+assertEq('createInterceptionContext content_type 防御 null', str_contains($buildsFile, "FrameworkBridge::requestGetHeader(\$request, 'Content-Type') ?? '',"), true);
 
 // 检查 SecurityServiceProvider 是否有视图注册容错
 $providerFile = file_get_contents($srcDir . '/Security/Providers/SecurityServiceProvider.php');
@@ -104,9 +101,9 @@ assertEq('Provider 视图注册有 try/catch', str_contains($providerFile, 'catc
 // 检查 helpers.php 是否有 try/catch
 $helpersFile = file_get_contents($srcDir . '/helpers.php');
 assertEq('security_log() 包含 try/catch', str_contains($helpersFile, 'catch (\\Throwable)'), true);
-assertEq('security_log() ip 防御 null', str_contains($helpersFile, "'ip' => \$request?->ip() ?? 'unknown',"), true);
-assertEq('security_log() method 防御 null', str_contains($helpersFile, "'method' => \$request?->method() ?? 'CLI',"), true);
-assertEq('security_log() url 防御 null', str_contains($helpersFile, "'url' => \$request?->fullUrl() ?? '',"), true);
+assertEq('security_log() ip 防御 null', str_contains($helpersFile, "FrameworkBridge::requestIp(\$request) ?? 'unknown') : 'unknown',"), true);
+assertEq('security_log() method 防御 null', str_contains($helpersFile, "FrameworkBridge::requestMethod(\$request) : 'CLI',"), true);
+assertEq('security_log() url 防御 null', str_contains($helpersFile, "FrameworkBridge::requestFullUrl(\$request) : '',"), true);
 
 // 检查 HandlesAccessControl 的 CLI 跳过逻辑
 $accessFile = file_get_contents($srcDir . '/Security/Middleware/Concerns/HandlesAccessControl.php');
@@ -114,7 +111,7 @@ assertEq('isDetectionEnabled() 包含 CLI 逻辑', str_contains($accessFile, "is
 
 // 检查 SecurityMiddleware 的 blacklist 日志防御
 $middlewareFile = file_get_contents($srcDir . '/Security/Middleware/SecurityMiddleware.php');
-assertEq('blacklist 日志防御 null ip', str_contains($middlewareFile, "'IP地址位于黑名单中: ' . (\$request->ip() ?? 'unknown')"), true);
+assertEq('blacklist 日志防御 null ip', str_contains($middlewareFile, "'IP地址位于黑名单中: ' . (FrameworkBridge::requestIp(\$request) ?? 'unknown')"), true);
 
 echo "\n═══ [5] 函数签名兼容性 ═══\n";
 // 确认所有公共/保护方法签名没有破坏性变更

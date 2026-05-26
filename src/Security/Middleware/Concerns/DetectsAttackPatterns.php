@@ -2,6 +2,8 @@
 
 namespace zxf\Security\Middleware\Concerns;
 
+use zxf\Security\Bridge\FrameworkBridge;
+
 /**
  * 攻击模式检测
  *
@@ -12,8 +14,11 @@ namespace zxf\Security\Middleware\Concerns;
  *
  * 支持 Markdown 智能旁路（通过 ManagesMarkdownSafety trait）。
  *
+ * 跨框架兼容：所有方法接受 object 类型请求对象，内部通过 FrameworkBridge 统一访问。
+ *
  * @package zxf\Security\Middleware\Concerns
  * @since 5.4.0
+ * @version 6.1.0
  */
 trait DetectsAttackPatterns
 {
@@ -25,10 +30,10 @@ trait DetectsAttackPatterns
      *
      * 优化：使用 PatternService 延迟加载模式，减少内存占用
      *
-     * @param \Illuminate\Http\Request $request HTTP请求对象
+     * @param object $request HTTP请求对象
      * @return bool true=检测到攻击，false=正常
      */
-    protected function detectUrlPathAttacks(\Illuminate\Http\Request $request): bool
+    protected function detectUrlPathAttacks(object $request): bool
     {
         $excludeRules = \zxf\Security\Patterns\PatternService::resolveRules($this->config['intercept_rules_exclude'] ?? []);
         $interceptRules = \zxf\Security\Patterns\PatternService::resolveRules($this->config['intercept_rules'] ?? []);
@@ -44,15 +49,15 @@ trait DetectsAttackPatterns
         $checkSources = [];
 
         // 1. URL路径（原始和解码）— 先截断防止超长 URL 消耗内存
-        $url = $this->truncateInput($request->fullUrl());
+        $url = $this->truncateInput(FrameworkBridge::requestFullUrl($request));
         $checkSources['url'] = [$url, urldecode($url)];
 
         // 2. 路由参数（含解码变形）
-        $routeParams = $request->route()?->parameters() ?? [];
+        $routeParams = FrameworkBridge::requestRouteParams($request);
         $this->collectParamsForCheck($routeParams, $checkSources, 'route');
 
         // 3. 查询参数值（独立检查每个参数值，避免仅依赖 fullUrl 整体匹配）
-        $queryParams = $request->query() ?? [];
+        $queryParams = FrameworkBridge::requestQuery($request);
         $this->collectParamsForCheck($queryParams, $checkSources, 'query');
 
         // 检查所有来源
@@ -121,10 +126,10 @@ trait DetectsAttackPatterns
      * 3. 按攻击类型分组预检，避免无意义的正则匹配
      * 4. 支持 Markdown 内容智能识别 — 文档中的 SQL/命令代码示例可豁免
      *
-     * @param \Illuminate\Http\Request $request HTTP请求对象
+     * @param object $request HTTP请求对象
      * @return string|null 检测到的威胁类型，未检测到返回null
      */
-    protected function detectHighRiskAttacks(\Illuminate\Http\Request $request): ?string
+    protected function detectHighRiskAttacks(object $request): ?string
     {
         $excludeRules = \zxf\Security\Patterns\PatternService::resolveRules($this->config['intercept_rules_exclude'] ?? []);
         $interceptRules = \zxf\Security\Patterns\PatternService::resolveRules($this->config['intercept_rules'] ?? []);
@@ -146,7 +151,7 @@ trait DetectsAttackPatterns
         }
 
         // 1. 首先检查URL路径（重要：路径遍历攻击通常直接出现在URL中）
-        $urlPath = $request->path();
+        $urlPath = FrameworkBridge::requestPath($request);
 
         // 路径遍历预过滤：仅当包含 ../ 或 %2e 时才检查 path 类型
         $lowerPath = strtolower($urlPath);
@@ -158,7 +163,7 @@ trait DetectsAttackPatterns
         }
 
         // 2. 检查完整URL（包含查询字符串）— 全量检测（使用 redirect 策略1模式）
-        $fullUrl = $this->truncateInput($request->fullUrl());
+        $fullUrl = $this->truncateInput(FrameworkBridge::requestFullUrl($request));
         $urlResult = $this->checkPatternsAgainstInput($patterns, $fullUrl);
         if ($urlResult !== null) {
             return $urlResult;
@@ -247,10 +252,10 @@ trait DetectsAttackPatterns
      *  2. 解码后的参数值 → redirect 策略2-7 + ssrf 模式
      *
      * @param array $patterns 攻击模式数组
-     * @param \Illuminate\Http\Request $request HTTP请求对象
+     * @param object $request HTTP请求对象
      * @return string|null 检测到的威胁类型，未检测到返回null
      */
-    protected function checkUrlParamsForSsrRedirect(array $patterns, \Illuminate\Http\Request $request): ?string
+    protected function checkUrlParamsForSsrRedirect(array $patterns, object $request): ?string
     {
         // 仅当 SSRF 或 redirect 检测类型存在时才执行
         $availableTypes = array_intersect(['ssrf', 'redirect'], array_keys($patterns));
@@ -271,7 +276,7 @@ trait DetectsAttackPatterns
         // 收集所有参数值（含解码变形）— 逐来源遍历避免 array_merge 复制大 POST 数组
         $urlValues = [];
 
-        foreach ([$request->query() ?? [], $request->post() ?? []] as $source) {
+        foreach ([FrameworkBridge::requestQuery($request), FrameworkBridge::requestPost($request)] as $source) {
             foreach ($source as $key => $value) {
                 if (!is_string($value) || $value === '') {
                     continue;
@@ -357,10 +362,10 @@ trait DetectsAttackPatterns
      *       .php/.asp/.jsp 等脚本扩展名和路径遍历。
      *
      * @param array $patterns 攻击模式数组
-     * @param \Illuminate\Http\Request $request HTTP请求对象
+     * @param object $request HTTP请求对象
      * @return string|null 检测到的威胁类型，未检测到返回null
      */
-    protected function checkIndividualParamsForHighRisk(array $patterns, \Illuminate\Http\Request $request): ?string
+    protected function checkIndividualParamsForHighRisk(array $patterns, object $request): ?string
     {
         // 需要独立检查的类型（不与合并输入混淆）
         // path 类型也包含在内：防止 url_path 检测层关闭后，query string 中的
@@ -375,7 +380,7 @@ trait DetectsAttackPatterns
         }
 
         // 收集所有参数值并解码 — 逐来源遍历避免 array_merge 复制大数组
-        foreach ([$request->query() ?? [], $request->post() ?? [], $request->route()?->parameters() ?? []] as $source) {
+        foreach ([FrameworkBridge::requestQuery($request), FrameworkBridge::requestPost($request), FrameworkBridge::requestRouteParams($request)] as $source) {
             foreach ($source as $value) {
                 if (!is_string($value) || $value === '') {
                     continue;
@@ -478,10 +483,10 @@ trait DetectsAttackPatterns
      * 2. 对每种 XSS 类型进行预过滤，快速跳过不相关输入
      * 3. 独立检查每个参数值（防止载荷在合并输入中被稀释）
      *
-     * @param \Illuminate\Http\Request $request HTTP请求对象
+     * @param object $request HTTP请求对象
      * @return string|null 检测到的XSS类型，未检测到返回null
      */
-    protected function detectXssAttacks(\Illuminate\Http\Request $request): ?string
+    protected function detectXssAttacks(object $request): ?string
     {
         $excludeRules = \zxf\Security\Patterns\PatternService::resolveRules($this->config['intercept_rules_exclude'] ?? []);
         $interceptRules = \zxf\Security\Patterns\PatternService::resolveRules($this->config['intercept_rules'] ?? []);
@@ -494,14 +499,14 @@ trait DetectsAttackPatterns
         }
 
         // 1. 检查URL路径（反射型XSS常出现在URL中）
-        $urlPath = urldecode($this->truncateInput($request->path()));
+        $urlPath = urldecode($this->truncateInput(FrameworkBridge::requestPath($request)));
         $urlPathResult = $this->checkXssPatterns($patterns, $urlPath, $urlPath);
         if ($urlPathResult !== null) {
             return $urlPathResult;
         }
 
         // 2. 检查查询字符串（整体）
-        $queryString = urldecode($this->truncateInput($request->getQueryString() ?? ''));
+        $queryString = urldecode($this->truncateInput(FrameworkBridge::requestGetQueryString($request) ?? ''));
         $queryResult = $this->checkXssPatterns($patterns, $queryString, $queryString);
         if ($queryResult !== null) {
             return $queryResult;
@@ -588,10 +593,10 @@ trait DetectsAttackPatterns
      * 覆盖所有 XSS 类型：script, dom, tag, encoding, framework
      *
      * @param array $patterns XSS 模式数组（按类型分组）
-     * @param \Illuminate\Http\Request $request HTTP请求对象
+     * @param object $request HTTP请求对象
      * @return string|null 检测到的XSS类型，未检测到返回null
      */
-    protected function checkIndividualParamsForXss(array $patterns, \Illuminate\Http\Request $request): ?string
+    protected function checkIndividualParamsForXss(array $patterns, object $request): ?string
     {
         if (empty($patterns)) {
             return null;
@@ -603,7 +608,7 @@ trait DetectsAttackPatterns
         }
 
         // 收集所有参数值并解码 — 逐来源遍历避免 array_merge 复制大数组
-        foreach ([$request->query() ?? [], $request->post() ?? [], $request->route()?->parameters() ?? []] as $source) {
+        foreach ([FrameworkBridge::requestQuery($request), FrameworkBridge::requestPost($request), FrameworkBridge::requestRouteParams($request)] as $source) {
             foreach ($source as $value) {
                 if (!is_string($value) || $value === '') {
                     continue;

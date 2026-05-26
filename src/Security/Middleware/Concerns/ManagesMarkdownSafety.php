@@ -219,15 +219,17 @@ trait ManagesMarkdownSafety
         }
 
         // 缩进式代码块检测（4空格或1Tab开头，且非空行）
-        $afterLines = explode("\n", substr($content, $matchOffset));
-        $matchedLine = $afterLines[0] ?? '';
+        // ⚠️ 关键：$matchOffset 不一定是行首，必须从完整行内容检测缩进
+        $allLines = explode("\n", $content);
+        $matchedLineIdx = count($lines) - 1; // 匹配行在 allLines 中的索引
+        $matchedLine = $allLines[$matchedLineIdx] ?? '';
+
         if ((str_starts_with($matchedLine, '    ') || str_starts_with($matchedLine, "\t")) && trim($matchedLine) !== '') {
             $indentedCount = 1;
-            $matchedIndex = count($lines);
 
-            // 向前检查
-            for ($j = $matchedIndex - 1; $j >= max(0, $matchedIndex - 3); $j--) {
-                $prevLine = $lines[$j] ?? '';
+            // 向前检查（最多检查前3行）
+            for ($j = $matchedLineIdx - 1; $j >= max(0, $matchedLineIdx - 3); $j--) {
+                $prevLine = $allLines[$j] ?? '';
                 if ((str_starts_with($prevLine, '    ') || str_starts_with($prevLine, "\t")) && trim($prevLine) !== '') {
                     $indentedCount++;
                 } elseif (trim($prevLine) === '') {
@@ -236,9 +238,9 @@ trait ManagesMarkdownSafety
                     break;
                 }
             }
-            // 向后检查
-            for ($j = 1; $j < min(count($afterLines), 4); $j++) {
-                $nextLine = $afterLines[$j];
+            // 向后检查（最多检查后3行）
+            for ($j = $matchedLineIdx + 1; $j < min(count($allLines), $matchedLineIdx + 4); $j++) {
+                $nextLine = $allLines[$j] ?? '';
                 if ((str_starts_with($nextLine, '    ') || str_starts_with($nextLine, "\t")) && trim($nextLine) !== '') {
                     $indentedCount++;
                 } elseif (trim($nextLine) === '') {
@@ -248,7 +250,8 @@ trait ManagesMarkdownSafety
                 }
             }
 
-            return $indentedCount >= 3;
+            // 标准 Markdown 规范：单行 4 空格或 Tab 缩进即构成代码块
+            return $indentedCount >= 1;
         }
 
         return false;

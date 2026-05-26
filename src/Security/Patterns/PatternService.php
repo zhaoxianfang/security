@@ -179,7 +179,9 @@ class PatternService
         foreach ($patterns as $type => $typePatterns) {
             $patterns[$type] = array_values(array_filter(
                 $typePatterns,
-                fn(array $item) => !isset($excludeSet[$item['pattern'] ?? ''])
+                // 保留 ?? '' 防御数据文件被篡改后缺少 pattern 键的情况
+                /** @phpstan-ignore-next-line */
+                fn(mixed $item) => is_array($item) && !isset($excludeSet[$item['pattern'] ?? ''])
             ));
 
             if (empty($patterns[$type])) {
@@ -252,7 +254,9 @@ class PatternService
 
         return array_values(array_filter(
             $patterns,
-            fn(array $item) => !isset($excludeSet[$item['pattern'] ?? ''])
+            // 保留 ?? '' 防御数据文件被篡改后缺少 pattern 键的情况
+            /** @phpstan-ignore-next-line */
+            fn(mixed $item) => is_array($item) && !isset($excludeSet[$item['pattern'] ?? ''])
         ));
     }
 

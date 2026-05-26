@@ -1,12 +1,13 @@
 {
     "name": "zxf/security",
-    "description": "Laravel 安全中间件 - 简洁、无缓存、低误报的请求拦截包",
+    "description": "Laravel / ThinkPHP 安全中间件 - 简洁、无缓存、低误报的请求拦截包",
     "type": "library",
     "keywords": [
         "security",
         "ip",
         "zxf",
         "laravel",
+        "thinkphp",
         "middleware",
         "protection",
         "firewall"
@@ -51,5 +52,9 @@
     },
     "minimum-stability": "stable",
     "prefer-stable": true,
-    "scripts": {}
+    "scripts": {},
+    "require-dev": {
+        "phpstan/phpstan": "^1.0",
+        "phpunit/phpunit": "^10.0"
+    }
 }

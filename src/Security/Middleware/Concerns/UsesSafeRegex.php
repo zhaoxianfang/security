@@ -2,7 +2,7 @@
 
 namespace zxf\Security\Middleware\Concerns;
 
-use Illuminate\Support\Facades\Log;
+use zxf\Security\Bridge\FrameworkBridge;
 
 /**
  * 安全正则表达式与输入处理工具集
@@ -10,8 +10,10 @@ use Illuminate\Support\Facades\Log;
  * 提供安全的 PCRE 正则匹配/替换、输入扁平化、截断、脱敏等功能。
  * 所有正则操作均捕获 PCRE 编译错误，防止运行时崩溃。
  *
+ * 跨框架兼容：日志通过 FrameworkBridge 输出，支持 Laravel 11+ 和 ThinkPHP 8+。
+ *
  * @package zxf\Security\Middleware\Concerns
- * @since 5.4.0
+ * @since 6.1.0
  */
 trait UsesSafeRegex
 {
@@ -58,7 +60,7 @@ trait UsesSafeRegex
         if ($result === false) {
             if ($this->config['log_enabled'] ?? true) {
                 $errorMsg = preg_last_error_msg();
-                Log::warning('[Security] 正则表达式编译失败，已跳过该规则', [
+                FrameworkBridge::logWarning('[Security] 正则表达式编译失败，已跳过该规则', [
                     'pattern' => mb_substr($pattern, 0, 100),
                     'error' => $errorMsg,
                     'request_id' => $this->requestId ?? '',
@@ -100,7 +102,7 @@ trait UsesSafeRegex
         if ($result === null) {
             if ($this->config['log_enabled'] ?? true) {
                 $errorMsg = preg_last_error_msg();
-                Log::warning('[Security] 正则替换失败，保留原内容', [
+                FrameworkBridge::logWarning('[Security] 正则替换失败，保留原内容', [
                     'pattern' => mb_substr($pattern, 0, 100),
                     'error' => $errorMsg,
                     'request_id' => $this->requestId ?? '',
@@ -138,15 +140,19 @@ trait UsesSafeRegex
     /**
      * 获取请求的输入字符串
      *
-     * @param \Illuminate\Http\Request $request HTTP请求对象
+     * @param object $request HTTP请求对象（跨框架兼容）
      * @param bool $sanitizeMarkdown 是否移除Markdown代码块
      * @return string 合并后的输入字符串
      */
-    protected function getInputString(\Illuminate\Http\Request $request, bool $sanitizeMarkdown = false): string
+    protected function getInputString(object $request, bool $sanitizeMarkdown = false): string
     {
         // 避免 array_merge 复制大 POST 数据，直接逐来源扁平化拼接
         $result = '';
-        foreach ([$request->query() ?? [], $request->post() ?? [], $request->route()?->parameters() ?? []] as $source) {
+        foreach ([
+            FrameworkBridge::requestQuery($request),
+            FrameworkBridge::requestPost($request),
+            FrameworkBridge::requestRouteParams($request),
+        ] as $source) {
             $result .= $this->flattenInput($source);
         }
 
