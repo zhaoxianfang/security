@@ -63,6 +63,9 @@ class ThreatData
         'url_too_long' => 'URL长度超过限制',
         'body_too_large' => '请求体大小超过限制',
         'url_path_attack' => 'URL路径包含攻击特征',
+        'custom_high' => '检测到高危自定义安全威胁',
+        'custom_medium' => '检测到中等自定义安全威胁',
+        'custom_low' => '检测到低危自定义安全威胁',
     ];
 
     /**
@@ -103,6 +106,9 @@ class ThreatData
         'url_too_long' => 'low',
         'body_too_large' => 'low',
         'invalid_headers' => 'low',
+        'custom_high' => 'high',
+        'custom_medium' => 'medium',
+        'custom_low' => 'low',
     ];
 
     /**
@@ -144,6 +150,9 @@ class ThreatData
         'url_too_long'    => 'protocol_violation',
         'body_too_large'  => 'protocol_violation',
         'url_path_attack' => 'path_attack',
+        'custom_high' => 'custom_rule',
+        'custom_medium' => 'custom_rule',
+        'custom_low' => 'custom_rule',
     ];
 
     /**
@@ -180,6 +189,9 @@ class ThreatData
         'url_path_attack' => 'URL路径攻击',
         'redirect' => '开放重定向攻击',
         'file_include' => '文件包含攻击(LFI/RFI)',
+        'custom_high' => '高危自定义安全威胁',
+        'custom_medium' => '中等自定义安全威胁',
+        'custom_low' => '低危自定义安全威胁',
     ];
 
     /**
@@ -215,6 +227,9 @@ class ThreatData
         'redirect' => '检测到开放重定向攻击，请求已被拦截',
         'file_include' => '检测到文件包含攻击，请求已被拦截',
         'unknown' => '请求包含潜在的安全威胁，已被拦截',
+        'custom_high' => '检测到高危安全威胁，请求已被拦截',
+        'custom_medium' => '检测到中等安全威胁，请求已被拦截',
+        'custom_low' => '检测到低危安全威胁，请求已被拦截',
     ];
 
     /**

@@ -27,19 +27,16 @@ trait ValidatesInputIntegrity
      */
     protected function isBadUserAgent(\Illuminate\Http\Request $request): bool
     {
-        $uaList = $this->config['user_agent_blacklist'] ?? [];
+        $uaList = \zxf\Security\Config\DefaultConfig::getUserAgentBlacklist($this->config);
 
         if (empty($uaList)) {
             return false;
         }
 
-        // 获取要排除的内置 UA 条目（精确字符串匹配）
-        $excludeList = array_flip($this->config['user_agent_blacklist_exclude'] ?? []);
-
         $userAgent = strtolower($request->userAgent() ?? '');
 
         foreach ($uaList as $item) {
-            // 闭包函数 — 不受 exclude 影响
+            // 闭包函数
             if ($item instanceof \Closure) {
                 if ($item($request->userAgent(), $request) === true) {
                     return true;
@@ -47,7 +44,7 @@ trait ValidatesInputIntegrity
                 continue;
             }
 
-            // 正则表达式 — 不受 exclude 影响
+            // 正则表达式
             if (is_string($item) && str_starts_with($item, '/')) {
                 if ($this->safePregMatch($item, $request->userAgent())) {
                     return true;
@@ -56,14 +53,8 @@ trait ValidatesInputIntegrity
             }
 
             // 字符串匹配（不区分大小写，支持部分匹配）
-            // 先检查是否在排除列表中
-            if (is_string($item)) {
-                if (isset($excludeList[$item])) {
-                    continue;
-                }
-                if (str_contains($userAgent, strtolower($item))) {
-                    return true;
-                }
+            if (is_string($item) && str_contains($userAgent, strtolower($item))) {
+                return true;
             }
         }
 
@@ -182,17 +173,7 @@ trait ValidatesInputIntegrity
      */
     protected function hasInvalidMethod(\Illuminate\Http\Request $request): bool
     {
-        $allowedMethods = $this->config['allowed_http_methods'] ?? ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'];
-
-        // 向后兼容：旧版 allowed_http_methods_exclude 配置（v5.x → v6 迁移后移除）
-        // 新版本请直接从 allowed_http_methods 中移除不需要的方法即可
-        $excludeLegacy = array_flip($this->config['allowed_http_methods_exclude'] ?? []);
-        if (!empty($excludeLegacy)) {
-            $allowedMethods = array_values(array_filter(
-                $allowedMethods,
-                fn(string $m) => !isset($excludeLegacy[$m])
-            ));
-        }
+        $allowedMethods = \zxf\Security\Config\DefaultConfig::getAllowedHttpMethods($this->config);
 
         return !in_array($request->method(), $allowedMethods, true);
     }
@@ -262,43 +243,13 @@ trait ValidatesInputIntegrity
                 $doubleDecoded = urldecode($decoded);
 
                 // 解码后检查可疑模式
-                $suspicious = $config['suspicious_patterns'] ?? ['../', '..\\', '<script', 'javascript:', 'onerror=', 'onload='];
+                $suspicious = \zxf\Security\Config\DefaultConfig::getEncodingSuspiciousPatterns($this->config);
                 foreach ($suspicious as $pattern) {
                     if (str_contains($decoded, $pattern) || str_contains($doubleDecoded, $pattern)) {
                         $this->lastMatchedPattern = 'encoding_bypass_attempt';
                         $this->lastMatchedContent = substr($decoded, 0, 100);
                         return true;
                     }
-                }
-            }
-        }
-
-        // 检测多重编码绕过
-        // encoding_patterns_exclude 含 'multi_encoding' → 跳过整组；含正则字符串 → 跳过单条
-        if (!in_array('multi_encoding', $excludePatterns, true)) {
-            $encodingPatterns = $config['encoding_patterns'] ?? [
-                '/%25(?:25)+[0-9a-f]{2}/i',
-                '/%(?:c0[\x80-\xbf]|e0%80[\x80-\xbf])/i',
-                '/%[0-9a-f]{2}.*&#x[0-9a-f]+;/i',
-            ];
-
-            // 从 encoding_patterns_exclude 中提取正则排除项（非维度名即为正则）
-            $regexExcludes = array_flip(array_filter(
-                $excludePatterns,
-                fn(string $v) => !in_array($v, ['null_byte', 'percent_threshold', 'multi_encoding', 'utf8_overlong'], true)
-            ));
-            if (!empty($regexExcludes)) {
-                $encodingPatterns = array_values(array_filter(
-                    $encodingPatterns,
-                    fn(string $p) => !isset($regexExcludes[$p])
-                ));
-            }
-
-            foreach ($encodingPatterns as $pattern) {
-                if ($this->safePregMatch($pattern, $rawUrl)) {
-                    $this->lastMatchedPattern = 'multi_encoding_bypass';
-                    $this->lastMatchedContent = substr($rawUrl, 0, 100);
-                    return true;
                 }
             }
         }

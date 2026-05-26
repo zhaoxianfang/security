@@ -59,19 +59,7 @@ trait ManagesMarkdownSafety
         $hasInlineCode = $inlineCodeCount >= 4;
 
         // Markdown 语法模式匹配
-        $markdownPatterns = $markdownConfig['syntax_patterns'] ?? [
-            '/^#{1,6}\s+/m',
-            '/^[-*+]\s+/m',
-            '/\[.+?\]\(.+?\)/',
-            '/^\s*>\s+/m',
-            '/^\s*\|\s*[-:]+\s*\|/m',
-            '/!\[.*?\]\(.*?\)/',
-            '/\*\*.*?\*\*/',
-            '/^---\s*$/m',
-            '/^- \[[ x]\] /m',
-            '/\~\~.*?\~\~/',
-            '/^\d+\.\s+/m',
-        ];
+        $markdownPatterns = \zxf\Security\Config\DefaultConfig::getMarkdownSyntaxPatterns($this->config);
 
         $syntaxScore = 0;
         foreach ($markdownPatterns as $pattern) {

@@ -3,22 +3,24 @@
 namespace zxf\Security\Patterns;
 
 /**
- * 安全模式服务 - 延迟加载 + 编译缓存 + 三种场景支持
+ * 安全模式服务 - 延迟加载 + 风险分级 + 统一规则管理
  *
  * 核心设计理念：
- * 1. 延迟加载 - 模式数据文件仅在首次访问时加载，避免 php artisan optimize 时内存暴涨
- * 2. 内存缓存 - 已加载的模式在进程内缓存，同一请求周期无需重复加载
- * 3. 模式合并 - 内置默认模式 + 用户自定义模式（来自轻量配置）
- * 4. 模式排除 - 支持从内置模式中排除特定正则（精确字符串匹配）
- * 5. 模式替换 - 支持完全使用自定义模式、忽略内置模式
- * 6. 预过滤支持 - 提供快速字符串预检方法，减少不必要的正则匹配
+ *  1. 延迟加载 — 模式数据文件仅在首次访问时加载
+ *  2. 内存缓存 — 已加载的模式在进程内缓存
+ *  3. 风险分级 — 每条规则标注 high / medium / low 风险等级
+ *  4. 统一排除 — intercept_rules_exclude 全局生效，优先级最高
+ *  5. 统一追加 — intercept_rules 按风险等级分组，优先级次之
+ *  6. 预过滤支持 — 快速字符串预检，减少不必要的正则匹配
+ *  7. 零缓存依赖 — 不依赖 Laravel config 缓存，独立数据文件
  *
- * 三种使用场景：
- * - 场景1（排除）：使用所有内置规则，但排除特定几条 → excludePatterns + merge 模式
- * - 场景2（追加）：使用所有内置规则，并追加自定义规则 → merge 模式（默认）
- * - 场景3（替换）：完全使用自定义规则，忽略内置规则 → replace 模式
+ * 规则优先级（从高到低）：
+ *  1. intercept_rules_exclude — 排除列表中的规则全部被忽略
+ *  2. intercept_rules — 用户自定义追加规则
+ *  3. built-in patterns — 内置默认规则
  *
  * @package zxf\Security\Patterns
+ * @since 6.0.0
  */
 class PatternService
 {
@@ -52,18 +54,19 @@ class PatternService
             'xp_', 'sp_oa', '%27', '1=1', 'extractvalue', 'updatexml', 'floor(rand',
             '@@', 'database(', 'user(', 'system_user', 'current_user', 'group_concat',
             'concat_ws', 'waitfor', 'unhex', 'charset', '/*', '/**/', '%df', '%bf',
-            "' or ", "' and ",
+            "' or ", "' and ", 'case when', 'if(',
         ],
         'command'          => [
             'system', 'exec', 'passthru', 'shell_exec', 'rm ', 'wget', 'curl',
             'nc ', 'whoami', '|', '`', '$(', 'powershell', 'cmd ', ';id',
+            'bash', 'python', 'perl', 'ruby', 'node',
         ],
         'path'             => [
             '../', '..\\', '%2e%2e', '%252e', '.env', '.git', 'etc/', 'proc/',
             '.php', '.jsp', '.asp', '.aspx', '.sh', '.py', '.exe', '.dll', '.bat',
             'passwd', '.svn', '.hg', '.bzr', 'htaccess', 'htpasswd', 'web.config',
             'composer', 'package', 'docker', 'wp-', 'phpmyadmin', 'adminer',
-            '%c0', '%ef', '%e0', '%00',
+            '%c0', '%ef', '%e0', '%00', 'windows', 'system32',
         ],
         'ldap'             => [')(', '|(', '&(', '*(', '(|', '(&'],
         'xml'              => ['<!ENTITY', '<!DOCTYPE', 'SYSTEM', 'PUBLIC'],
@@ -93,99 +96,177 @@ class PatternService
     /**
      * 获取高危攻击模式
      *
-     * 处理逻辑：
-     * 1. 加载内置默认模式
-     * 2. 应用排除列表（精确字符串匹配移除）
-     * 3. 根据 pattern_mode 决定是合并还是替换
-     *
-     * @param array $customPatterns 用户自定义模式（来自配置）
-     * @param array $excludePatterns 要排除的模式（来自配置），格式：['type' => ['pattern1', ...]]
-     * @param string $mode 模式策略：'merge'（合并）或 'replace'（替换）
-     * @return array<string, string[]>
+     * @param array $excludeRules 排除规则列表（精确字符串匹配）
+     * @param array $interceptRules 追加规则 ['high' => [], 'medium' => [], 'low' => []]
+     * @return array<string, array<int, array{pattern:string,risk:string}>>
      */
-    public function getHighRiskPatterns(array $customPatterns = [], array $excludePatterns = [], string $mode = 'merge'): array
+    public function getHighRiskPatterns(array $excludeRules = [], array $interceptRules = []): array
     {
-        // 加载内置默认模式
         $defaults = $this->loadDataFile('high_risk');
 
-        // 应用排除列表（先从内置模式中移除指定规则）
-        if (!empty($excludePatterns)) {
-            $defaults = $this->excludePatternsFromDefaults($defaults, $excludePatterns);
-        }
+        // 应用排除规则（优先级最高）
+        $defaults = $this->applyExclusions($defaults, $excludeRules);
 
-        // 根据模式策略处理
-        if ($mode === 'replace') {
-            // 完全替换模式：仅使用用户自定义模式，忽略内置模式
-            return $customPatterns;
-        }
-
-        // 合并模式（默认）：内置 + 自定义
-        if (empty($customPatterns)) {
-            return $defaults;
-        }
-
-        return $this->mergePatterns($defaults, $customPatterns);
+        // 应用追加规则（优先级次之）
+        return $this->applyInterceptions($defaults, $interceptRules);
     }
 
     /**
      * 获取XSS攻击模式
      *
-     * @param array $customPatterns 用户自定义模式（来自配置）
-     * @param array $excludePatterns 要排除的模式（来自配置）
-     * @param string $mode 模式策略：'merge' 或 'replace'
-     * @return array<string, string[]>
+     * @param array $excludeRules 排除规则列表
+     * @param array $interceptRules 追加规则
+     * @return array<string, array<int, array{pattern:string,risk:string}>>
      */
-    public function getXssPatterns(array $customPatterns = [], array $excludePatterns = [], string $mode = 'merge'): array
+    public function getXssPatterns(array $excludeRules = [], array $interceptRules = []): array
     {
         $defaults = $this->loadDataFile('xss');
 
-        if (!empty($excludePatterns)) {
-            $defaults = $this->excludePatternsFromDefaults($defaults, $excludePatterns);
-        }
+        $defaults = $this->applyExclusions($defaults, $excludeRules);
 
-        if ($mode === 'replace') {
-            return $customPatterns;
-        }
-
-        if (empty($customPatterns)) {
-            return $defaults;
-        }
-
-        return $this->mergePatterns($defaults, $customPatterns);
+        return $this->applyInterceptions($defaults, $interceptRules);
     }
 
     /**
      * 获取URL路径攻击模式
      *
-     * @param array $customPatterns 用户自定义模式（来自配置）
-     * @param array $excludePatterns 要排除的模式（来自配置）
-     * @param string $mode 模式策略：'merge' 或 'replace'
-     * @return array<string>
+     * @param array $excludeRules 排除规则列表
+     * @param array $interceptRules 追加规则
+     * @return array<int, array{pattern:string,risk:string}>
      */
-    public function getUrlPathPatterns(array $customPatterns = [], array $excludePatterns = [], string $mode = 'merge'): array
+    public function getUrlPathPatterns(array $excludeRules = [], array $interceptRules = []): array
     {
-        if ($mode === 'replace') {
-            return $customPatterns;
-        }
-
         $defaults = $this->loadDataFile('url_path');
 
-        if (!empty($excludePatterns)) {
-            $defaults = $this->excludeFlatPatternsFromDefaults($defaults, $excludePatterns);
+        // URL路径模式是扁平数组
+        $defaults = $this->applyFlatExclusions($defaults, $excludeRules);
+
+        return $this->applyFlatInterceptions($defaults, $interceptRules);
+    }
+
+    /**
+     * 解析配置中的规则（支持callable）
+     *
+     * @param mixed $config 配置值（数组、闭包、类名、可调用数组）
+     * @return array 解析后的数组
+     */
+    public static function resolveRules(mixed $config): array
+    {
+        return \zxf\Security\Services\ConfigResolver::resolve($config);
+    }
+
+    /**
+     * 应用排除规则到类型分组模式
+     *
+     * @param array<string, array<int, array{pattern:string,risk:string}>> $patterns
+     * @param array<string> $excludeRules
+     * @return array<string, array<int, array{pattern:string,risk:string}>>
+     */
+    protected function applyExclusions(array $patterns, array $excludeRules): array
+    {
+        if (empty($excludeRules)) {
+            return $patterns;
         }
 
-        if (empty($customPatterns)) {
-            return $defaults;
+        $excludeSet = array_flip($excludeRules);
+
+        foreach ($patterns as $type => $typePatterns) {
+            $patterns[$type] = array_values(array_filter(
+                $typePatterns,
+                fn(array $item) => !isset($excludeSet[$item['pattern'] ?? ''])
+            ));
+
+            if (empty($patterns[$type])) {
+                unset($patterns[$type]);
+            }
         }
 
-        return array_merge($defaults, $customPatterns);
+        return $patterns;
+    }
+
+    /**
+     * 应用追加规则到类型分组模式
+     *
+     * 追加规则不区分类型，统一追加到所有类型中作为通配检测。
+     * 实际检测时，intercept_rules 作为独立类型 '_custom_high' / '_custom_medium' / '_custom_low' 处理。
+     *
+     * @param array<string, array<int, array{pattern:string,risk:string}>> $patterns
+     * @param array{high?:array<string>,medium?:array<string>,low?:array<string>} $interceptRules
+     * @return array<string, array<int, array{pattern:string,risk:string}>>
+     */
+    protected function applyInterceptions(array $patterns, array $interceptRules): array
+    {
+        foreach (['high', 'medium', 'low'] as $risk) {
+            $rules = $interceptRules[$risk] ?? [];
+            if (empty($rules)) {
+                continue;
+            }
+
+            $typeKey = '_custom_' . $risk;
+            $customPatterns = [];
+
+            foreach ($rules as $rule) {
+                if (is_string($rule) && !empty($rule)) {
+                    $customPatterns[] = ['pattern' => $rule, 'risk' => $risk];
+                }
+            }
+
+            if (!empty($customPatterns)) {
+                if (isset($patterns[$typeKey])) {
+                    $patterns[$typeKey] = array_merge($patterns[$typeKey], $customPatterns);
+                } else {
+                    $patterns[$typeKey] = $customPatterns;
+                }
+            }
+        }
+
+        return $patterns;
+    }
+
+    /**
+     * 应用排除规则到扁平模式数组
+     *
+     * @param array<int, array{pattern:string,risk:string}> $patterns
+     * @param array<string> $excludeRules
+     * @return array<int, array{pattern:string,risk:string}>
+     */
+    protected function applyFlatExclusions(array $patterns, array $excludeRules): array
+    {
+        if (empty($excludeRules)) {
+            return $patterns;
+        }
+
+        $excludeSet = array_flip($excludeRules);
+
+        return array_values(array_filter(
+            $patterns,
+            fn(array $item) => !isset($excludeSet[$item['pattern'] ?? ''])
+        ));
+    }
+
+    /**
+     * 应用追加规则到扁平模式数组
+     *
+     * @param array<int, array{pattern:string,risk:string}> $patterns
+     * @param array{high?:array<string>,medium?:array<string>,low?:array<string>} $interceptRules
+     * @return array<int, array{pattern:string,risk:string}>
+     */
+    protected function applyFlatInterceptions(array $patterns, array $interceptRules): array
+    {
+        foreach (['high', 'medium', 'low'] as $risk) {
+            $rules = $interceptRules[$risk] ?? [];
+            foreach ($rules as $rule) {
+                if (is_string($rule) && !empty($rule)) {
+                    $patterns[] = ['pattern' => $rule, 'risk' => $risk];
+                }
+            }
+        }
+
+        return $patterns;
     }
 
     /**
      * 获取预过滤关键词
-     *
-     * 用于在正则匹配前快速判断输入是否可能包含攻击特征。
-     * 如果输入不包含任何预过滤关键词，则可以直接跳过该类型的正则检查。
      *
      * @param string $type 模式类型
      * @return array<string>
@@ -232,6 +313,10 @@ class PatternService
      * 使用静态缓存，同一进程中多次访问仅加载一次。
      * 数据文件是纯 PHP 返回数组，不经过 config 缓存机制。
      *
+     * 数据格式：
+     *   类型分组：['type' => [['pattern' => '/.../', 'desc' => '说明', 'risk' => 'high'], ...]]
+     *   扁平数组：[['pattern' => '/.../', 'desc' => '说明', 'risk' => 'high'], ...]
+     *
      * @param string $name 数据文件名（不含路径和扩展名）
      * @return array
      */
@@ -262,101 +347,17 @@ class PatternService
     }
 
     /**
-     * 合并内置模式与用户自定义模式
-     *
-     * 合并策略：
-     * - 用户自定义的类型：追加到内置模式后
-     * - 用户未定义的类型：使用内置模式
-     * - 内置没有但用户定义的类型：使用用户定义
-     *
-     * @param array $defaults 内置默认模式
-     * @param array $custom 用户自定义模式
-     * @return array<string, string[]>
-     */
-    private function mergePatterns(array $defaults, array $custom): array
-    {
-        $merged = $defaults;
-
-        foreach ($custom as $type => $patterns) {
-            if (!is_array($patterns)) {
-                continue;
-            }
-
-            if (isset($merged[$type])) {
-                $merged[$type] = array_merge($merged[$type], $patterns);
-            } else {
-                $merged[$type] = $patterns;
-            }
-        }
-
-        return $merged;
-    }
-
-    /**
-     * 从内置默认模式中排除指定规则（分类型正则）
-     *
-     * 用于 high_risk_patterns 和 xss_patterns 等按类型分组的模式。
-     * 排除匹配采用精确字符串比较，只有完全一致的规则才会被移除。
-     *
-     * @param array $defaults 内置默认模式 ['type' => ['pattern1', 'pattern2', ...]]
-     * @param array $exclude 要排除的模式 ['type' => ['pattern1', ...]]
-     * @return array
-     */
-    private function excludePatternsFromDefaults(array $defaults, array $exclude): array
-    {
-        foreach ($exclude as $type => $patterns) {
-            if (!isset($defaults[$type]) || !is_array($patterns)) {
-                continue;
-            }
-
-            // 构建排除集合（翻转数组为key，O(1)查找）
-            $excludeSet = array_flip($patterns);
-
-            // 过滤掉匹配的规则
-            $defaults[$type] = array_values(array_filter(
-                $defaults[$type],
-                fn(string $pattern) => !isset($excludeSet[$pattern])
-            ));
-
-            // 如果该类型已无规则，移除空类型
-            if (empty($defaults[$type])) {
-                unset($defaults[$type]);
-            }
-        }
-
-        return $defaults;
-    }
-
-    /**
-     * 从内置默认模式中排除指定规则（扁平数组）
-     *
-     * 用于 url_path_patterns 等扁平数组格式的模式。
-     *
-     * @param array $defaults 内置默认模式 ['pattern1', 'pattern2', ...]
-     * @param array $exclude 要排除的模式 ['pattern1', ...]
-     * @return array
-     */
-    private function excludeFlatPatternsFromDefaults(array $defaults, array $exclude): array
-    {
-        if (empty($exclude)) {
-            return $defaults;
-        }
-
-        $excludeSet = array_flip($exclude);
-
-        return array_values(array_filter(
-            $defaults,
-            fn(string $pattern) => !isset($excludeSet[$pattern])
-        ));
-    }
-
-    /**
      * 标准化类型名称
      */
     private function normalizeType(string $type): string
     {
         // 处理 xss_* 前缀的类型
         if (str_starts_with($type, 'xss_')) {
+            return $type;
+        }
+
+        // 处理自定义规则类型
+        if (str_starts_with($type, '_custom_')) {
             return $type;
         }
 

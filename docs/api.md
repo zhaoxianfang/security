@@ -268,8 +268,6 @@ class DatabaseIpChecker implements IpCheckerInterface
 | `SECURITY_RATE_LIMIT_ATTEMPTS` | `rate_limit.max_attempts` | `60` | 速率限制次数 |
 | `SECURITY_RATE_LIMIT_DECAY` | `rate_limit.decay_minutes` | `1` | 速率限制时间窗口 |
 | `SECURITY_SHOW_DETAILS` | `response.show_threat_details` | `false` | 显示详细威胁信息 |
-| `SECURITY_DETECT_URL_PATH` | `detection_layers.url_path` | `true` | URL路径攻击检测 |
-| `SECURITY_DETECT_ENCODING` | `detection_layers.encoding` | `true` | 多重编码检测 |
 | `SECURITY_DETECT_USER_AGENT` | `detection_layers.user_agent` | `true` | User-Agent检查 |
 | `SECURITY_DETECT_HEADERS` | `detection_layers.headers` | `true` | HTTP头检查 |
 | `SECURITY_DETECT_BODY_SIZE` | `detection_layers.body_size` | `true` | 请求体大小检查 |
@@ -375,15 +373,18 @@ class DatabaseIpChecker implements IpCheckerInterface
 
 ## 高级配置
 
-> ⚠️ v5.1+ 内存优化：所有内置正则模式已迁移至延迟加载数据文件（`src/Security/Patterns/data/`），  
-> 配置文件仅保留轻量参数。完整配置说明请参阅 [配置文档](./configuration.md#攻击检测配置)。
+> ⚠️ v6.0+ 内存优化：所有内置正则模式已迁移至延迟加载数据文件（`src/Security/Patterns/data/`），  
+> 配置文件仅保留轻量参数。完整配置说明请参阅 [配置文档](./configuration.md#统一拦截规则管理v60)。
 
 ### URL路径攻击检测配置
 
+URL路径遍历攻击检测已纳入统一规则管理。如需追加自定义路径规则，请使用 `intercept_rules`：
+
 ```php
-'url_path_detection' => [
-    'enabled' => env('SECURITY_URL_PATH_DETECTION', true),
-    'path_patterns' => [],  // v5.1+：默认内置模式自动加载，此处追加自定义模式
+'intercept_rules' => [
+    'high' => [
+        '/\.(php|jsp|sh)(?:[?#&\/]|$)/i',
+    ],
 ],
 ```
 
@@ -391,24 +392,16 @@ class DatabaseIpChecker implements IpCheckerInterface
 
 ```php
 'encoding_detection' => [
-    'enabled' => env('SECURITY_ENCODING_DETECTION', true),
     'percent_threshold' => 0.30,
-    'suspicious_patterns' => [
-        '../', '..\\', '<script', 'javascript:',
-        'onerror=', 'onload=',
-    ],
-    'detect_null_bytes' => true,
-    'detect_utf8_overlong' => true,
+    'suspicious_patterns' => null,  // null = 使用内置默认值
 ],
 ```
 
 ### HTTP方法配置
 
 ```php
-'allowed_http_methods' => [
-    'GET', 'POST', 'PUT', 'PATCH',
-    'DELETE', 'HEAD', 'OPTIONS',
-],
+// null = 使用内置默认值（GET/POST/PUT/PATCH/DELETE/HEAD/OPTIONS）
+'allowed_http_methods' => null,
 ```
 
 ### 威胁风险等级映射

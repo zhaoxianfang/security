@@ -2,8 +2,8 @@
 
 本文档详细介绍中间件检测的各类攻击模式及其防护原理。
 
-> **v5.1+ 架构**：所有内置正则模式已从配置文件迁移至独立数据文件，由 `PatternService` 按需延迟加载，避免 `php artisan optimize` 内存溢出。  
-> 配置文件仅存放用户自定义模式的轻量追加，详见 [配置文档](./configuration.md#攻击检测配置)。
+> **v6.0+ 架构**：所有内置正则模式已从配置文件迁移至独立数据文件，由 `PatternService` 按需延迟加载，避免 `php artisan optimize` 内存溢出。  
+> 使用 `intercept_rules` 按风险等级追加自定义规则，`intercept_rules_exclude` 排除特定规则。详见 [配置文档](./configuration.md#统一拦截规则管理v60)。
 
 ## 防护架构
 
@@ -56,20 +56,18 @@
 
 ### 检测模式
 
+内置模式位于 `src/Security/Patterns/data/high_risk_patterns.php`，按需延迟加载。
+
+如需追加自定义SQL检测规则：
+
 ```php
-'high_risk_patterns' => [
-    'sql' => [
+'intercept_rules' => [
+    'high' => [
         // UNION注入
         '/\bunion\s+all\s+select\b/i',
         
         // 堆叠查询
         '/;\s*(?:drop|truncate|alter)\s+(?:table|database)\b/i',
-        
-        // 时间盲注
-        '/sleep\s*\(\s*\d+/i',
-        '/benchmark\s*\(\s*\d+/i',
-        
-        // ...更多模式
     ],
 ],
 ```
@@ -93,14 +91,15 @@
 
 ### 检测模式
 
+内置模式位于 `src/Security/Patterns/data/high_risk_patterns.php`。
+
+如需追加自定义命令注入规则：
+
 ```php
-'high_risk_patterns' => [
-    'command' => [
+'intercept_rules' => [
+    'high' => [
         // PHP函数 + 危险命令
         '/\b(?:system|exec|shell_exec)\s*\(\s*[\'"\s]*(?:rm|wget|curl|bash)\b/i',
-        
-        // 命令连接符 + 危险命令
-        '/(?:;|\|\||&&)\s*(?:rm|wget|curl|bash)\s+/i',
         
         // 危险协议
         '/\b(?:include|require)\s*\(\s*[\'"]?\s*(?:php|data|expect):/i',
@@ -129,35 +128,18 @@
 
 ### 检测模式（已修复并加强）
 
+内置模式位于 `src/Security/Patterns/data/high_risk_patterns.php` 和 `url_path_patterns.php`。
+
+如需追加自定义路径遍历规则：
+
 ```php
-'high_risk_patterns' => [
-    'path' => [
+'intercept_rules' => [
+    'high' => [
         // 经典路径遍历（至少两个../）
         '/(?:\.\./){2,}/',
 
-        // Windows路径遍历（至少两个..\）
-        '/(?:\.\.\\){2,}/',
-
-        // 混合路径遍历（UNIX/Windows混合）
-        '/\.\.(?:/|\\)\.\.(?:/|\\)/',
-
-        // URL编码的遍历（双重编码）
-        '/%2e%2e%2f/i',
-        '/%252e%252e%252f/i',
-
-        // Unicode规范化攻击
-        '/%c0%af/i',
-        '/%ef%bc%8f/i',
-        '/%e0%80%af/i',
-
         // 敏感文件访问
         '/\/(?:etc|proc|sys|var|home|root|usr\/local)\/(?:passwd|shadow|hosts|id_rsa|\.env|\.git|\.htaccess|config\.php|database\.php)\b/i',
-
-        // 版本控制/配置文件泄露
-        '/\b(?:\.env|\.git\/|\.svn\/|\.htaccess)\b/i',
-
-        // Windows系统目录穿越
-        '/\.\.(?:\/|\\)(?:windows|winnt|system32|system|program files|programdata|inetpub)/i',
     ],
 ],
 ```
@@ -191,10 +173,15 @@
 | JavaScript执行 | `{"$where": "function() {...}"}` | 拦截 |
 | 逻辑绕过 | `{"$or": [{}, {}]}` | 拦截 |
 
+内置模式位于 `src/Security/Patterns/data/high_risk_patterns.php`。
+
+如需追加自定义NoSQL注入规则：
+
 ```php
-'nosql' => [
-    '/\$\s*(?:eq|ne|gt|gte|lt|lte|in|nin|regex|where|or|and)\s*:/i',
-    '/\$where\s*:\s*[\'"]\s*function\s*\(/i',
+'intercept_rules' => [
+    'medium' => [
+        '/\$\s*(?:eq|ne|gt|gte|lt|lte|in|nin|regex|where|or|and)\s*:/i',
+    ],
 ],
 ```
 
@@ -207,10 +194,15 @@
 | Twig/Laravel注入 | `{{ 7*7 \| raw }}` | 拦截 |
 | PHP代码执行 | `{{ $user->shell_exec('id') }}` | 拦截 |
 
+内置模式位于 `src/Security/Patterns/data/high_risk_patterns.php`。
+
+如需追加自定义SSTI规则：
+
 ```php
-'ssti' => [
-    '/\{\{\s*.*\|.*(?:raw|escape|filter)\s*\}\}/i',
-    '/\{\{.*(?:eval|exec|system|shell_exec|passthru).*\}\}/i',
+'intercept_rules' => [
+    'high' => [
+        '/\{\{\s*.*\|.*(?:raw|escape|filter)\s*\}\}/i',
+    ],
 ],
 ```
 
@@ -225,16 +217,18 @@
 | 危险协议 | `?url=gopher://127.0.0.1:6379/_*1` | 拦截 |
 | DNS重绑定 | `?url=http://evil.127.0.0.1.nip.io` | 拦截 |
 
+内置模式位于 `src/Security/Patterns/data/high_risk_patterns.php`。
+
+如需追加自定义SSRF规则：
+
 ```php
-'ssrf' => [
-    // 内网IP
-    '/\b(127\.0\.0\.1|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3})\b/',
-    // 云元数据
-    '/\b(169\.254\.169\.254|metadata\.google\.internal)\b/i',
-    // 危险协议
-    '/\b(gopher|dict|file|ftp|ldap|tftp):\/\//i',
-    // DNS rebinding
-    '/\b(rebind|dnsrebind|nip\.io|xip\.io)\b/i',
+'intercept_rules' => [
+    'high' => [
+        // 额外的内网IP
+        '/\b(127\.0\.0\.1|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3})\b/',
+        // 更多危险协议
+        '/\b(gopher|dict|file|ftp|ldap|tftp):\/\//i',
+    ],
 ],
 ```
 
@@ -281,20 +275,18 @@ XSS防护的最大挑战是区分：
 
 ### 检测策略
 
+内置模式位于 `src/Security/Patterns/data/xss_patterns.php`。
+
+如需追加自定义XSS规则：
+
 ```php
-'xss_patterns' => [
-    'script' => [
-        // 执行性脚本（不在代码块内时触发）
+'intercept_rules' => [
+    'medium' => [
+        // 执行性脚本
         '/<script\b[^>]*>[^<]*(?:alert|eval|document)/i',
-    ],
-    'dom' => [
+        
         // DOM型XSS
         '/\bon\w+\s*=\s*[\'"]?\s*(?:alert|eval|document)/i',
-    ],
-    'tag' => [
-        // 标签注入
-        '/<img\b[^>]*onerror\s*=\s*[\'"]?\s*(?:alert|eval)/i',
-        '/<svg\b[^>]*onload\s*=\s*[\'"]?\s*(?:alert|eval)/i',
     ],
 ],
 ```
@@ -336,19 +328,37 @@ protected function removeMarkdownCodeBlocks(string $content): string
 
 ### 禁止上传的文件类型
 
+默认黑名单在 `DefaultConfig::UPLOAD_BLOCKED_EXTENSIONS` 中定义，涵盖 Web 脚本、Shell 脚本、可执行文件等。
+
+如需完全覆盖默认黑名单：
+
 ```php
-'blocked_extensions' => [
-    // Web脚本（高危）
-    'php', 'php3', 'php4', 'php5', 'phtml', 'phar',
-    'jsp', 'jspx', 'asp', 'aspx', 'ascx',
-    'cfm', 'cfml',
-    
-    // 脚本文件
-    'pl', 'py', 'rb', 'sh', 'bash',
-    'ps1', 'bat', 'vbs', 'js',
-    
-    // 可执行文件
-    'exe', 'dll', 'bin', 'msi',
+'upload' => [
+    'blocked_extensions' => [
+        // Web脚本（高危）
+        'php', 'php3', 'php4', 'php5', 'phtml', 'phar',
+        'jsp', 'jspx', 'asp', 'aspx', 'ascx',
+        
+        // 脚本文件
+        'pl', 'py', 'rb', 'sh', 'bash',
+        'ps1', 'bat', 'vbs', 'js',
+        
+        // 可执行文件
+        'exe', 'dll', 'bin', 'msi',
+    ],
+],
+```
+
+如需追加额外扩展名（保持默认 + 追加），建议使用 callable：
+
+```php
+'upload' => [
+    'blocked_extensions' => function (): array {
+        return array_merge(
+            \zxf\Security\Config\DefaultConfig::UPLOAD_BLOCKED_EXTENSIONS,
+            ['custom_ext']
+        );
+    },
 ],
 ```
 

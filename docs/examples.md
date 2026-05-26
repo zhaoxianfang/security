@@ -443,20 +443,20 @@ class AutoBlockFailedLogins
 
 SSRF（服务器端请求伪造）检测已内置在 `high_risk_patterns.ssrf` 中，开箱即用：
 
-> **v5.1+ 架构**：所有默认正则模式已迁移至独立数据文件（`src/Security/Patterns/data/`），由 `PatternService` 按需延迟加载。  
-> 配置文件中的 `high_risk_patterns` 默认为空数组，仅用于追加用户自定义模式。
+> **v6.0+ 架构**：所有默认正则模式已迁移至独立数据文件（`src/Security/Patterns/data/`），由 `PatternService` 按需延迟加载。  
+> 使用 `intercept_rules` 按风险等级追加自定义规则，`intercept_rules_exclude` 排除特定规则。
 
 ```php
-// 检测类型包括：
+// 内置检测覆盖：
 // - 内网IP访问（127.0.0.1, 10.x, 172.16-31.x, 192.168.x）
 // - 云元数据端点（169.254.169.254, metadata.google.internal）
 // - 危险协议（gopher, dict, file, ftp, ldap, tftp）
 // - DNS rebinding（nip.io, xip.io）
 // - 端口探测
 
-// 自定义SSRF检测规则（追加到内置模式）
-'high_risk_patterns' => [
-    'ssrf' => [
+// 自定义SSRF检测规则（按风险等级追加）
+'intercept_rules' => [
+    'high' => [
         // 添加额外的内网域名
         '/\b(internal|localhost|localdomain)\b/i',
         // 添加更多危险协议

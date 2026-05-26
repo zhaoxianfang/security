@@ -30,14 +30,11 @@ trait DetectsAttackPatterns
      */
     protected function detectUrlPathAttacks(\Illuminate\Http\Request $request): bool
     {
-        $config = $this->config['url_path_detection'] ?? [];
+        $excludeRules = \zxf\Security\Patterns\PatternService::resolveRules($this->config['intercept_rules_exclude'] ?? []);
+        $interceptRules = \zxf\Security\Patterns\PatternService::resolveRules($this->config['intercept_rules'] ?? []);
 
-        // 从 PatternService 获取模式（延迟加载 + 合并用户自定义 + 排除 + 模式策略）
-        $pathPatterns = $this->patternService->getUrlPathPatterns(
-            $config['path_patterns'] ?? [],
-            $config['path_patterns_exclude'] ?? [],
-            $this->config['pattern_mode'] ?? 'merge'
-        );
+        // 从 PatternService 获取模式（延迟加载 + 统一排除/追加规则）
+        $pathPatterns = $this->patternService->getUrlPathPatterns($excludeRules, $interceptRules);
 
         if (empty($pathPatterns)) {
             return false;
@@ -68,9 +65,9 @@ trait DetectsAttackPatterns
                 // 对每个来源字符串截断后再检查，防止超长参数绕过
                 $checkString = $this->truncateInput($checkString);
 
-                foreach ($pathPatterns as $pattern) {
-                    if ($this->safePregMatch($pattern, $checkString)) {
-                        $this->lastMatchedPattern = $pattern;
+                foreach ($pathPatterns as $item) {
+                    if ($this->safePregMatch($item['pattern'], $checkString)) {
+                        $this->lastMatchedPattern = $item['pattern'];
                         $this->lastMatchedContent = mb_substr($checkString, 0, 100);
                         return true;
                     }
@@ -123,12 +120,11 @@ trait DetectsAttackPatterns
      */
     protected function detectHighRiskAttacks(\Illuminate\Http\Request $request): ?string
     {
-        // 从 PatternService 获取模式（延迟加载 + 合并用户自定义 + 排除 + 模式策略）
-        $patterns = $this->patternService->getHighRiskPatterns(
-            $this->config['high_risk_patterns'] ?? [],
-            $this->config['high_risk_patterns_exclude'] ?? [],
-            $this->config['pattern_mode'] ?? 'merge'
-        );
+        $excludeRules = \zxf\Security\Patterns\PatternService::resolveRules($this->config['intercept_rules_exclude'] ?? []);
+        $interceptRules = \zxf\Security\Patterns\PatternService::resolveRules($this->config['intercept_rules'] ?? []);
+
+        // 从 PatternService 获取模式（延迟加载 + 统一排除/追加规则）
+        $patterns = $this->patternService->getHighRiskPatterns($excludeRules, $interceptRules);
 
         if (empty($patterns)) {
             return null;
@@ -216,7 +212,8 @@ trait DetectsAttackPatterns
                 continue;
             }
 
-            foreach ($patterns[$type] as $pattern) {
+            foreach ($patterns[$type] as $item) {
+                $pattern = $item['pattern'];
                 if ($this->safePregMatch($pattern, $input, $matches)) {
                     $this->threats[] = $type;
                     $this->lastMatchedPattern = $pattern;
@@ -485,12 +482,11 @@ trait DetectsAttackPatterns
      */
     protected function detectXssAttacks(\Illuminate\Http\Request $request): ?string
     {
-        // 从 PatternService 获取模式（延迟加载 + 合并用户自定义 + 排除 + 模式策略）
-        $patterns = $this->patternService->getXssPatterns(
-            $this->config['xss_patterns'] ?? [],
-            $this->config['xss_patterns_exclude'] ?? [],
-            $this->config['pattern_mode'] ?? 'merge'
-        );
+        $excludeRules = \zxf\Security\Patterns\PatternService::resolveRules($this->config['intercept_rules_exclude'] ?? []);
+        $interceptRules = \zxf\Security\Patterns\PatternService::resolveRules($this->config['intercept_rules'] ?? []);
+
+        // 从 PatternService 获取模式（延迟加载 + 统一排除/追加规则）
+        $patterns = $this->patternService->getXssPatterns($excludeRules, $interceptRules);
 
         if (empty($patterns)) {
             return null;
@@ -559,7 +555,8 @@ trait DetectsAttackPatterns
                 continue;
             }
 
-            foreach ($typePatterns as $pattern) {
+            foreach ($typePatterns as $item) {
+                $pattern = $item['pattern'];
                 if ($this->safePregMatch($pattern, $input, $matches)) {
                     // Markdown 智能识别旁路：仅在明确开启时生效
                     if ($smartDetection && $allowScriptInMarkdown) {
@@ -643,7 +640,8 @@ trait DetectsAttackPatterns
                         continue;
                     }
 
-                    foreach ($patterns[$type] as $pattern) {
+                    foreach ($patterns[$type] as $item) {
+                        $pattern = $item['pattern'];
                         if ($this->safePregMatch($pattern, $candidate, $matches)) {
                             $threatType = 'xss_' . $type;
                             $this->threats[] = $threatType;

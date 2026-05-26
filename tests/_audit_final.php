@@ -1,9 +1,15 @@
 <?php
-/** 最终审计验证 — 使用实际加载的模式 */
+/** 最终审计验证 — 使用实际加载的模式 (v6.0) */
 if (!function_exists('env')) { function env($k,$d=null){return $d;} }
 if (!function_exists('config_path')) { function config_path($p=''){return __DIR__.'/../config/'.$p;} }
 require_once dirname(__DIR__).'/vendor/autoload.php';
 use zxf\Security\Patterns\PatternService;
+
+function extractPat($item) {
+    if(is_string($item)) return $item;
+    if(is_array($item) && isset($item['pattern'])) return $item['pattern'];
+    return null;
+}
 
 $ps = new PatternService();
 $hr = $ps->getHighRiskPatterns();
@@ -18,7 +24,8 @@ function test($name, $patterns, $input, $type = null) {
     
     foreach ($patterns as $t => $pts) {
         foreach ($pts as $p) {
-            if (@preg_match($p, $input)) { $ok++; echo "  ✅ $name\n"; return; }
+            $pat = is_string($p) ? $p : (is_array($p) && isset($p['pattern']) ? $p['pattern'] : null);
+            if ($pat && @preg_match($pat, $input)) { $ok++; echo "  ✅ $name\n"; return; }
         }
     }
     $fail++; echo "  ❌ $name\n";

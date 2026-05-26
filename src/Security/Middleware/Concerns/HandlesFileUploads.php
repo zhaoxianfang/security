@@ -31,24 +31,9 @@ trait HandlesFileUploads
             return false;
         }
 
-        $blockedExtensions = $upload['blocked_extensions'] ?? [];
+        $blockedExtensions = \zxf\Security\Config\DefaultConfig::getBlockedExtensions($this->config);
         $maxSize = $upload['max_size'] ?? 10 * 1024 * 1024;
         $checkMimeMagic = $upload['check_mime_magic'] ?? false;
-
-        // 支持从黑名单中排除特定扩展名（精确字符串匹配）
-        $excludeExtensions = array_flip($upload['blocked_extensions_exclude'] ?? []);
-        if (!empty($excludeExtensions)) {
-            $blockedExtensions = array_values(array_filter(
-                $blockedExtensions,
-                fn(string $ext) => !isset($excludeExtensions[$ext])
-            ));
-        }
-
-        // 支持追加自定义黑名单扩展名
-        $addExtensions = $upload['blocked_extensions_add'] ?? [];
-        if (!empty($addExtensions)) {
-            $blockedExtensions = array_merge($blockedExtensions, $addExtensions);
-        }
 
         foreach ($files as $file) {
             $fileList = is_array($file) ? $file : [$file];
@@ -95,7 +80,7 @@ trait HandlesFileUploads
         }
 
         // 从配置获取允许的MIME类型映射
-        $allowedExtensions = $this->config['upload']['allowed_extensions'] ?? [];
+        $allowedExtensions = \zxf\Security\Config\DefaultConfig::getAllowedExtensions($this->config);
         $mimeMap = $this->config['upload']['mime_magic_map'] ?? \zxf\Security\ThreatData::getMimeMagicMap();
 
         // 如果扩展名不在允许列表中，跳过 magic bytes 检查（扩展名检查会处理）

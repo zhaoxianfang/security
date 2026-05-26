@@ -3,6 +3,7 @@
 namespace zxf\Security\Middleware\Concerns;
 
 use zxf\Security\Services\IpMatcherService;
+use zxf\Security\Services\ConfigResolver;
 
 /**
  * 访问控制检查
@@ -11,7 +12,7 @@ use zxf\Security\Services\IpMatcherService;
  * 这些检查是安全防护的第一道防线，发生在攻击检测之前。
  *
  * @package zxf\Security\Middleware\Concerns
- * @since 5.4.0
+ * @since 6.0.0
  */
 trait HandlesAccessControl
 {
@@ -63,7 +64,7 @@ trait HandlesAccessControl
     /**
      * 检查IP是否在白名单中
      *
-     * 支持多种格式：静态IP、CIDR、闭包、类
+     * 支持多种格式：静态IP、CIDR、闭包、类名、可调用数组
      *
      * @param string $ip 要检查的IP地址
      * @param \Illuminate\Http\Request $request HTTP请求对象
@@ -71,19 +72,23 @@ trait HandlesAccessControl
      */
     protected function isWhitelisted(string $ip, \Illuminate\Http\Request $request): bool
     {
-        // 合并用户配置的白名单和系统信任的内网IP
-        $whitelist = array_merge(
-            $this->config['whitelist'] ?? [],
-            $this->config['trusted_ips'] ?? []
-        );
+        // 解析 whitelist 和 trusted_ips（支持callable配置）
+        $whitelist = ConfigResolver::resolve($this->config['whitelist'] ?? []);
+        $trusted = ConfigResolver::resolve($this->config['trusted_ips'] ?? []);
 
-        return $this->ipMatcher->matches($ip, $whitelist, $request);
+        $merged = array_merge($whitelist, $trusted);
+
+        if (empty($merged)) {
+            return false;
+        }
+
+        return $this->ipMatcher->matches($ip, $merged, $request);
     }
 
     /**
      * 检查IP是否在黑名单中
      *
-     * 支持多种格式：静态IP、CIDR、闭包、类
+     * 支持多种格式：静态IP、CIDR、闭包、类名、可调用数组
      *
      * @param string $ip 要检查的IP地址
      * @param \Illuminate\Http\Request $request HTTP请求对象
@@ -91,7 +96,11 @@ trait HandlesAccessControl
      */
     protected function isBlacklisted(string $ip, \Illuminate\Http\Request $request): bool
     {
-        $blacklist = $this->config['blacklist'] ?? [];
+        $blacklist = ConfigResolver::resolve($this->config['blacklist'] ?? []);
+
+        if (empty($blacklist)) {
+            return false;
+        }
 
         return $this->ipMatcher->matches($ip, $blacklist, $request);
     }

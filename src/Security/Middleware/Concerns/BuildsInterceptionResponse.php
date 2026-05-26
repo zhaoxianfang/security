@@ -88,7 +88,7 @@ trait BuildsInterceptionResponse
             return $defaultMessage;
         }
 
-        $messages = $this->config['response']['messages'] ?? [];
+        $messages = \zxf\Security\Config\DefaultConfig::getResponseMessages($this->config);
 
         return $messages[$threatType] ?? ThreatData::getBlockMessage($threatType, $defaultMessage);
     }

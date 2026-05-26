@@ -1,18 +1,37 @@
 <?php
-/** 综合测试：正则语法 + 总覆盖率 + 配置可达性 */
+/** 综合测试：正则语法 + 总覆盖率 + 配置可达性 (v6.0) */
 if(!function_exists('env')){function env($k,$d=null){return $d;}}
 if(!function_exists('config_path')){function config_path($p=''){return __DIR__.'/../config/'.$p;}}
 require_once dirname(__DIR__).'/vendor/autoload.php';
 use zxf\Security\Patterns\PatternService;
 $ps=new PatternService;
 
+/** 提取 pattern 字符串（适配 v6.0 元数据数组格式） */
+function extractPattern($item): ?string {
+    if(is_string($item)) return $item;
+    if(is_array($item) && isset($item['pattern'])) return $item['pattern'];
+    return null;
+}
+
 echo "═══ [1] 正则语法检查 ═══\n";
 $total=0;$invalid=0;
 foreach(['high_risk'=>'getHighRiskPatterns','xss'=>'getXssPatterns','url_path'=>'getUrlPathPatterns'] as $n=>$m){
     $p=$ps->$m();
     foreach($p as $k=>$v){
-        if(is_array($v)) foreach($v as $r) { $total++; if(@preg_match($r,'')===false){echo"  ❌ $n/$k: $r\n";$invalid++;} }
-        else { $total++; if(@preg_match($v,'')===false){echo"  ❌ $n: $v\n";$invalid++;} }
+        if(is_array($v) && isset($v['pattern'])){
+            $r = extractPattern($v);
+            if($r){ $total++; if(@preg_match($r,'')===false){echo"  ❌ $n/$k: $r\n";$invalid++;} }
+        }
+        elseif(is_array($v)){
+            foreach($v as $r) {
+                $pat = extractPattern($r);
+                if($pat){ $total++; if(@preg_match($pat,'')===false){echo"  ❌ $n/$k: $pat\n";$invalid++;} }
+            }
+        }
+        else {
+            $r = extractPattern($v);
+            if($r){ $total++; if(@preg_match($r,'')===false){echo"  ❌ $n: $r\n";$invalid++;} }
+        }
     }
 }
 echo "  总计 $total 条 -> 有效 ".($total-$invalid).", 无效 $invalid\n";
@@ -72,7 +91,7 @@ $tests=[
     'path:wp-admin'=>['path','/wp-admin/admin.php'],
     'path:.php ext'=>['path','/shell.php'],
 
-    'ldap:*)(*'=>['ldap','*)(*'],
+    'ldap:*)('=>['ldap','*)(*'],
     'ldap:)(|('=>['ldap',')(|('],
     'ldap:)(&('=>['ldap',')(&('],
 
@@ -131,9 +150,35 @@ $tests=[
 
 $miss=0;$ok=0;
 foreach($tests as [$type,$payload]){
-    if($type==='url_path'){$pts=$ps->getUrlPathPatterns();$found=false;foreach($pts as $r)if(@preg_match($r,$payload)){$found=true;break;}}
-    elseif($type==='xss'){$pts=$ps->getXssPatterns();$found=false;foreach($pts as $t=>$rs)foreach($rs as $r)if(@preg_match($r,$payload)){echo"  ✅ $type/$t";$found=true;break 2;}if(!$found)echo"  ❌ $type";}
-    else{$pts=$ps->getHighRiskPatterns();$found=isset($pts[$type])&&(function()use($pts,$type,$payload){foreach($pts[$type] as $r)if(@preg_match($r,$payload))return true;return false;})();}
+    if($type==='url_path'){
+        $pts=$ps->getUrlPathPatterns();
+        $found=false;
+        foreach($pts as $item){
+            $r=extractPattern($item);
+            if($r && @preg_match($r,$payload)){$found=true;break;}
+        }
+    }
+    elseif($type==='xss'){
+        $pts=$ps->getXssPatterns();
+        $found=false;
+        foreach($pts as $t=>$rs){
+            foreach($rs as $item){
+                $r=extractPattern($item);
+                if($r && @preg_match($r,$payload)){echo"  ✅ $type/$t";$found=true;break 2;}
+            }
+        }
+        if(!$found)echo"  ❌ $type";
+    }
+    else{
+        $pts=$ps->getHighRiskPatterns();
+        $found=false;
+        if(isset($pts[$type])){
+            foreach($pts[$type] as $item){
+                $r=extractPattern($item);
+                if($r && @preg_match($r,$payload)){$found=true;break;}
+            }
+        }
+    }
     
     if($found){$ok++;echo"  ✅ $type:$payload\n";}else{$miss++;echo"  ❌ $type:$payload\n";}
 }
@@ -141,13 +186,38 @@ foreach($tests as [$type,$payload]){
 echo "\n═══ [3] 配置项可达性 ═══\n";
 $cfg=require dirname(__DIR__).'/config/security.php';
 $items=['enabled','log_enabled','log_level','log_full_request','detection_layers','trusted_ips',
-'blacklist','whitelist','pattern_mode','high_risk_patterns','high_risk_patterns_exclude',
-'xss_patterns','xss_patterns_exclude','upload','max_url_length','max_body_size',
-'user_agent_blacklist','user_agent_blacklist_exclude','headers','excluded_routes',
-'before_block_callback','response','markdown','url_path_detection','encoding_detection',
-'rate_limit','allowed_http_methods','input_processing','threat_risk_levels'];
+'blacklist','whitelist','intercept_rules','intercept_rules_exclude','upload','max_url_length','max_body_size',
+'user_agent_blacklist','headers','excluded_routes','before_block_callback','response','markdown',
+'encoding_detection','rate_limit','allowed_http_methods','input_processing','threat_risk_levels'];
 $cfgOk=0;
 foreach($items as $k){$exists=array_key_exists($k,$cfg);$exists?$cfgOk++:0;echo'  '.($exists?'✅':'❌')." $k\n";}
+
+echo "\n═══ [4] v6.0 统一规则优先级测试 ═══\n";
+// 测试 intercept_rules_exclude > intercept_rules > built-in
+$excludeRules = ['/\b1\s*=\s*1\b/i'];
+$interceptRules = ['high' => ['/my_custom_pattern/i']];
+
+$ptsWithExclude = $ps->getHighRiskPatterns($excludeRules, []);
+$foundExcluded = false;
+if(isset($ptsWithExclude['sql'])){
+    foreach($ptsWithExclude['sql'] as $item){
+        $r=extractPattern($item);
+        if($r==='/\b1\s*=\s*1\b/i'){$foundExcluded=true;break;}
+    }
+}
+echo '  '.($foundExcluded?'❌ 排除规则未生效':'✅ 排除规则生效')."\n";
+
+$ptsWithIntercept = $ps->getHighRiskPatterns([], $interceptRules);
+$foundCustom = false;
+foreach($ptsWithIntercept as $type=>$items){
+    if(str_starts_with($type,'_custom')){
+        foreach($items as $item){
+            $r=extractPattern($item);
+            if($r==='/my_custom_pattern/i'){$foundCustom=true;break 2;}
+        }
+    }
+}
+echo '  '.($foundCustom?'✅ 追加规则生效':'❌ 追加规则未生效')."\n";
 
 echo "\n═══ 总结 ═══\n";
 echo "正则: ".$total." 有效 / $invalid 无效\n";

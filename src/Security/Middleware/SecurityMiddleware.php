@@ -162,7 +162,8 @@ class SecurityMiddleware
                         'url_path' => true, 'encoding' => true,
                         'high_risk' => true, 'xss' => true,
                     ],
-                    'trusted_ips' => ['127.0.0.1', '::1'],
+                    'trusted_ips' => [],
+                    'whitelist' => [],
                 ];
             }
         }

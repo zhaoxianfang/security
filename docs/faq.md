@@ -248,7 +248,7 @@ class CustomSecurityMiddleware extends BaseMiddleware
 
 ### Q: 如何避免 `php artisan optimize` 内存溢出？
 
-v5.1+ 版本已解决此问题。所有内置正则模式从 `config/security.php` 迁移到了独立的延迟加载数据文件：
+v6.0+ 版本已解决此问题。所有内置正则模式从 `config/security.php` 迁移到了独立的延迟加载数据文件：
 
 - `src/Security/Patterns/data/high_risk_patterns.php` — 高危攻击检测模式
 - `src/Security/Patterns/data/xss_patterns.php` — XSS 攻击检测模式
@@ -256,9 +256,14 @@ v5.1+ 版本已解决此问题。所有内置正则模式从 `config/security.ph
 
 这些数据文件**不会**在 `php artisan optimize` 时加载，仅在运行时由 `PatternService` 按需加载，并支持进程级静态缓存，避免每个请求重复读取文件。
 
-**配置变化：**
+**配置变化（v6.0）：**
 
-`config/security.php` 中的 `high_risk_patterns`、`xss_patterns` 和 `url_path_detection.path_patterns` 现默认为**空数组**，仅用于存放用户自定义的追加模式。内置默认模式由 `PatternService` 自动加载并合并。
+v6.0 将原先分散的 `high_risk_patterns`、`xss_patterns`、`url_path_detection.path_patterns` 及各自的 `*_exclude`、`*_add` 配置，合并为两个统一配置项：
+
+- `intercept_rules` — 按风险等级（high / medium / low）追加自定义正则规则
+- `intercept_rules_exclude` — 全局排除列表（精确字符串匹配正则表达式）
+
+内置默认模式由 `PatternService` 自动加载并合并。
 
 **预过滤优化：**
 
@@ -277,18 +282,14 @@ v5.1+ 版本已解决此问题。所有内置正则模式从 `config/security.ph
 
 ### Q: 可以关闭某些检测项吗？
 
-可以，移除对应配置即可：
+可以，通过 `detection_layers` 关闭对应检测层：
 
 ```php
-// 关闭SQL检测
-'high_risk_patterns' => [
-    // 'sql' => [...],  // 删除或注释此行
-    'command' => [...],
-    'path' => [...],
+'detection_layers' => [
+    'high_risk' => false,  // 关闭高危攻击检测（SQL/命令/SSRF等）
+    'xss'       => false,  // 关闭XSS攻击检测
+    'url_path'  => false,  // 关闭URL路径攻击检测
 ],
-
-// 关闭XSS检测
-'xss_patterns' => [],
 ```
 
 ## 拦截回调 FAQ

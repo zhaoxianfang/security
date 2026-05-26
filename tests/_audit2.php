@@ -1,7 +1,13 @@
 <?php
-/** 审计 Part 2: Word Boundary Bug + NoSQL 专项 */
+/** 审计 Part 2: Word Boundary Bug + NoSQL 专项 (v6.0) */
 if (!function_exists('env')) { function env($k,$d=null){return $d;} }
 if (!function_exists('config_path')) { function config_path($p=''){return __DIR__.'/../config/'.$p;} }
+
+function extractPat($item) {
+    if(is_string($item)) return $item;
+    if(is_array($item) && isset($item['pattern'])) return $item['pattern'];
+    return null;
+}
 
 require_once dirname(__DIR__).'/vendor/autoload.php';
 use zxf\Security\Patterns\PatternService;
@@ -29,15 +35,12 @@ foreach ($bugPatterns as $label => [$pattern, $test]) {
     $matchAlone = @preg_match($pattern, "/$test");
     echo "  " . ($matchInPath||$matchAlone ? '✅' : '❌') . " $label | /path/$test: " . ($matchInPath?'MATCH':'MISS') . " | /$test: " . ($matchAlone?'MATCH':'MISS') . "\n";
 
-    // Check: does removing \b fix it?
     if (!$matchInPath && !$matchAlone) {
-        $fixed = preg_replace(['/\\\\b(?!\w)/','/(?<!\w)\\\\b/','/\b\\\\b\b/'], '', $pattern);
-        $fixed = str_replace('\b', '', $fixed);
+        $fixed = str_replace('\b', '', $pattern);
         $matchFixed = @preg_match($fixed, "/path/$test");
-        echo "     → 去掉 \\b 后: " . ($matchFixed?'✅ MATCH':'❌ 仍不匹配') . "\n";
+        echo "     → 去掉 \b 后: " . ($matchFixed?'✅ MATCH':'❌ 仍不匹配') . "\n";
     }
 
-    // Also test high_risk path pattern L87
     if ($label === 'hr path L88') {
         $test2 = "/etc/passwd";
         $p2 = '/\/(etc|proc|sys|var|home|root|usr\/local)\/(passwd|shadow|hosts|id_rsa|authorized_keys|\.env|\.git|\.htaccess|config\.php|database\.php)\b/i';
@@ -47,9 +50,8 @@ foreach ($bugPatterns as $label => [$pattern, $test]) {
 
 echo "\n═══ [2] NoSQL 正则深度分析 ═══\n";
 echo "NoSQL 正则:\n";
-foreach ($hr['nosql']??[] as $i=>$p) echo "  #$i: $p\n";
+foreach ($hr['nosql']??[] as $i=>$p) { $pat=extractPat($p); echo "  #$i: $pat\n"; }
 
-// 关键：单引号防 PHP 变量插值
 $nosqlTests = [
     ['{"$eq":"admin"}','$eq'],
     ['{"$ne":null}','$ne'],
@@ -72,7 +74,7 @@ echo "\n预过滤+正则匹配测试:\n";
 foreach ($nosqlTests as [$p,$name]) {
     $pf = $ps->preFilter('nosql', $p);
     $rx = false;
-    foreach ($hr['nosql']??[] as $ptn) if (@preg_match($ptn, $p)) { $rx = true; break; }
+    foreach ($hr['nosql']??[] as $ptn) { $pat=extractPat($ptn); if($pat && @preg_match($pat, $p)) { $rx = true; break; } }
     echo "  " . ($pf?'PF✅':'PF❌') . ' ' . ($rx?'RX✅':'RX❌') . " $name\n";
 }
 
@@ -112,7 +114,7 @@ foreach ($edge as $type => $cases) {
     echo "\n--- $type ---\n";
     foreach ($cases as [$p,$d]) {
         $rx = false;
-        foreach ($hr[$type]??[] as $ptn) if (@preg_match($ptn, $p)) { $rx = true; break; }
+        foreach ($hr[$type]??[] as $ptn) { $pat=extractPat($ptn); if($pat && @preg_match($pat, $p)) { $rx = true; break; } }
         echo '  ' . ($rx?'✅':'❌') . " $d | $p\n";
     }
 }
@@ -142,7 +144,7 @@ foreach ($more as $type => $cases) {
     echo "\n--- $type ---\n";
     foreach ($cases as [$p,$d]) {
         $rx = false;
-        foreach ($hr[$type]??[] as $ptn) if (@preg_match($ptn, $p)) { $rx = true; break; }
+        foreach ($hr[$type]??[] as $ptn) { $pat=extractPat($ptn); if($pat && @preg_match($pat, $p)) { $rx = true; break; } }
         echo '  ' . ($rx?'✅':'❌') . " $d\n";
         if (!$rx) echo "     payload: $p\n";
     }
@@ -159,7 +161,7 @@ $domTests = [
 ];
 foreach ($domTests as [$p,$d]) {
     $rx = false;
-    foreach ($xss['dom']??[] as $ptn) if (@preg_match($ptn, $p)) { $rx = true; break; }
+    foreach ($xss['dom']??[] as $ptn) { $pat=extractPat($ptn); if($pat && @preg_match($pat, $p)) { $rx = true; break; } }
     echo '  ' . ($rx?'✅':'❌') . " $d\n";
 }
 echo "\n✅ Part 2 审计完成\n";
