@@ -1,56 +1,55 @@
 {
-  "name": "zxf/security",
-  "description": "Laravel 安全中间件 - 简洁、无缓存、低误报的请求拦截包",
-  "type": "library",
-  "keywords": ["security", "ip", "zxf", "laravel", "middleware", "protection", "firewall"],
-  "license": "MIT",
-  "authors": [
-    {
-      "name": "zxf",
-      "email": "zxf@example.com",
-      "homepage": "https://yoc.cn"
-    }
-  ],
-  "require": {
-    "php": ">=8.2",
-    "laravel/framework": ">=11.0"
-  },
-  "require-dev": {
-    "phpunit/phpunit": ">=10.0",
-    "orchestra/testbench": ">=9.0"
-  },
-  "suggest": {
-    "ext-pcre": "Required for regex-based attack pattern detection (typically bundled with PHP)"
-  },
-  "autoload": {
-    "psr-4": {
-      "zxf\\Security\\": "src/Security/"
+    "name": "zxf/security",
+    "description": "Laravel 安全中间件 - 简洁、无缓存、低误报的请求拦截包",
+    "type": "library",
+    "keywords": [
+        "security",
+        "ip",
+        "zxf",
+        "laravel",
+        "middleware",
+        "protection",
+        "firewall"
+    ],
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "zxf",
+            "email": "zxf@example.com",
+            "homepage": "https://yoc.cn"
+        }
+    ],
+    "require": {
+        "php": ">=8.2"
     },
-    "files": [
-      "src/helpers.php"
-    ]
-  },
-  "autoload-dev": {
-    "psr-4": {
-      "zxf\\Security\\Tests\\": "tests/"
-    }
-  },
-  "extra": {
-    "laravel": {
-      "providers": [
-        "zxf\\Security\\Providers\\SecurityServiceProvider"
-      ]
-    }
-  },
-  "config": {
-    "sort-packages": true,
-    "optimize-autoloader": true
-  },
-  "minimum-stability": "stable",
-  "prefer-stable": true,
-  "scripts": {
-    "post-autoload-dump": [
-      "@php -r \"if(file_exists('vendor/autoload.php')) include 'vendor/autoload.php'; if(class_exists('Illuminate\\\\Foundation\\\\Application')) { \\Illuminate\\Foundation\\Application::getInstance(); }\""
-    ]
-  }
+    "suggest": {
+        "ext-pcre": "Required for regex-based attack pattern detection (typically bundled with PHP)"
+    },
+    "autoload": {
+        "psr-4": {
+            "zxf\\Security\\": "src/Security/"
+        },
+        "files": [
+            "src/helpers.php"
+        ]
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "zxf\\Security\\Tests\\": "tests/"
+        }
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "zxf\\Security\\Providers\\SecurityServiceProvider"
+            ]
+        }
+    },
+    "config": {
+        "sort-packages": true,
+        "optimize-autoloader": true
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true,
+    "scripts": {}
 }
