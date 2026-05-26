@@ -168,6 +168,12 @@ class PatternService
             return $patterns;
         }
 
+        // 防御：过滤非字符串值，防止 array_flip 抛出 TypeError
+        $excludeRules = array_values(array_filter($excludeRules, 'is_string'));
+        if (empty($excludeRules)) {
+            return $patterns;
+        }
+
         $excludeSet = array_flip($excludeRules);
 
         foreach ($patterns as $type => $typePatterns) {
@@ -232,6 +238,12 @@ class PatternService
      */
     protected function applyFlatExclusions(array $patterns, array $excludeRules): array
     {
+        if (empty($excludeRules)) {
+            return $patterns;
+        }
+
+        // 防御：过滤非字符串值，防止 array_flip 抛出 TypeError
+        $excludeRules = array_values(array_filter($excludeRules, 'is_string'));
         if (empty($excludeRules)) {
             return $patterns;
         }

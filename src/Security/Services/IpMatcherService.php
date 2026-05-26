@@ -64,7 +64,7 @@ class IpMatcherService
 
         // 4. 类名字符串（自动实例化）
         if (is_string($item) && class_exists($item)) {
-            $instance = app($item);
+            $instance = function_exists('app') ? app($item) : new $item();
             if ($instance instanceof IpCheckerInterface) {
                 return $instance->check($ip, $request);
             }
@@ -76,7 +76,8 @@ class IpMatcherService
 
         // 5. 可调用数组 [类名, 方法名]
         if (is_array($item) && count($item) === 2) {
-            $result = app($item[0])->{$item[1]}($ip, $request);
+            $instance = function_exists('app') ? app($item[0]) : new $item[0]();
+            $result = $instance->{$item[1]}($ip, $request);
             return $result === true;
         }
 
@@ -142,6 +143,10 @@ class IpMatcherService
      */
     protected function cidrMatchIPv4(string $ip, string $subnet, int $bits): bool
     {
+        if ($bits < 0 || $bits > 32) {
+            return false;
+        }
+
         $ipLong = ip2long($ip);
         $subnetLong = ip2long($subnet);
 
@@ -167,6 +172,10 @@ class IpMatcherService
      */
     protected function cidrMatchIPv6(string $ip, string $subnet, int $bits): bool
     {
+        if ($bits < 0 || $bits > 128) {
+            return false;
+        }
+
         $ipBin = inet_pton($ip);
         $subnetBin = inet_pton($subnet);
 

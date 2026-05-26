@@ -55,8 +55,8 @@ trait BuildsInterceptionResponse
         // 安全响应头
         $securityHeaders = ThreatData::getResponseHeaders();
 
-        // JSON 响应
-        if ($request->expectsJson() || $request->is('api/*') || $request->ajax()) {
+        // JSON 响应（CLI 模式或 API 请求优先返回 JSON）
+        if ($request->expectsJson() || $request->is('api/*') || $request->ajax() || $this->isCliMode()) {
             return response()->json($interceptionData, $status)
                 ->withHeaders($securityHeaders);
         }
@@ -70,8 +70,20 @@ trait BuildsInterceptionResponse
         }
 
         // 使用默认的安全拦截视图 security::error
-        return response()->view('security::error', $interceptionData, $status)
-            ->withHeaders($securityHeaders);
+        // CLI 或视图未注册时降级为 JSON 响应，避免抛出 View 异常终止进程
+        try {
+            return response()->view('security::error', $interceptionData, $status)
+                ->withHeaders($securityHeaders);
+        } catch (\Throwable $e) {
+            if ($this->config['log_enabled'] ?? true) {
+                Log::warning('[Security] 默认拦截视图渲染失败，已降级为 JSON 响应', [
+                    'exception' => $e->getMessage(),
+                    'request_id' => $this->requestId ?? '',
+                ]);
+            }
+            return response()->json($interceptionData, $status)
+                ->withHeaders($securityHeaders);
+        }
     }
 
     /**
@@ -164,8 +176,8 @@ trait BuildsInterceptionResponse
         $data['request'] = [
             'url' => $request->fullUrl(),
             'method' => $request->method(),
-            'ip' => $request->ip(),
-            'user_agent' => $request->userAgent(),
+            'ip' => $request->ip() ?? 'unknown',
+            'user_agent' => $request->userAgent() ?? '',
         ];
 
         // 威胁信息（始终包含基础信息）
@@ -221,14 +233,14 @@ trait BuildsInterceptionResponse
 
             // 2. 可调用数组 [类名, 方法名]
             if (is_array($viewConfig) && count($viewConfig) === 2) {
-                $instance = app($viewConfig[0]);
+                $instance = function_exists('app') ? app($viewConfig[0]) : new $viewConfig[0]();
                 $result = $instance->{$viewConfig[1]}($data);
                 return $this->normalizeViewResponse($result, $status);
             }
 
             // 3. 类名字符串（自动实例化并调用 __invoke）
             if (is_string($viewConfig) && class_exists($viewConfig)) {
-                $instance = app($viewConfig);
+                $instance = function_exists('app') ? app($viewConfig) : new $viewConfig();
                 $result = $instance($data);
                 return $this->normalizeViewResponse($result, $status);
             }
@@ -330,7 +342,7 @@ trait BuildsInterceptionResponse
     protected function executeCallback(mixed $callback, InterceptionContext $context): mixed
     {
         if (is_string($callback) && class_exists($callback)) {
-            $instance = app($callback);
+            $instance = function_exists('app') ? app($callback) : new $callback();
             return $instance($context);
         }
 
@@ -359,7 +371,7 @@ trait BuildsInterceptionResponse
         $requestData = [
             'query_keys' => array_keys($request->query()),
             'post_keys' => array_keys($request->post()),
-            'content_type' => $request->header('Content-Type'),
+            'content_type' => $request->header('Content-Type') ?? '',
         ];
 
         return new InterceptionContext(
@@ -392,39 +404,45 @@ trait BuildsInterceptionResponse
             return;
         }
 
-        $logLevel = $this->config['log_level'] ?? 'warning';
-        $logFullRequest = $this->config['log_full_request'] ?? false;
+        try {
+            $logLevel = $this->config['log_level'] ?? 'warning';
+            $logFullRequest = $this->config['log_full_request'] ?? false;
 
-        $logData = [
-            'type' => $type,
-            'ip' => $request->ip(),
-            'method' => $request->method(),
-            'url' => $request->fullUrl(),
-            'user_agent' => $request->userAgent(),
-            'details' => $details,
-            'threat_type' => $this->currentThreatType,
-            'threat_type_text' => isset($this->context) ? $this->context->getThreatTypeDescription() : '未知威胁',
-            'risk_level' => $this->getRiskLevel($type),
-            'request_id' => $this->requestId,
-            'timestamp' => now()->toIso8601String(),
-        ];
+            $logData = [
+                'type' => $type,
+                'ip' => $request->ip() ?? 'unknown',
+                'method' => $request->method(),
+                'url' => $request->fullUrl(),
+                'user_agent' => $request->userAgent() ?? '',
+                'details' => $details,
+                'threat_type' => $this->currentThreatType,
+                'threat_type_text' => isset($this->context) ? $this->context->getThreatTypeDescription() : '未知威胁',
+                'risk_level' => $this->getRiskLevel($type),
+                'request_id' => $this->requestId,
+                'timestamp' => now()->toIso8601String(),
+            ];
 
-        // 如果开启完整请求记录，添加更多数据
-        if ($logFullRequest) {
-            $logData['headers'] = $request->headers->all();
-            $logData['query'] = $request->query();
-            $logData['body'] = $request->except(['password', 'token', 'secret']);
-            $logData['matched_pattern'] = $this->lastMatchedPattern;
-            $logData['matched_content'] = $this->lastMatchedContent;
+            // 如果开启完整请求记录，添加更多数据
+            if ($logFullRequest) {
+                $logData['headers'] = $request->headers->all();
+                $logData['query'] = $request->query();
+                $logData['body'] = $request->except(['password', 'token', 'secret']);
+                $logData['matched_pattern'] = $this->lastMatchedPattern;
+                $logData['matched_content'] = $this->lastMatchedContent;
+            }
+
+            // 根据日志级别使用不同的日志方法
+            match ($logLevel) {
+                'debug' => Log::debug('[Security] 安全威胁检测', $logData),
+                'info' => Log::info('[Security] 安全威胁检测', $logData),
+                'error' => Log::error('[Security] 安全威胁检测', $logData),
+                'critical' => Log::critical('[Security] 安全威胁检测', $logData),
+                default => Log::warning('[Security] 安全威胁检测', $logData),
+            };
+        } catch (\Throwable) {
+            // 日志系统异常（如磁盘满、驱动不可用）时不应阻断正常流程。
+            // CLI 模式下尤其关键：artisan 命令、队列任务不能因日志失败而崩溃。
+            // 静默降级，已在其他地方抛出异常或拦截则无需重复处理。
         }
-
-        // 根据日志级别使用不同的日志方法
-        match ($logLevel) {
-            'debug' => Log::debug('[Security] 安全威胁检测', $logData),
-            'info' => Log::info('[Security] 安全威胁检测', $logData),
-            'error' => Log::error('[Security] 安全威胁检测', $logData),
-            'critical' => Log::critical('[Security] 安全威胁检测', $logData),
-            default => Log::warning('[Security] 安全威胁检测', $logData),
-        };
     }
 }

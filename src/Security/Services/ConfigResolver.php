@@ -55,7 +55,7 @@ class ConfigResolver
 
         // 5. 类名字符串
         if (is_string($config) && class_exists($config)) {
-            $instance = app($config);
+            $instance = function_exists('app') ? app($config) : new $config();
 
             // 5a. 优先尝试约定方法（getItems / getConfig / resolve / toArray / all）
             foreach (['getItems', 'getConfig', 'resolve', 'toArray', 'all'] as $method) {

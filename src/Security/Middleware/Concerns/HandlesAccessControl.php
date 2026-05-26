@@ -108,12 +108,24 @@ trait HandlesAccessControl
     /**
      * 检查指定检测层是否启用
      *
+     * CLI 模式下自动禁用 HTTP 专属检测层，避免 artisan 命令、
+     * 队列任务、计划任务中触发无意义的 HTTP 上下文检查，
+     * 同时防止因缺失 HTTP 头/UA/IP 等数据导致的异常或误报。
+     *
      * @param string $layer 检测层名称
      * @return bool true=启用，false=禁用
      */
     protected function isDetectionEnabled(string $layer): bool
     {
         $layers = $this->config['detection_layers'] ?? [];
+
+        // CLI 模式下仅保留核心内容安全检测，跳过所有 HTTP 专属层
+        if (method_exists($this, 'isCliMode') && $this->isCliMode()) {
+            $httpOnlyLayers = ['user_agent', 'headers', 'body_size', 'rate_limit', 'http_method', 'url_length', 'upload'];
+            if (in_array($layer, $httpOnlyLayers, true)) {
+                return false;
+            }
+        }
 
         return $layers[$layer] ?? true;
     }

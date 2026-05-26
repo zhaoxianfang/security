@@ -44,7 +44,14 @@ class SecurityServiceProvider extends ServiceProvider
 
         // 注册视图命名空间
         // 使用 security::error 访问安全拦截错误页面
-        app('view')->addNamespace('security', __DIR__ . '/../../../resources/views');
+        // 防御：CLI 环境下视图服务可能尚未绑定或不可用（如部分 artisan 命令）
+        try {
+            if ($this->app->bound('view')) {
+                $this->app['view']->addNamespace('security', __DIR__ . '/../../../resources/views');
+            }
+        } catch (\Throwable) {
+            // 视图命名空间注册失败不应阻断应用启动（CLI 常见场景）
+        }
 
         // 注册安全中间件
         $this->registerMiddleware();

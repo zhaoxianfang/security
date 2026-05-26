@@ -100,7 +100,12 @@ trait ValidatesInputIntegrity
         $hostValidation = $headersConfig['host_validation'] ?? ['enabled' => false];
         if ($hostValidation['enabled'] ?? false) {
             $allowedHosts = $hostValidation['allowed_hosts'] ?? [];
-            $host = $request->getHost();
+            $host = $request->getHost() ?? '';
+
+            // 防御：无法获取 Host 时视为非法（防止 Host 头缺失绕过）
+            if ($host === '') {
+                return true;
+            }
 
             $matched = false;
             foreach ($allowedHosts as $allowed) {
@@ -153,15 +158,25 @@ trait ValidatesInputIntegrity
 
         // 使用 IP + 路由路径组合作为限流 key，避免不同路由间的碰撞
         $prefix = $rateLimit['key_prefix'] ?? 'security';
-        $key = $prefix . ':' . $request->ip() . ':' . md5($request->path());
+        $key = $prefix . ':' . ($request->ip() ?? 'unknown') . ':' . md5($request->path());
         $maxAttempts = $rateLimit['max_attempts'] ?? 60;
         $decayMinutes = $rateLimit['decay_minutes'] ?? 1;
 
-        if (RateLimiter::tooManyAttempts($key, $maxAttempts)) {
-            return true;
-        }
+        try {
+            if (RateLimiter::tooManyAttempts($key, $maxAttempts)) {
+                return true;
+            }
 
-        RateLimiter::hit($key, $decayMinutes * 60);
+            RateLimiter::hit($key, $decayMinutes * 60);
+        } catch (\Throwable $e) {
+            // 限流服务（如 Redis）异常时不应阻断正常请求，记录日志后降级放行
+            if ($this->config['log_enabled'] ?? true) {
+                \Illuminate\Support\Facades\Log::warning('[Security] 速率限制服务异常，已降级放行', [
+                    'error' => $e->getMessage(),
+                    'request_id' => $this->requestId ?? '',
+                ]);
+            }
+        }
 
         return false;
     }

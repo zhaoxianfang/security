@@ -21,13 +21,13 @@ echo "      . 是非单词字符，/ 也是非单词字符。\n";
 echo "      所以 /path/.env 中 / 和 . 之间没有 word boundary！\n\n";
 
 $bugPatterns = [
-    'url_path L30' => ['/\b(\.env|\.git\/|\.git\/config)\b/i', '.git/config'],
-    'url_path L31' => ['/\b(\.svn|\.hg|\.bzr)\b/i', '.svn'],
-    'url_path L32' => ['/\b(\.htaccess|\.htpasswd|web\.config)\b/i', '.htaccess'],
-    'url_path L35' => ['/\b(\.DS_Store|\.editorconfig|\.eslintrc|\.prettierrc)\b/i', '.DS_Store'],
-    'hr path L88'  => ['/\b(\.env|\.git\/)\b/i', '.env'],
-    'hr path L89'  => ['/\b(\.svn|\.hg|\.bzr)\b/i', '.svn'],
-    'hr path L90'  => ['/\b(\.htaccess|\.htpasswd|web\.config)\b/i', '.htaccess'],
+    'url_path L30' => ['/(?<!\w)(\.env|\.git\/|\.git\/config)/i', '.git/config'],
+    'url_path L31' => ['/(?<!\w)(\.svn|\.hg|\.bzr)/i', '.svn'],
+    'url_path L32' => ['/(?<!\w)(\.htaccess|\.htpasswd|web\.config)/i', '.htaccess'],
+    'url_path L35' => ['/(?<!\w)(\.DS_Store|\.editorconfig|\.eslintrc|\.prettierrc)/i', '.DS_Store'],
+    'hr path L88'  => ['/(?<!\w)(\.env|\.git\/)/i', '.env'],
+    'hr path L89'  => ['/(?<!\w)(\.svn|\.hg|\.bzr)/i', '.svn'],
+    'hr path L90'  => ['/(?<!\w)(\.htaccess|\.htpasswd|web\.config)/i', '.htaccess'],
 ];
 
 foreach ($bugPatterns as $label => [$pattern, $test]) {
@@ -85,7 +85,7 @@ $edge = [
         ["union/**/select/**/1,2",'UNION block comment'],
         ["1' or '1'='1",'OR tautology'],
         ["1'/**/AND/**/1=1",'AND block comment'],
-        ['\\', 'backslash escape'],
+        ['\\\'', 'backslash escape'],
         ["0x61646d696e", 'hex literal'],
         ["admin'--",'comment bypass'],
     ],

@@ -3,27 +3,7 @@
 require_once dirname(__DIR__).'/vendor/autoload.php';
 use zxf\Security\Config\DefaultConfig;
 use zxf\Security\Services\ConfigResolver;
-
-class TestExtensionProvider {
-    public static function getItems(): array {
-        return ['jpg', 'png'];
-    }
-    public static function resolve(): array {
-        return ['gif', 'webp'];
-    }
-    public function toArray(): array {
-        return ['pdf', 'doc'];
-    }
-    public function __invoke(): array {
-        return ['txt', 'csv'];
-    }
-    public function getConfig(): array {
-        return ['md', 'json'];
-    }
-    public function all(): array {
-        return ['xml', 'yaml'];
-    }
-}
+use zxf\Security\Tests\TestExtensionProvider;
 
 $ok = 0; $fail = 0;
 function assertEq($label, $actual, $expected) {

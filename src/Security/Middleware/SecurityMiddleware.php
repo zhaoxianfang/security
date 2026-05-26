@@ -169,7 +169,25 @@ class SecurityMiddleware
 
         $this->config = $loadedConfig;
         $this->ipMatcher = new IpMatcherService();
-        $this->patternService = app(PatternService::class);
+        $this->patternService = function_exists('app') ? app(PatternService::class) : new PatternService();
+    }
+
+    /**
+     * 判断当前是否运行在纯 CLI 模式（非 HTTP 请求上下文）
+     *
+     * 在 CLI / phpdbg SAPI 下：
+     *  - $request->ip() 通常为 null
+     *  - $request->userAgent() 为 null
+     *  - $request->headers 不完整或为空
+     *  - 不存在真实的 HTTP 方法、URL、文件上传等上下文
+     *
+     * 注意：php -S 内置服务器的 SAPI 为 "cli-server"，不属于纯 CLI。
+     *
+     * @return bool true=纯 CLI 环境，false=HTTP 环境
+     */
+    protected function isCliMode(): bool
+    {
+        return PHP_SAPI === 'cli' || PHP_SAPI === 'phpdbg';
     }
 
     /**
@@ -194,11 +212,11 @@ class SecurityMiddleware
             return $next($request);
         }
 
-        // 获取客户端真实IP地址
-        $ip = $request->ip();
+        // 获取客户端真实IP地址（防御 CLI 或异常请求中 ip() 返回 null）
+        $ip = $request->ip() ?? '';
 
         // ========== 第一层：IP 白名单检查 ==========
-        if ($this->isWhitelisted($ip, $request)) {
+        if ($ip !== '' && $this->isWhitelisted($ip, $request)) {
             return $next($request);
         }
 
@@ -206,9 +224,9 @@ class SecurityMiddleware
         $this->requestId = $this->generateRequestId();
 
         // ========== 第二层：IP 黑名单检查 ==========
-        if ($this->isBlacklisted($ip, $request)) {
+        if ($ip !== '' && $this->isBlacklisted($ip, $request)) {
             return $this->handleThreatDetection($request, $next, 'blacklist', function ($request) {
-                $this->logThreat($request, 'blacklist', 'IP地址位于黑名单中: ' . $request->ip());
+                $this->logThreat($request, 'blacklist', 'IP地址位于黑名单中: ' . ($request->ip() ?? 'unknown'));
                 return $this->blockRequest($request, 'IP已被禁止访问', 403, 'blacklist');
             });
         }

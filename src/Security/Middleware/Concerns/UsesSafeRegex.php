@@ -122,6 +122,12 @@ trait UsesSafeRegex
     {
         $maxLength = $this->getMaxInputLength();
 
+        // 防御：无效 UTF-8 序列会导致 mb_strlen/mb_substr 返回 false 并产生警告，
+        // 攻击者可能利用此特性使截断失效。先清理无效字节。
+        if (!mb_check_encoding($input, 'UTF-8')) {
+            $input = mb_convert_encoding($input, 'UTF-8', 'UTF-8');
+        }
+
         if (mb_strlen($input) > $maxLength) {
             return mb_substr($input, 0, $maxLength);
         }

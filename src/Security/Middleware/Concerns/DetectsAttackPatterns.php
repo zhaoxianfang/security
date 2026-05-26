@@ -335,7 +335,8 @@ trait DetectsAttackPatterns
      */
     protected function isUrlLike(string $value): bool
     {
-        $decoded = urldecode($this->truncateInput($value));
+        // 先解码再截断，避免截断破坏 URL 编码序列（如 %3A 被截成 %3）
+        $decoded = $this->truncateInput(urldecode($value));
         // 检测完整协议头 或 // 协议省略型
         return $this->safePregMatch('#\b(?:https?|ftp|gopher|dict|file)://#i', $decoded)
             || $this->safePregMatch('#^//[a-z0-9]#i', $decoded);

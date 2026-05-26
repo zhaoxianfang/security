@@ -50,25 +50,30 @@ if (!function_exists('security_log')) {
      */
     function security_log(string $type, string $message, array $context = []): void
     {
-        // 检查日志功能是否启用（通过配置控制）
-        if (!config('security.log_enabled', true)) {
-            return;
+        try {
+            // 检查日志功能是否启用（通过配置控制）
+            if (!config('security.log_enabled', true)) {
+                return;
+            }
+
+            // 尝试获取当前请求对象，自动补充请求信息
+            $request = function_exists('request') ? request() : null;
+
+            // 构建日志数据
+            $logData = array_merge([
+                'type' => $type,
+                'ip' => $request?->ip() ?? 'unknown',
+                'url' => $request?->fullUrl() ?? '',
+                'method' => $request?->method() ?? 'CLI',
+                'user_agent' => $request ? substr($request->userAgent() ?? '', 0, 200) : null,
+            ], $context);
+
+            // 记录到 Laravel 日志，使用 WARNING 级别便于区分
+            Log::warning("[Security] {$type}: {$message}", $logData);
+        } catch (\Throwable) {
+            // CLI 模式下日志驱动异常（如磁盘满、syslog 不可用）不应阻断业务流程。
+            // 静默降级：安全日志失败不是致命错误，继续执行。
         }
-
-        // 尝试获取当前请求对象，自动补充请求信息
-        $request = function_exists('request') ? request() : null;
-
-        // 构建日志数据
-        $logData = array_merge([
-            'type' => $type,
-            'ip' => $request?->ip(),
-            'url' => $request?->fullUrl(),
-            'method' => $request?->method(),
-            'user_agent' => $request ? substr($request->userAgent() ?? '', 0, 200) : null,
-        ], $context);
-
-        // 记录到 Laravel 日志，使用 WARNING 级别便于区分
-        Log::warning("[Security] {$type}: {$message}", $logData);
     }
 }
 
