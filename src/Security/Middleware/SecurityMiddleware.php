@@ -3,7 +3,6 @@
 namespace zxf\Security\Middleware;
 
 use Closure;
-use DateTimeImmutable;
 use Illuminate\Http\Request;
 use zxf\Security\Dto\InterceptionContext;
 use zxf\Security\Services\IpMatcherService;
@@ -53,7 +52,7 @@ use zxf\Security\Middleware\Concerns\BuildsInterceptionResponse;
  *  - Concerns/BuildsInterceptionResponse.php  拦截响应 + 日志 + 回调
  *
  * @package zxf\Security\Middleware
- * @version 5.4.0
+ * @version 6.0.0
  */
 class SecurityMiddleware
 {
@@ -149,7 +148,7 @@ class SecurityMiddleware
 
             // 如果仍然为空，记录日志并使用安全默认值
             if (empty($loadedConfig) || !is_array($loadedConfig)) {
-                if (function_exists('Illuminate\\Support\\Facades\\Log::warning')) {
+                if (config('security.log_enabled', true)) {
                     \Illuminate\Support\Facades\Log::warning(
                         '[Security] 安全配置加载失败，将使用最小安全默认值运行',
                         ['config_path' => $configPath]

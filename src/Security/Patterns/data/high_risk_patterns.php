@@ -49,6 +49,8 @@ return [
         ['pattern' => '/\b1\s*=\s*1\b/i', 'desc' => '经典永真条件（1=1）用于绕过认证', 'risk' => 'low'],
         ['pattern' => '/\'\s*(?:or|and)\s+\d+\s*=\s*\d+/i', 'desc' => '引号闭合后的 OR/AND 数字等式注入', 'risk' => 'low'],
         ['pattern' => '/[\'"]\s*(?:or|and)\s+[\'"]?\d+[\'"]?\s*=\s*[\'"]?\d+[\'"]?/i', 'desc' => '引号内 OR/AND 数字等式注入', 'risk' => 'low'],
+        ['pattern' => '/\\[\'"]/', 'desc' => '反斜杠转义引号（绕过magic_quotes）', 'risk' => 'medium'],
+        ['pattern' => '/\b0x[0-9a-f]{4,}\b/i', 'desc' => 'SQL十六进制字面量（0x61646d696e）', 'risk' => 'medium'],
         ['pattern' => '/--\s+\d+\s*$/im', 'desc' => 'SQL行尾注释（-- 数字）用于截断原SQL', 'risk' => 'medium'],
         ['pattern' => '/--\s*$/im', 'desc' => 'SQL行尾注释（--）截断原SQL', 'risk' => 'medium'],
         ['pattern' => '/\/\*\*\/\s*(select|union|insert|update|delete|drop)\b/i', 'desc' => '内联注释等效空白绕过（/**/select）', 'risk' => 'medium'],
@@ -59,12 +61,12 @@ return [
     'command' => [
         ['pattern' => '/\b(system|exec|shell_exec|passthru|proc_open|popen|pcntl_exec)\s*\(\s*[\'"`\s]*(rm\s+-|wget\s|curl\s|nc\s|netcat\s|bash\s|sh\s|cmd\s|powershell\s|python\s|perl\s|php\s|ruby\s|lua\s)/i', 'desc' => 'PHP危险函数+危险命令组合执行', 'risk' => 'high'],
         ['pattern' => '/`\s*(rm\s|wget\s|curl\s|nc\s|netcat\s|bash\s|sh\s|python\s|perl\s|whoami|id\s|cat\s|ls\s)/i', 'desc' => '反引号命令执行（`rm ...`）', 'risk' => 'high'],
-        ['pattern' => '/(;|\|\||&&|\|)\s*(rm\s+-|wget\s|curl\s|nc\s|bash\s|sh\s|python\s|perl\s|cmd\s|powershell\s|whoami|id(?:\s|[;&|]|$)|cat\s)/i', 'desc' => '命令分隔符/管道后接危险命令', 'risk' => 'high'],
+        ['pattern' => '/(;|\|\||&&|\|)\s*(rm\s+-|wget\s|curl\s|nc\s|bash\s|sh\s|python\s|perl\s|cmd\s|powershell\s|whoami|id(?:\s|[;&|]|$)|cat\s|ls\s|nslookup\s)/i', 'desc' => '命令分隔符/管道后接危险命令', 'risk' => 'high'],
         ['pattern' => '/\b(include|require|include_once|require_once)\s*\(\s*[\'"]?\s*(php|data|expect|input|glob|phar):/i', 'desc' => 'PHP伪协议文件包含导致命令执行', 'risk' => 'high'],
         ['pattern' => '/\|(\s*\/?\w+\/)*(sh|bash|python|perl|ruby|node|nc)\b/i', 'desc' => '管道符后接脚本解释器执行任意命令', 'risk' => 'high'],
         ['pattern' => '/`[^`]{1,50}`/i', 'desc' => '反引号内短命令执行（通用特征）', 'risk' => 'medium'],
         ['pattern' => '/\$\(\s*(id|whoami|cat|ls|wget|curl|nslookup|ping)(?:\s|\))/i', 'desc' => '$() 命令替换执行（如 $(id)）', 'risk' => 'high'],
-        ['pattern' => '/%0[aA].*(?:id|whoami|cat|ls|wget|curl)/i', 'desc' => 'URL编码换行符后接命令执行（%0a命令）', 'risk' => 'high'],
+        ['pattern' => '/(?:\r|\n|%0[aA]).*(?:id|whoami|cat|ls|wget|curl|nslookup)/i', 'desc' => '换行符或URL编码换行符后接命令执行', 'risk' => 'high'],
     ],
 
     // ========== 路径遍历检测 ==========
@@ -116,6 +118,7 @@ return [
         ['pattern' => '/\{\{\s*.*\|.*(raw|escape|filter)\s*\}\}/i', 'desc' => 'Twig/Jinja2 模板过滤器注入（|raw）', 'risk' => 'high'],
         ['pattern' => '/\{\{\s*\$\w+\s*->\s*\w+\s*\([^)]*\)\s*\}\}/i', 'desc' => 'PHP对象方法调用模板注入', 'risk' => 'high'],
         ['pattern' => '/\{\{.*(eval|exec|system|shell_exec|passthru).*\}\}/i', 'desc' => '模板内危险函数调用注入', 'risk' => 'high'],
+        ['pattern' => '/\{\{\s*\d+\s*[\+\-\*\/]\s*\d+\s*\}\}/i', 'desc' => 'SSTI模板表达式数字运算（如{{7*7}}）', 'risk' => 'medium'],
     ],
 
     // ========== SSRF检测 ==========
@@ -126,6 +129,8 @@ return [
         ['pattern' => '/\b(instance-identity|instance-id|hostname|public-keys|security-credentials)\b/i', 'desc' => '云实例敏感信息获取', 'risk' => 'high'],
         ['pattern' => '/\b(gopher|dict|file|ftp|ldap|tftp|netdoc|jar):\/\//i', 'desc' => 'SSRF危险协议访问（gopher/dict/file等）', 'risk' => 'high'],
         ['pattern' => '/\b(?:url|redirect_uri|callback|webhook|target|link)\s*=\s*[\'"]?\s*(?:https?:)?\/\/(?:127\.|10\.|172\.1[6-9]|172\.2\d|172\.3[01]|192\.168\.|0\.0\.0\.0|localhost)/i', 'desc' => 'URL参数指向内网地址', 'risk' => 'high'],
+        ['pattern' => '/\b(?:url|redirect_uri|callback|webhook|target|link)\s*=\s*[\'"]?\s*\/\//i', 'desc' => 'URL参数使用协议相对路径（//evil.com）', 'risk' => 'medium'],
+        ['pattern' => '/^\/\/[a-z0-9][a-z0-9\-_]*\.[a-z]{2,}/i', 'desc' => '裸协议相对URL（//evil.com）', 'risk' => 'medium'],
         ['pattern' => '/\b(rebind|dnsrebind|nip\.io|xip\.io|sslip\.io|burpcollaborator)\b/i', 'desc' => 'DNS重绑定攻击域名', 'risk' => 'high'],
         ['pattern' => '/\b(port\s*[=:]\s*)\d{1,5}\b/i', 'desc' => 'SSRF端口探测参数', 'risk' => 'medium'],
     ],
@@ -134,7 +139,9 @@ return [
     'encoding' => [
         ['pattern' => '/%25(?:25)+[0-9a-f]{2}/i', 'desc' => '多重URL编码绕过（%2525...）', 'risk' => 'medium'],
         ['pattern' => '/%25(?:25)+/i', 'desc' => '多层%25编码序列', 'risk' => 'low'],
-        ['pattern' => '/%(?:c0[\x80-\xbf]|e0%80[\x80-\xbf])/i', 'desc' => 'UTF-8过度编码绕过（单字符多字节）', 'risk' => 'high'],
+        ['pattern' => '/%(?:c0[\x80-\xbf]|e0%80[\x80-\xbf])/i', 'desc' => 'UTF-8过度编码绕过（原始字节形式）', 'risk' => 'high'],
+        ['pattern' => '/%c0%[8-9a-b][0-9a-f]/i', 'desc' => 'UTF-8过度编码绕过（URL编码%c0%af形式）', 'risk' => 'high'],
+        ['pattern' => '/%{2,3}[0-9a-f]{2}/i', 'desc' => '异常多重%编码序列（如%%32%35）', 'risk' => 'medium'],
         ['pattern' => '/%00|\x00|%00;/i', 'desc' => '空字节编码绕过', 'risk' => 'high'],
         ['pattern' => '/&#[xX]?[0-9a-f]+;/i', 'desc' => 'HTML实体编码绕过（&#x3c; = <）', 'risk' => 'medium'],
         ['pattern' => '/%[0-9a-f]{2}.*&#x[0-9a-f]+;/i', 'desc' => '混合URL编码+HTML实体绕过', 'risk' => 'medium'],
@@ -151,11 +158,11 @@ return [
 
     // ========== 开放重定向检测 ==========
     'redirect' => [
-        ['pattern' => '/(?:redirect_uri|redirect_url|redirect|callback|return_url|return|goto|next|target|link|dest|destination|webhook|notify_url)\s*=\s*(?:https?:\/\/|%3[aA]%2[fF]%2[fF]|%2[fF]%2[fF])[^\s&]+/i', 'desc' => '重定向参数指向外部完整URL', 'risk' => 'medium'],
-        ['pattern' => '/^(?:https?|ftp):\/\/(?:\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}|[a-z0-9](?:[a-z0-9\-_]*[a-z0-9])?\.[a-z]{2,})/i', 'desc' => '参数值为独立外部URL（IP或域名）', 'risk' => 'medium'],
-        ['pattern' => '/^\/[a-z0-9](?:[a-z0-9\-]*[a-z0-9])?\.[a-z]{2,}\//i', 'desc' => '单斜杠后接域名（/evil.com/框架绕过）', 'risk' => 'medium'],
+        ['pattern' => '/(?:redirect_uri|redirect_url|redirect|callback|return_url|return|goto|next|target|link|dest|destination|webhook|notify_url)\s*=\s*(?:https?:\/\/|\/\/|%3[aA]%2[fF]%2[fF]|%2[fF]%2[fF])[^\s&]+/i', 'desc' => '重定向参数指向外部完整URL', 'risk' => 'medium'],
+        ['pattern' => '/(?:https?|ftp):\/\/(?:\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}|[a-z0-9](?:[a-z0-9\-_]*[a-z0-9])?\.[a-z]{2,})/i', 'desc' => '参数值为独立外部URL（IP或域名）', 'risk' => 'medium'],
+        ['pattern' => '/\/[a-z0-9](?:[a-z0-9\-]*[a-z0-9])?\.[a-z]{2,}\//i', 'desc' => '单斜杠后接域名（/evil.com/框架绕过）', 'risk' => 'medium'],
         ['pattern' => '/%2[fF]%2[fF][a-z0-9](?:[a-z0-9\-_]*[a-z0-9])?\.[a-z]{2,}/i', 'desc' => 'URL编码双斜杠后接域名', 'risk' => 'medium'],
-        ['pattern' => '/(?:redirect|url|goto|target|link)\s*[=:]\s*(?:data\s*:\s*text\/html|javascript\s*:|vbscript\s*:)/i', 'desc' => '重定向参数使用data:/javascript:伪协议', 'risk' => 'high'],
+        ['pattern' => '/(?:redirect|url|goto|target|link|next|callback)\s*[=:]\s*(?:data\s*:\s*text\/html|javascript\s*:|vbscript\s*:)/i', 'desc' => '重定向参数使用data:/javascript:伪协议', 'risk' => 'high'],
         ['pattern' => '/%0[dD]%0[aA].*(?:location|content-type|set-cookie)\s*:/i', 'desc' => 'CRLF后接location/content-type/set-cookie', 'risk' => 'high'],
     ],
 
@@ -163,6 +170,7 @@ return [
     'file_include' => [
         ['pattern' => '/\b(include|require|include_once|require_once)\s*\(\s*[\'"]?\s*(http|ftp|https|php|data|expect|input|glob|phar):/i', 'desc' => 'PHP文件包含伪协议（php:///data://等）', 'risk' => 'high'],
         ['pattern' => '/\b(file_get_contents|readfile|fopen|file|show_source|highlight_file)\s*\(\s*[\'"]?\s*(http|ftp|https|php):/i', 'desc' => 'PHP文件读取函数+伪协议', 'risk' => 'high'],
+        ['pattern' => '/\b(include|require|include_once|require_once)\s+(?:\/|\\\\|[a-zA-Z]:\\\\|[\'"\$])\w+/i', 'desc' => '无括号文件包含（include /etc/passwd）', 'risk' => 'high'],
         ['pattern' => '/\/proc\/self\/(environ|cmdline|fd)\b/i', 'desc' => 'Linux /proc/self 信息读取', 'risk' => 'high'],
         ['pattern' => '/php:\/\/filter\/((?:convert|read|write|resource)[^\/]*\/)/i', 'desc' => 'php://filter 封装器读取任意文件', 'risk' => 'high'],
         ['pattern' => '/php:\/\/input\b/i', 'desc' => 'php://input 原始POST数据包含', 'risk' => 'high'],

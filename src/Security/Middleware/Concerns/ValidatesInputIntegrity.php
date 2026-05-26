@@ -33,12 +33,13 @@ trait ValidatesInputIntegrity
             return false;
         }
 
-        $userAgent = strtolower($request->userAgent() ?? '');
+        $rawUserAgent = $request->userAgent() ?? '';
+        $userAgent = strtolower($rawUserAgent);
 
         foreach ($uaList as $item) {
             // 闭包函数
             if ($item instanceof \Closure) {
-                if ($item($request->userAgent(), $request) === true) {
+                if ($item($rawUserAgent, $request) === true) {
                     return true;
                 }
                 continue;
@@ -46,7 +47,7 @@ trait ValidatesInputIntegrity
 
             // 正则表达式
             if (is_string($item) && str_starts_with($item, '/')) {
-                if ($this->safePregMatch($item, $request->userAgent())) {
+                if ($this->safePregMatch($item, $rawUserAgent)) {
                     return true;
                 }
                 continue;

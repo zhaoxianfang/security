@@ -239,16 +239,20 @@ trait BuildsInterceptionResponse
             }
 
             // 配置无效，返回默认响应
-            Log::warning('[Security] 自定义视图配置无效，使用默认响应', [
-                'view_config' => $viewConfig,
-            ]);
+            if ($this->config['log_enabled'] ?? true) {
+                Log::warning('[Security] 自定义视图配置无效，使用默认响应', [
+                    'view_config' => $viewConfig,
+                ]);
+            }
 
             return response($data['message'], $status);
         } catch (\Throwable $e) {
-            Log::error('[Security] 自定义视图渲染失败', [
-                'exception' => $e->getMessage(),
-                'view_config' => $viewConfig,
-            ]);
+            if ($this->config['log_enabled'] ?? true) {
+                Log::error('[Security] 自定义视图渲染失败', [
+                    'exception' => $e->getMessage(),
+                    'view_config' => $viewConfig,
+                ]);
+            }
 
             return response($data['message'], $status);
         }
@@ -303,12 +307,14 @@ trait BuildsInterceptionResponse
 
             return true;
         } catch (\Throwable $e) {
-            Log::error('[Security] 拦截回调执行异常', [
-                'exception' => $e->getMessage(),
-                'threat_type' => $context->threatType,
-                'ip' => $context->clientIp,
-                'request_id' => $this->requestId,
-            ]);
+            if ($this->config['log_enabled'] ?? true) {
+                Log::error('[Security] 拦截回调执行异常', [
+                    'exception' => $e->getMessage(),
+                    'threat_type' => $context->threatType,
+                    'ip' => $context->clientIp,
+                    'request_id' => $this->requestId,
+                ]);
+            }
 
             return true;
         }
@@ -332,7 +338,13 @@ trait BuildsInterceptionResponse
             return $callback($context);
         }
 
-        return $callback($context);
+        // 不可调用的配置值，视为默认拦截（避免 fatal error）
+        if ($this->config['log_enabled'] ?? true) {
+            Log::warning('[Security] before_block_callback 配置值不可调用，默认执行拦截', [
+                'type' => gettype($callback),
+            ]);
+        }
+        return true;
     }
 
     /**

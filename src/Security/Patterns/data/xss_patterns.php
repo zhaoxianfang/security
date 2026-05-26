@@ -15,7 +15,7 @@ return [
     ],
     'dom' => [
         ['pattern' => '/\b(on(error|load|click|mouseover|focus|blur|change|submit|keydown|keyup|keypress|mousemove|mouseout|unload))\s*=\s*[\'"]?\s*(alert|confirm|prompt|eval|document\.cookie|window\.location)\s*\(/i', 'desc' => 'DOM事件处理器绑定恶意函数（onerror=alert()等）', 'risk' => 'high'],
-        ['pattern' => '/\.(innerHTML|outerHTML)\s*=\s*[\'"]?\s*<\s*(script|img|iframe|svg)/i', 'desc' => 'innerHTML/outerHTML赋值为危险标签', 'risk' => 'medium'],
+        ['pattern' => '/\.?(innerHTML|outerHTML)\s*=\s*[\'"]?\s*<\s*(script|img|iframe|svg)/i', 'desc' => 'innerHTML/outerHTML赋值为危险标签', 'risk' => 'medium'],
     ],
     'tag' => [
         ['pattern' => '/<iframe\b[^>]*src\s*=\s*[\'"]?\s*javascript:/i', 'desc' => 'iframe src使用javascript:伪协议', 'risk' => 'high'],

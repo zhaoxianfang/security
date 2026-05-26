@@ -32,34 +32,38 @@ trait UsesSafeRegex
      * 如果用户配置的正则模式包含这些不支持的特性，preg_match 会返回 false 并产生警告。
      * 本方法封装了错误处理，防止正则编译失败导致运行时崩溃。
      *
+     * 性能优化：使用静态变量缓存回溯限制，避免每次调用 ini_set 的 syscall 开销。
+     *
      * @param string $pattern 正则表达式模式
      * @param string $subject 要匹配的字符串
      * @param array|null $matches 匹配结果数组（引用）
      * @return bool true=匹配成功，false=未匹配或正则错误
      */
-    protected function safePregMatch(string $pattern, string $subject, ?array &$matches = null): bool
+    protected function safePregMatch(string $pattern, string $subject, ?array &$matches = null, int $flags = 0, int $offset = 0): bool
     {
         if (empty($pattern) || $subject === '') {
             return false;
         }
 
-        // 设置 PCRE 回溯限制，防止灾难性回溯（ReDoS）
-        $oldBacktrackLimit = ini_set('pcre.backtrack_limit', '1000000');
+        static $limitSet = false;
+        if (!$limitSet) {
+            ini_set('pcre.backtrack_limit', '1000000');
+            $limitSet = true;
+        }
 
         // 使用局部变量接收匹配结果，避免 PHP 8.2 引用参数默认 null 弃用警告
         $localMatches = [];
-        $result = @preg_match($pattern, $subject, $localMatches);
-
-        // 恢复原回溯限制
-        ini_set('pcre.backtrack_limit', $oldBacktrackLimit);
+        $result = @preg_match($pattern, $subject, $localMatches, $flags, $offset);
 
         if ($result === false) {
-            $errorMsg = preg_last_error_msg();
-            Log::warning('[Security] 正则表达式编译失败，已跳过该规则', [
-                'pattern' => mb_substr($pattern, 0, 100),
-                'error' => $errorMsg,
-                'request_id' => $this->requestId ?? '',
-            ]);
+            if ($this->config['log_enabled'] ?? true) {
+                $errorMsg = preg_last_error_msg();
+                Log::warning('[Security] 正则表达式编译失败，已跳过该规则', [
+                    'pattern' => mb_substr($pattern, 0, 100),
+                    'error' => $errorMsg,
+                    'request_id' => $this->requestId ?? '',
+                ]);
+            }
             return false;
         }
 
@@ -85,21 +89,23 @@ trait UsesSafeRegex
             return $subject;
         }
 
-        // 设置 PCRE 回溯限制，防止灾难性回溯（ReDoS）
-        $oldBacktrackLimit = ini_set('pcre.backtrack_limit', '1000000');
+        static $limitSet = false;
+        if (!$limitSet) {
+            ini_set('pcre.backtrack_limit', '1000000');
+            $limitSet = true;
+        }
 
         $result = @preg_replace($pattern, $replacement, $subject);
 
-        // 恢复原回溯限制
-        ini_set('pcre.backtrack_limit', $oldBacktrackLimit);
-
         if ($result === null) {
-            $errorMsg = preg_last_error_msg();
-            Log::warning('[Security] 正则替换失败，保留原内容', [
-                'pattern' => mb_substr($pattern, 0, 100),
-                'error' => $errorMsg,
-                'request_id' => $this->requestId ?? '',
-            ]);
+            if ($this->config['log_enabled'] ?? true) {
+                $errorMsg = preg_last_error_msg();
+                Log::warning('[Security] 正则替换失败，保留原内容', [
+                    'pattern' => mb_substr($pattern, 0, 100),
+                    'error' => $errorMsg,
+                    'request_id' => $this->requestId ?? '',
+                ]);
+            }
             return $subject;
         }
 
@@ -132,13 +138,11 @@ trait UsesSafeRegex
      */
     protected function getInputString(\Illuminate\Http\Request $request, bool $sanitizeMarkdown = false): string
     {
-        $input = array_merge(
-            $request->query() ?? [],
-            $request->post() ?? [],
-            $request->route()?->parameters() ?? []
-        );
-
-        $result = $this->flattenInput($input);
+        // 避免 array_merge 复制大 POST 数据，直接逐来源扁平化拼接
+        $result = '';
+        foreach ([$request->query() ?? [], $request->post() ?? [], $request->route()?->parameters() ?? []] as $source) {
+            $result .= $this->flattenInput($source);
+        }
 
         if ($sanitizeMarkdown) {
             $result = $this->removeMarkdownCodeBlocks($result);

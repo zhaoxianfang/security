@@ -9,7 +9,7 @@
 
 return [
     ['pattern' => '/(\.\.\/){2,}/', 'desc' => 'Linux多级目录穿越（../../..）', 'risk' => 'high'],
-    ['pattern' => '/(\.\\\\){2,}/', 'desc' => 'Windows多级目录穿越（..\\..\\）', 'risk' => 'high'],
+    ['pattern' => '/(\.\.\\\\)+/', 'desc' => 'Windows多级目录穿越（..\\..\\）', 'risk' => 'high'],
     ['pattern' => '/\.\.(\/|\\\\)\.\.(\/|\\\\)/', 'desc' => '混合路径遍历（../..或..\\..）', 'risk' => 'high'],
     ['pattern' => '/%2e%2e(%2f|%5c)/i', 'desc' => 'URL编码../或..\\路径穿越', 'risk' => 'high'],
     ['pattern' => '/%252e%252e%252f/i', 'desc' => '双重URL编码路径穿越', 'risk' => 'high'],

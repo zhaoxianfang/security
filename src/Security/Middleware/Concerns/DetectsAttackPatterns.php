@@ -43,8 +43,8 @@ trait DetectsAttackPatterns
         // 收集所有需要检查的来源
         $checkSources = [];
 
-        // 1. URL路径（原始和解码）
-        $url = $request->fullUrl();
+        // 1. URL路径（原始和解码）— 先截断防止超长 URL 消耗内存
+        $url = $this->truncateInput($request->fullUrl());
         $checkSources['url'] = [$url, urldecode($url)];
 
         // 2. 路由参数（含解码变形）
@@ -86,20 +86,26 @@ trait DetectsAttackPatterns
      * @param string $prefix 前缀标识
      * @return void
      */
-    protected function collectParamsForCheck(array $params, array &$checkSources, string $prefix): void
+    protected function collectParamsForCheck(array $params, array &$checkSources, string $prefix, int $depth = 0): void
     {
+        // 防御：限制递归深度，防止攻击者发送超深嵌套数组导致栈溢出
+        if ($depth > 10) {
+            return;
+        }
+
         foreach ($params as $key => $value) {
             if (is_string($value)) {
-                // 原始值
-                $checkSources[$prefix . '.' . $key][] = $value;
+                // 原始值（截断防止超长输入消耗内存）
+                $truncated = $this->truncateInput($value);
+                $checkSources[$prefix . '.' . $key][] = $truncated;
                 // 解码后的值
-                $decoded = urldecode($value);
+                $decoded = urldecode($truncated);
                 $checkSources[$prefix . '.' . $key][] = $decoded;
                 // 双重解码
                 $checkSources[$prefix . '.' . $key][] = urldecode($decoded);
             } elseif (is_array($value)) {
                 // 递归处理数组
-                $this->collectParamsForCheck($value, $checkSources, $prefix . '.' . $key);
+                $this->collectParamsForCheck($value, $checkSources, $prefix . '.' . $key, $depth + 1);
             }
         }
     }
@@ -152,7 +158,7 @@ trait DetectsAttackPatterns
         }
 
         // 2. 检查完整URL（包含查询字符串）— 全量检测（使用 redirect 策略1模式）
-        $fullUrl = $request->fullUrl();
+        $fullUrl = $this->truncateInput($request->fullUrl());
         $urlResult = $this->checkPatternsAgainstInput($patterns, $fullUrl);
         if ($urlResult !== null) {
             return $urlResult;
@@ -214,6 +220,7 @@ trait DetectsAttackPatterns
 
             foreach ($patterns[$type] as $item) {
                 $pattern = $item['pattern'];
+                $matches = [];
                 if ($this->safePregMatch($pattern, $input, $matches)) {
                     $this->threats[] = $type;
                     $this->lastMatchedPattern = $pattern;
@@ -261,40 +268,37 @@ trait DetectsAttackPatterns
             'origin', 'source_url', 'image_url', 'img_url',
         ];
 
-        // 收集所有参数值（含解码变形）
+        // 收集所有参数值（含解码变形）— 逐来源遍历避免 array_merge 复制大 POST 数组
         $urlValues = [];
 
-        $allParams = array_merge(
-            $request->query() ?? [],
-            $request->post() ?? []
-        );
+        foreach ([$request->query() ?? [], $request->post() ?? []] as $source) {
+            foreach ($source as $key => $value) {
+                if (!is_string($value) || $value === '') {
+                    continue;
+                }
 
-        foreach ($allParams as $key => $value) {
-            if (!is_string($value) || $value === '') {
-                continue;
-            }
+                $isUrlParam = in_array(strtolower($key), $urlParamNames, true);
 
-            $isUrlParam = in_array(strtolower($key), $urlParamNames, true);
+                // 解码变体：1次解码、2次解码
+                $decoded1 = urldecode($value);
+                $decoded2 = urldecode($decoded1);
 
-            // 解码变体：1次解码、2次解码
-            $decoded1 = urldecode($value);
-            $decoded2 = urldecode($decoded1);
+                // 检查解码后是否包含 URL 特征
+                $candidates = [];
+                if ($this->isUrlLike($value) || $isUrlParam) {
+                    $candidates[] = $this->truncateInput($decoded1);
+                }
+                if ($decoded2 !== $decoded1 && ($this->isUrlLike($decoded2) || $isUrlParam)) {
+                    $candidates[] = $this->truncateInput($decoded2);
+                }
 
-            // 检查解码后是否包含 URL 特征
-            $candidates = [];
-            if ($this->isUrlLike($value) || $isUrlParam) {
-                $candidates[] = $this->truncateInput($decoded1);
-            }
-            if ($decoded2 !== $decoded1 && ($this->isUrlLike($decoded2) || $isUrlParam)) {
-                $candidates[] = $this->truncateInput($decoded2);
-            }
-
-            foreach ($candidates as $candidate) {
-                $urlValues[] = [
-                    'value' => $candidate,
-                    'param' => $key,
-                    'isUrlParam' => $isUrlParam,
-                ];
+                foreach ($candidates as $candidate) {
+                    $urlValues[] = [
+                        'value' => $candidate,
+                        'param' => $key,
+                        'isUrlParam' => $isUrlParam,
+                    ];
+                }
             }
         }
 
@@ -331,10 +335,10 @@ trait DetectsAttackPatterns
      */
     protected function isUrlLike(string $value): bool
     {
-        $decoded = urldecode($value);
+        $decoded = urldecode($this->truncateInput($value));
         // 检测完整协议头 或 // 协议省略型
-        return (bool) preg_match('#\b(?:https?|ftp|gopher|dict|file)://#i', $decoded)
-            || (bool) preg_match('#^//[a-z0-9]#i', $decoded);
+        return $this->safePregMatch('#\b(?:https?|ftp|gopher|dict|file)://#i', $decoded)
+            || $this->safePregMatch('#^//[a-z0-9]#i', $decoded);
     }
 
     /**
@@ -369,42 +373,38 @@ trait DetectsAttackPatterns
             return null;
         }
 
-        // 收集所有参数值并解码
-        $allParams = array_merge(
-            $request->query() ?? [],
-            $request->post() ?? [],
-            $request->route()?->parameters() ?? []
-        );
-
-        foreach ($allParams as $key => $value) {
-            if (!is_string($value) || $value === '') {
-                continue;
-            }
-
-            $candidates = [
-                $value,                    // 原始值
-                urldecode($value),         // 解码1次
-                urldecode(urldecode($value)), // 解码2次
-            ];
-
-            foreach (array_unique($candidates) as $candidate) {
-                $candidate = $this->truncateInput($candidate);
-
-                // 预过滤：快速跳过不可能的类型
-                $activeTypes = [];
-                foreach ($checkTypes as $type) {
-                    if ($this->patternService->preFilter($type, $candidate)) {
-                        $activeTypes[] = $type;
-                    }
-                }
-
-                if (empty($activeTypes)) {
+        // 收集所有参数值并解码 — 逐来源遍历避免 array_merge 复制大数组
+        foreach ([$request->query() ?? [], $request->post() ?? [], $request->route()?->parameters() ?? []] as $source) {
+            foreach ($source as $value) {
+                if (!is_string($value) || $value === '') {
                     continue;
                 }
 
-                $result = $this->checkPatternsAgainstInput($patterns, $candidate, $activeTypes);
-                if ($result !== null) {
-                    return $result;
+                $candidates = [
+                    $value,                    // 原始值
+                    urldecode($value),         // 解码1次
+                    urldecode(urldecode($value)), // 解码2次
+                ];
+
+                foreach (array_unique($candidates) as $candidate) {
+                    $candidate = $this->truncateInput($candidate);
+
+                    // 预过滤：快速跳过不可能的类型
+                    $activeTypes = [];
+                    foreach ($checkTypes as $type) {
+                        if ($this->patternService->preFilter($type, $candidate)) {
+                            $activeTypes[] = $type;
+                        }
+                    }
+
+                    if (empty($activeTypes)) {
+                        continue;
+                    }
+
+                    $result = $this->checkPatternsAgainstInput($patterns, $candidate, $activeTypes);
+                    if ($result !== null) {
+                        return $result;
+                    }
                 }
             }
         }
@@ -493,14 +493,14 @@ trait DetectsAttackPatterns
         }
 
         // 1. 检查URL路径（反射型XSS常出现在URL中）
-        $urlPath = urldecode($request->path());
+        $urlPath = urldecode($this->truncateInput($request->path()));
         $urlPathResult = $this->checkXssPatterns($patterns, $urlPath, $urlPath);
         if ($urlPathResult !== null) {
             return $urlPathResult;
         }
 
         // 2. 检查查询字符串（整体）
-        $queryString = urldecode($request->getQueryString() ?? '');
+        $queryString = urldecode($this->truncateInput($request->getQueryString() ?? ''));
         $queryResult = $this->checkXssPatterns($patterns, $queryString, $queryString);
         if ($queryResult !== null) {
             return $queryResult;
@@ -557,6 +557,7 @@ trait DetectsAttackPatterns
 
             foreach ($typePatterns as $item) {
                 $pattern = $item['pattern'];
+                $matches = [];
                 if ($this->safePregMatch($pattern, $input, $matches)) {
                     // Markdown 智能识别旁路：仅在明确开启时生效
                     if ($smartDetection && $allowScriptInMarkdown) {
@@ -600,54 +601,51 @@ trait DetectsAttackPatterns
             return null;
         }
 
-        // 收集所有参数值并解码
-        $allParams = array_merge(
-            $request->query() ?? [],
-            $request->post() ?? [],
-            $request->route()?->parameters() ?? []
-        );
-
-        foreach ($allParams as $key => $value) {
-            if (!is_string($value) || $value === '') {
-                continue;
-            }
-
-            // 多级解码：原始 → 1次解码 → 2次解码
-            $candidates = array_unique([
-                $value,
-                urldecode($value),
-                urldecode(urldecode($value)),
-            ]);
-
-            foreach ($candidates as $candidate) {
-                $candidate = $this->truncateInput($candidate);
-
-                // 预过滤：快速跳过不相关的 XSS 类型
-                $activeTypes = [];
-                foreach ($allTypes as $type) {
-                    if ($this->patternService->preFilter('xss_' . $type, $candidate)) {
-                        $activeTypes[] = $type;
-                    }
-                }
-
-                if (empty($activeTypes)) {
+        // 收集所有参数值并解码 — 逐来源遍历避免 array_merge 复制大数组
+        foreach ([$request->query() ?? [], $request->post() ?? [], $request->route()?->parameters() ?? []] as $source) {
+            foreach ($source as $value) {
+                if (!is_string($value) || $value === '') {
                     continue;
                 }
 
-                // 对每个活跃类型检查模式
-                foreach ($activeTypes as $type) {
-                    if (!isset($patterns[$type])) {
+                // 多级解码：原始 → 1次解码 → 2次解码
+                $candidates = array_unique([
+                    $value,
+                    urldecode($value),
+                    urldecode(urldecode($value)),
+                ]);
+
+                foreach ($candidates as $candidate) {
+                    $candidate = $this->truncateInput($candidate);
+
+                    // 预过滤：快速跳过不相关的 XSS 类型
+                    $activeTypes = [];
+                    foreach ($allTypes as $type) {
+                        if ($this->patternService->preFilter('xss_' . $type, $candidate)) {
+                            $activeTypes[] = $type;
+                        }
+                    }
+
+                    if (empty($activeTypes)) {
                         continue;
                     }
 
-                    foreach ($patterns[$type] as $item) {
-                        $pattern = $item['pattern'];
-                        if ($this->safePregMatch($pattern, $candidate, $matches)) {
-                            $threatType = 'xss_' . $type;
-                            $this->threats[] = $threatType;
-                            $this->lastMatchedPattern = $pattern;
-                            $this->lastMatchedContent = $this->sanitizeMatchedContent($matches[0] ?? '');
-                            return $threatType;
+                    // 对每个活跃类型检查模式
+                    foreach ($activeTypes as $type) {
+                        if (!isset($patterns[$type])) {
+                            continue;
+                        }
+
+                        foreach ($patterns[$type] as $item) {
+                            $pattern = $item['pattern'];
+                            $matches = [];
+                            if ($this->safePregMatch($pattern, $candidate, $matches)) {
+                                $threatType = 'xss_' . $type;
+                                $this->threats[] = $threatType;
+                                $this->lastMatchedPattern = $pattern;
+                                $this->lastMatchedContent = $this->sanitizeMatchedContent($matches[0] ?? '');
+                                return $threatType;
+                            }
                         }
                     }
                 }

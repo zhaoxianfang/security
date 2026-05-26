@@ -178,7 +178,7 @@ trait ManagesMarkdownSafety
     /**
      * 检查匹配的XSS/高危模式是否位于Markdown代码块内
      *
-     * 扫描内容直到匹配行，跟踪代码块的开关状态。
+     * 通过 PREG_OFFSET_CAPTURE 定位匹配位置，避免逐行执行正则。
      * 支持围栏式代码块（``` 和 ~~~）以及缩进式代码块（4空格/Tab）。
      *
      * @param string $content 原始内容
@@ -187,69 +187,58 @@ trait ManagesMarkdownSafety
      */
     protected function isPatternInCodeBlock(string $content, string $pattern): bool
     {
-        $lines = explode("\n", $content);
-        $inFencedBlock = false;
-        $fenceMarker = '';
-
-        // 先找到匹配的行号
-        $matchedLineIndex = -1;
-        foreach ($lines as $index => $line) {
-            if ($this->safePregMatch($pattern, $line)) {
-                $matchedLineIndex = $index;
-                break;
-            }
-        }
-
-        if ($matchedLineIndex === -1) {
+        // 定位匹配偏移（仅需一次正则调用，替代逐行匹配）
+        $matches = [];
+        if (!$this->safePregMatch($pattern, $content, $matches, PREG_OFFSET_CAPTURE)) {
             return false;
         }
 
-        // 从第一行扫描到匹配行，跟踪代码块状态
-        for ($i = 0; $i <= $matchedLineIndex; $i++) {
-            $line = $lines[$i];
-            $trimmed = trim($line);
+        $matchOffset = $matches[0][1];
+        $beforeMatch = substr($content, 0, $matchOffset);
 
-            // 围栏式代码块检测
+        // 解析围栏式代码块状态（同类型关闭）
+        $lines = explode("\n", $beforeMatch);
+        $inFencedBlock = false;
+        $fenceMarker = '';
+
+        foreach ($lines as $line) {
+            $trimmed = trim($line);
             if (str_starts_with($trimmed, '```') || str_starts_with($trimmed, '~~~')) {
+                $currentMarker = str_starts_with($trimmed, '```') ? '```' : '~~~';
                 if (!$inFencedBlock) {
-                    // 进入代码块
                     $inFencedBlock = true;
-                    $fenceMarker = str_starts_with($trimmed, '```') ? '```' : '~~~';
-                } else {
-                    // 检查是否匹配结束标记（同类型围栏）
-                    $currentMarker = str_starts_with($trimmed, '```') ? '```' : '~~~';
-                    if ($currentMarker === $fenceMarker) {
-                        $inFencedBlock = false;
-                    }
+                    $fenceMarker = $currentMarker;
+                } elseif ($currentMarker === $fenceMarker) {
+                    $inFencedBlock = false;
                 }
-                continue;
             }
         }
 
-        // 如果在围栏式代码块内，直接返回
         if ($inFencedBlock) {
             return true;
         }
 
         // 缩进式代码块检测（4空格或1Tab开头，且非空行）
-        // 缩进式代码块需要连续3行以上才视为代码块，避免误判
-        $line = $lines[$matchedLineIndex];
-        if ((str_starts_with($line, '    ') || str_starts_with($line, "\t")) && trim($line) !== '') {
+        $afterLines = explode("\n", substr($content, $matchOffset));
+        $matchedLine = $afterLines[0] ?? '';
+        if ((str_starts_with($matchedLine, '    ') || str_starts_with($matchedLine, "\t")) && trim($matchedLine) !== '') {
             $indentedCount = 1;
+            $matchedIndex = count($lines);
+
             // 向前检查
-            for ($j = $matchedLineIndex - 1; $j >= max(0, $matchedLineIndex - 3); $j--) {
-                $prevLine = $lines[$j];
+            for ($j = $matchedIndex - 1; $j >= max(0, $matchedIndex - 3); $j--) {
+                $prevLine = $lines[$j] ?? '';
                 if ((str_starts_with($prevLine, '    ') || str_starts_with($prevLine, "\t")) && trim($prevLine) !== '') {
                     $indentedCount++;
                 } elseif (trim($prevLine) === '') {
-                    continue; // 空行不计
+                    continue;
                 } else {
                     break;
                 }
             }
             // 向后检查
-            for ($j = $matchedLineIndex + 1; $j < min(count($lines), $matchedLineIndex + 4); $j++) {
-                $nextLine = $lines[$j];
+            for ($j = 1; $j < min(count($afterLines), 4); $j++) {
+                $nextLine = $afterLines[$j];
                 if ((str_starts_with($nextLine, '    ') || str_starts_with($nextLine, "\t")) && trim($nextLine) !== '') {
                     $indentedCount++;
                 } elseif (trim($nextLine) === '') {

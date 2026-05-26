@@ -57,9 +57,9 @@ class PatternService
             "' or ", "' and ", 'case when', 'if(',
         ],
         'command'          => [
-            'system', 'exec', 'passthru', 'shell_exec', 'rm ', 'wget', 'curl',
-            'nc ', 'whoami', '|', '`', '$(', 'powershell', 'cmd ', ';id',
-            'bash', 'python', 'perl', 'ruby', 'node',
+            'system', 'exec', 'passthru', 'shell_exec', 'proc_open', 'popen', 'pcntl_exec',
+            'rm ', 'wget', 'curl', 'nc ', 'netcat', 'whoami', '|', '`', '$(',
+            'powershell', 'cmd ', ';id', 'bash', 'sh ', 'python', 'perl', 'php ', 'ruby', 'lua', 'node',
         ],
         'path'             => [
             '../', '..\\', '%2e%2e', '%252e', '.env', '.git', 'etc/', 'proc/',
