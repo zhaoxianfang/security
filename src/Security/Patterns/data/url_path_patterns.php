@@ -26,7 +26,7 @@ return [
     ['pattern' => '/(?<!\w)(\.dockerignore)/i', 'desc' => '.dockerignore文件泄露', 'risk' => 'low'],
     ['pattern' => '/(?<!\w)(\.DS_Store|\.editorconfig|\.eslintrc|\.prettierrc)/i', 'desc' => 'IDE/编辑器配置文件泄露', 'risk' => 'low'],
     ['pattern' => '/\.\.(\/|\\\\)(windows|winnt|system32|system|program files|programdata|inetpub)/i', 'desc' => 'Windows系统目录穿越', 'risk' => 'high'],
-    ['pattern' => '/\.(?:php\d*|phtml|phar|shtml|jsp|jspx|asp|aspx|ashx|asmx|ascx|sh|bash|py|pyc|pl|pm|rb|exe|dll|bat|cmd|cgi|vbs|ps1|js|env|bak|swp|orig|inc|conf|ini|sql|log|tmp|old)(?=\b|[?#&]|$)/i', 'desc' => 'URL路径中出现危险扩展名', 'risk' => 'medium'],
+    ['pattern' => '/\.(?:php\d*|phtml|phar|shtml|jsp|jspx|asp|aspx|ashx|asmx|ascx|sh|bash|py|pyc|pl|pm|rb|exe|dll|bat|cmd|cgi|vbs|ps1|env|bak|swp|orig|inc|conf|ini|sql|log|tmp|old)(?=\b|[?#&]|$)/i', 'desc' => 'URL路径中出现危险扩展名', 'risk' => 'medium'],
     ['pattern' => '/\b(assert|eval|execute|system|passthru|shell_exec|popen|proc_open)\s*\(\s*\$_(GET|POST|REQUEST|COOKIE|SERVER)/i', 'desc' => 'URL中暴露WebShell执行特征', 'risk' => 'high'],
     ['pattern' => '/[?&](?:file|path|dir|download|include|src|document|page|template|view|load|read|style|img)\s*=\s*[^&]*\.(?:\w+)\.(?:php|asp|jsp|sh|py|pl|rb|cgi)/i', 'desc' => '文件参数指向脚本扩展名（二次扩展名攻击）', 'risk' => 'high'],
     ['pattern' => '/\b(wp-admin|wp-content|wp-includes|wp-config|xmlrpc\.php)\b/i', 'desc' => 'WordPress敏感路径探测', 'risk' => 'low'],
