@@ -10,6 +10,11 @@ use zxf\Security\Bridge\FrameworkBridge;
  * 提供安全的 PCRE 正则匹配/替换、输入扁平化、截断、脱敏等功能。
  * 所有正则操作均捕获 PCRE 编译错误，防止运行时崩溃。
  *
+ * ══════════════════════════════════════════════════════════════════════
+ * 宿主类依赖（由 SecurityMiddleware 提供）：
+ *   - $this->config[][]: mixed  — 安全配置数组（input_processing 等）
+ *   - $this->requestId: string  — 唯一请求 ID
+ *
  * 跨框架兼容：日志通过 FrameworkBridge 输出，支持 Laravel 11+ 和 ThinkPHP 8+。
  *
  * @package zxf\Security\Middleware\Concerns
@@ -140,13 +145,16 @@ trait UsesSafeRegex
     /**
      * 获取请求的输入字符串
      *
+     * 优化：避免跨参数拼接导致误报。每个参数独立检测，
+     * 仅在需要合并检测时才合并（用于检测跨参数关联的攻击）。
+     *
      * @param object $request HTTP请求对象（跨框架兼容）
      * @param bool $sanitizeMarkdown 是否移除Markdown代码块
      * @return string 合并后的输入字符串
      */
     protected function getInputString(object $request, bool $sanitizeMarkdown = false): string
     {
-        // 避免 array_merge 复制大 POST 数据，直接逐来源扁平化拼接
+        // 扁平化拼接所有输入（用于检测跨参数关联的攻击）
         $result = '';
         foreach ([
             FrameworkBridge::requestQuery($request),
@@ -166,6 +174,10 @@ trait UsesSafeRegex
     /**
      * 扁平化多维数组为字符串
      *
+     * 优化：为每个值添加边界空格，避免跨参数值拼接导致误报。
+     * 例如：param1=abc 和 param2=123 拼接后为 " abc 123"，
+     * 不会误报为 "abc123" 导致正则匹配错误。
+     *
      * @param array $input 输入数组
      * @return string 连接后的字符串
      */
@@ -176,11 +188,48 @@ trait UsesSafeRegex
         array_walk_recursive($input, function ($value) use (&$result) {
             // 处理所有标量值（含 int/float），避免攻击载荷躲在数值字段中绕过检测
             if (is_scalar($value) && !is_bool($value)) {
-                $result .= ' ' . (string) $value;
+                // 添加边界空格，避免跨参数值拼接导致误报
+                $result .= ' ' . (string) $value . ' ';
             }
         });
 
         return $result;
+    }
+
+    /**
+     * 获取独立的参数值数组（用于单独检测，避免跨参数误报）
+     *
+     * @param object $request HTTP请求对象
+     * @return array<string> 所有参数值（含查询、POST、路由参数）
+     */
+    protected function getIndependentInputValues(object $request): array
+    {
+        $values = [];
+
+        foreach ([
+            FrameworkBridge::requestQuery($request),
+            FrameworkBridge::requestPost($request),
+            FrameworkBridge::requestRouteParams($request),
+        ] as $source) {
+            $this->extractStringValues($source, $values);
+        }
+
+        return $values;
+    }
+
+    /**
+     * 递归提取数组中的所有字符串值
+     *
+     * @param array $input 输入数组
+     * @param array $values 值数组（引用）
+     */
+    protected function extractStringValues(array $input, array &$values): void
+    {
+        array_walk_recursive($input, function ($value) use (&$values) {
+            if (is_string($value) && $value !== '') {
+                $values[] = $value;
+            }
+        });
     }
 
     /**

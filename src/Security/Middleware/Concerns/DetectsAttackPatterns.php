@@ -9,16 +9,30 @@ use zxf\Security\Bridge\FrameworkBridge;
  *
  * 负责基于正则模式的攻击检测，包括：
  *  - URL 路径攻击（路径遍历、敏感文件泄露）
- *  - 高危攻击（SQL注入、命令注入、SSTI、SSRF 等 10 类）
+ *  - 高危攻击（SQL注入、命令注入、SSTI、SSRF 等 12 类）
  *  - XSS 攻击（脚本注入、DOM型、标签注入、编码绕过、框架特定）
  *
  * 支持 Markdown 智能旁路（通过 ManagesMarkdownSafety trait）。
  *
  * 跨框架兼容：所有方法接受 object 类型请求对象，内部通过 FrameworkBridge 统一访问。
  *
+ * ══════════════════════════════════════════════════════════════════════
+ * 宿主类依赖（由 SecurityMiddleware 提供）：
+ *   - getExcludeRules(): array   — 获取缓存排除规则（惰性解析，请求级）
+ *   - getInterceptRules(): array — 获取缓存追加规则（惰性解析，请求级）
+ *   - truncateInput(): string    — 截断输入防止正则回溯
+ *   - safePregMatch(): bool      — 安全正则匹配
+ *   - sanitizeMatchedContent(): string — 脱敏处理匹配内容
+ *   - getInputString(): string   — 扁平化获取请求输入
+ *   - $this->config[][]: mixed   — 安全配置数组
+ *   - $this->patternService: PatternService — 模式服务实例
+ *   - $this->threats[]: array    — 检测到的威胁类型数组
+ *   - $this->lastMatchedPattern: string — 最后匹配的模式
+ *   - $this->lastMatchedContent: string — 最后匹配的内容
+ *
  * @package zxf\Security\Middleware\Concerns
  * @since 5.4.0
- * @version 6.1.0
+ * @version 6.2.0
  */
 trait DetectsAttackPatterns
 {
@@ -35,8 +49,9 @@ trait DetectsAttackPatterns
      */
     protected function detectUrlPathAttacks(object $request): bool
     {
-        $excludeRules = \zxf\Security\Patterns\PatternService::resolveRules($this->config['intercept_rules_exclude'] ?? []);
-        $interceptRules = \zxf\Security\Patterns\PatternService::resolveRules($this->config['intercept_rules'] ?? []);
+        // 使用缓存规则方法，避免同一请求中多次调用 ConfigResolver
+        $excludeRules = $this->getExcludeRules();
+        $interceptRules = $this->getInterceptRules();
 
         // 从 PatternService 获取模式（延迟加载 + 统一排除/追加规则）
         $pathPatterns = $this->patternService->getUrlPathPatterns($excludeRules, $interceptRules);
@@ -131,8 +146,9 @@ trait DetectsAttackPatterns
      */
     protected function detectHighRiskAttacks(object $request): ?string
     {
-        $excludeRules = \zxf\Security\Patterns\PatternService::resolveRules($this->config['intercept_rules_exclude'] ?? []);
-        $interceptRules = \zxf\Security\Patterns\PatternService::resolveRules($this->config['intercept_rules'] ?? []);
+        // 使用缓存规则方法，避免同一请求中多次调用 ConfigResolver
+        $excludeRules = $this->getExcludeRules();
+        $interceptRules = $this->getInterceptRules();
 
         // 从 PatternService 获取模式（延迟加载 + 统一排除/追加规则）
         $patterns = $this->patternService->getHighRiskPatterns($excludeRules, $interceptRules);
@@ -183,6 +199,7 @@ trait DetectsAttackPatterns
         }
 
         // 5. 检查请求输入数据（支持 Markdown 智能识别旁路）
+        // 注意：getInputString 会合并所有参数值，用于检测跨参数关联的攻击
         $input = $this->getInputString($request, false);
         $input = $this->truncateInput($input);
 
@@ -190,6 +207,10 @@ trait DetectsAttackPatterns
         if ($inputResult !== null) {
             return $inputResult;
         }
+
+        // 6. 独立检查每个参数值（避免跨参数拼接导致误报）
+        // 此方法已在 checkIndividualParamsForHighRisk 中实现，此处不再重复
+        // 但需要确保 checkIndividualParamsForHighRisk 的预过滤逻辑正确
 
         return null;
     }
@@ -264,13 +285,13 @@ trait DetectsAttackPatterns
         }
 
         // URL类参数的常见名称（不区分大小写）
+        // 注意：仅保留明确用于重定向/回调/Webhook 的参数名，避免过度匹配
+        // 如 url、return、next、link 等常见参数名已移除，如需检测请手动添加到配置
         $urlParamNames = [
             'redirect_uri', 'redirect_url', 'redirect', 'redirect_to',
-            'callback', 'callback_url', 'return_url', 'return', 'return_to',
-            'url', 'target_url', 'link', 'goto', 'next', 'continue',
+            'callback', 'callback_url', 'return_url', 'return_to',
             'webhook', 'webhook_url', 'notify_url', 'notify',
-            'forward', 'dest', 'destination', 'ref', 'referer', 'referrer',
-            'origin', 'source_url', 'image_url', 'img_url',
+            'forward', 'dest', 'destination', 'goto', 'continue',
         ];
 
         // 收集所有参数值（含解码变形）— 逐来源遍历避免 array_merge 复制大 POST 数组
@@ -488,8 +509,9 @@ trait DetectsAttackPatterns
      */
     protected function detectXssAttacks(object $request): ?string
     {
-        $excludeRules = \zxf\Security\Patterns\PatternService::resolveRules($this->config['intercept_rules_exclude'] ?? []);
-        $interceptRules = \zxf\Security\Patterns\PatternService::resolveRules($this->config['intercept_rules'] ?? []);
+        // 使用缓存规则方法，避免同一请求中多次调用 ConfigResolver
+        $excludeRules = $this->getExcludeRules();
+        $interceptRules = $this->getInterceptRules();
 
         // 从 PatternService 获取模式（延迟加载 + 统一排除/追加规则）
         $patterns = $this->patternService->getXssPatterns($excludeRules, $interceptRules);

@@ -12,6 +12,7 @@ namespace zxf\Security\Contracts;
  *
  * @package zxf\Security\Contracts
  * @since 6.1.0
+ * @version 6.2.0
  */
 interface IpCheckerInterface
 {

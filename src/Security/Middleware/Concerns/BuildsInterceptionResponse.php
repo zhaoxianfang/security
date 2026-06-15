@@ -20,8 +20,20 @@ use zxf\Security\ThreatData;
  * 跨框架兼容：所有 Request/Response/Log/View 操作均通过 FrameworkBridge 封装，
  * 支持 Laravel 11+ 和 ThinkPHP 8+。
  *
+ * ══════════════════════════════════════════════════════════════════════
+ * 宿主类依赖（由 SecurityMiddleware 提供）：
+ *   - isCliMode(): bool                     — 判断 CLI 运行环境
+ *   - $this->config[][]: mixed              — 安全配置数组
+ *   - $this->requestId: string              — 本次请求唯一标识
+ *   - $this->threats[]: array               — 已检测到的威胁类型列表
+ *   - $this->currentThreatType: string      — 当前威胁类型
+ *   - $this->lastMatchedPattern: string     — 最后匹配的正则模式
+ *   - $this->lastMatchedContent: string     — 最后匹配的内容片段
+ *   - $this->context: InterceptionContext   — 拦截上下文对象
+ *
  * @package zxf\Security\Middleware\Concerns
  * @since 6.1.0
+ * @version 6.2.0
  */
 trait BuildsInterceptionResponse
 {

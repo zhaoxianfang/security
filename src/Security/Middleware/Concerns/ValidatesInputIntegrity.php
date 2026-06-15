@@ -5,19 +5,33 @@ namespace zxf\Security\Middleware\Concerns;
 use zxf\Security\Bridge\FrameworkBridge;
 
 /**
- * 请求输入完整性验证
+ * 请求输入完整性验证 — 第七至第十一层安全防护
  *
  * 检查 HTTP 请求的各个维度是否符合安全标准：
- * User-Agent、Headers、请求体大小、速率限制、HTTP方法、URL长度、编码绕过。
+ *   - User-Agent 黑名单检测（已知攻击工具识别）
+ *   - HTTP 头安全检查（禁止头、CRLF 注入、Host 头验证）
+ *   - 请求体大小限制（防止 DoS 大载荷攻击）
+ *   - 请求速率限制（基于 IP+路由的漏/令牌桶）
+ *   - HTTP 方法白名单（仅允许 GET/POST/PUT/DELETE 等）
+ *   - URL 长度限制（防止缓冲区溢出/长 URL 绕过）
+ *   - 多重编码攻击检测（null 字节、% 占比、UTF-8 过度编码）
  *
  * 这些检查关注请求本身的形式合法性，不涉及内容模式匹配。
  *
+ * ══════════════════════════════════════════════════════════════════════
+ * 宿主类依赖（由 SecurityMiddleware 提供）：
+ *   - safePregMatch(): bool     — 安全正则匹配
+ *   - $this->config[][]: mixed  — 安全配置数组
+ *   - $this->requestId: string  — 唯一请求 ID
+ *   - $this->lastMatchedPattern: string — 最后匹配的模式
+ *   - $this->lastMatchedContent: string — 最后匹配的内容
+ *
  * 跨框架兼容：所有方法接受 object 类型请求对象，内部通过 FrameworkBridge 统一访问。
- * ThinkPHP 8+ 下速率限制使用 Cache 门面模拟。
+ * ThinkPHP 8+ 下速率限制使用 Cache 门面模拟（原子 inc() 减少高并发计数丢失）。
  *
  * @package zxf\Security\Middleware\Concerns
  * @since 5.4.0
- * @version 6.1.0
+ * @version 6.2.0
  */
 trait ValidatesInputIntegrity
 {
@@ -270,7 +284,9 @@ trait ValidatesInputIntegrity
             $percentThreshold = $config['percent_threshold'] ?? 0.30;
 
             // 如果URL中%字符占比超过阈值，可能是编码攻击
-            if ($urlLength > 0 && ($percentCount * 3) / $urlLength > $percentThreshold) {
+            // 注意：percent_threshold 默认为 0.30（即 30%），该值为直接百分比，不含倍数因子
+            // 实际经验：正常 URL 中 % 编码占比通常低于 5%，超过 30% 则极大概率为编码攻击
+            if ($urlLength > 0 && $percentCount / $urlLength > $percentThreshold) {
                 // 进一步检查是否有危险模式的编码
                 $decoded = urldecode($rawUrl);
                 $doubleDecoded = urldecode($decoded);

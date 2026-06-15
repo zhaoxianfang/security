@@ -13,8 +13,15 @@ namespace zxf\Security;
  *  2. 支持用户覆盖 — 风险等级可通过 $overrides 参数自定义
  *  3. 零依赖 — 纯静态方法，无需容器
  *
+ * ⚠️ 数据分层说明：
+ *  BLOCK_MESSAGES 与 DefaultConfig::RESPONSE_MESSAGES 内容重复但语义不同：
+ *  - DefaultConfig::RESPONSE_MESSAGES 是第一层默认值，优先被 BuildsInterceptionResponse 使用
+ *  - ThreatData::BLOCK_MESSAGES 是第二层兜底，仅在 DefaultConfig 无匹配时生效
+ *  保持两份数据独立可避免单向依赖，但修改时需同步更新两处。
+ *
  * @package zxf\Security
  * @since 5.4.0
+ * @version 6.2.0
  */
 class ThreatData
 {
@@ -50,6 +57,7 @@ class ThreatData
         'xss_tag' => '检测到XSS标签注入攻击',
         'xss_encoding' => '检测到XSS编码绕过攻击',
         'xss_framework' => '检测到框架特定XSS攻击',
+        'xss_event' => '检测到事件处理器XSS攻击（onerror/onload等）',
 
         // IP/访问控制
         'blacklist' => 'IP地址在黑名单中，已被禁止访问',
@@ -66,6 +74,9 @@ class ThreatData
         'custom_high' => '检测到高危自定义安全威胁',
         'custom_medium' => '检测到中等自定义安全威胁',
         'custom_low' => '检测到低危自定义安全威胁',
+        'database_table_destruction' => '检测到数据库表结构破坏操作（DROP TABLE/migrate:fresh等），已被拦截',
+        'database_mass_deletion' => '检测到数据库全量数据删除操作（TRUNCATE/无条件DELETE），已被拦截',
+        'database_code_level_operation' => '检测到代码级数据库危险操作（Artisan::call危险命令），已被拦截',
     ];
 
     /**
@@ -101,6 +112,7 @@ class ThreatData
         'ldap' => 'low',
         'xss_encoding' => 'low',
         'xss_framework' => 'low',
+        'xss_event' => 'low',
         'rate_limit' => 'low',
         'invalid_method' => 'low',
         'url_too_long' => 'low',
@@ -109,6 +121,9 @@ class ThreatData
         'custom_high' => 'high',
         'custom_medium' => 'medium',
         'custom_low' => 'low',
+        'database_table_destruction' => 'high',
+        'database_mass_deletion' => 'high',
+        'database_code_level_operation' => 'high',
     ];
 
     /**
@@ -128,6 +143,7 @@ class ThreatData
         'xss_tag'         => 'client_side',
         'xss_encoding'    => 'client_side',
         'xss_framework'   => 'client_side',
+        'xss_event'      => 'client_side',
         'xxe'             => 'xml_attack',
         'ldap'            => 'injection',
         'xpath'           => 'injection',
@@ -153,6 +169,9 @@ class ThreatData
         'custom_high' => 'custom_rule',
         'custom_medium' => 'custom_rule',
         'custom_low' => 'custom_rule',
+        'database_table_destruction' => 'database_operation',
+        'database_mass_deletion' => 'database_operation',
+        'database_code_level_operation' => 'database_operation',
     ];
 
     /**
@@ -179,6 +198,7 @@ class ThreatData
         'xss_tag' => 'XSS标签注入',
         'xss_encoding' => 'XSS编码绕过',
         'xss_framework' => '框架特定XSS',
+        'xss_event' => '事件处理器XSS',
         'rate_limit' => '请求频率超限',
         'url_too_long' => 'URL长度超限',
         'body_too_large' => '请求体过大',
@@ -192,6 +212,9 @@ class ThreatData
         'custom_high' => '高危自定义安全威胁',
         'custom_medium' => '中等自定义安全威胁',
         'custom_low' => '低危自定义安全威胁',
+        'database_table_destruction' => '数据库表结构破坏操作',
+        'database_mass_deletion' => '数据库全量数据删除操作',
+        'database_code_level_operation' => '代码级数据库危险操作',
     ];
 
     /**
@@ -223,6 +246,7 @@ class ThreatData
         'xss_tag' => '检测到标签注入攻击，请求已被拦截',
         'xss_encoding' => '检测到XSS编码绕过攻击，请求已被拦截',
         'xss_framework' => '检测到框架特定XSS攻击，请求已被拦截',
+        'xss_event' => '检测到事件处理器XSS攻击，请求已被拦截',
         'dangerous_upload' => '检测到危险文件上传，请求已被拦截',
         'redirect' => '检测到开放重定向攻击，请求已被拦截',
         'file_include' => '检测到文件包含攻击，请求已被拦截',
@@ -230,6 +254,9 @@ class ThreatData
         'custom_high' => '检测到高危安全威胁，请求已被拦截',
         'custom_medium' => '检测到中等安全威胁，请求已被拦截',
         'custom_low' => '检测到低危安全威胁，请求已被拦截',
+        'database_table_destruction' => '检测到数据库表结构破坏操作，请求已被拦截',
+        'database_mass_deletion' => '检测到数据库全量数据删除操作，请求已被拦截',
+        'database_code_level_operation' => '检测到代码级数据库危险操作，请求已被拦截',
     ];
 
     /**

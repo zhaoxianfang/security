@@ -37,9 +37,10 @@ class PatternService
      * @var array<string, string>
      */
     private static array $dataFiles = [
-        'high_risk' => __DIR__ . '/data/high_risk_patterns.php',
-        'xss'       => __DIR__ . '/data/xss_patterns.php',
-        'url_path'  => __DIR__ . '/data/url_path_patterns.php',
+        'high_risk'             => __DIR__ . '/data/high_risk_patterns.php',
+        'xss'                   => __DIR__ . '/data/xss_patterns.php',
+        'url_path'              => __DIR__ . '/data/url_path_patterns.php',
+        'database_operation'    => __DIR__ . '/data/database_operation_patterns.php',
     ];
 
     /**
@@ -50,22 +51,23 @@ class PatternService
      */
     private static array $preFilters = [
         'sql'              => [
-            'select', 'union', 'sleep', 'benchmark', 'load_file', 'drop', 'truncate',
-            'xp_', 'sp_oa', '%27', '1=1', 'extractvalue', 'updatexml', 'floor(rand',
-            '@@', 'database(', 'user(', 'system_user', 'current_user', 'group_concat',
-            'concat_ws', 'waitfor', 'unhex', 'charset', '/*', '/**/', '%df', '%bf',
+            // 注意：不使用裸 'select' 关键词（几乎所有 SQL 都包含，会令预过滤失效），
+            // 改用 'union select' 检测 UNIONSELECT 注入变体
+            'union select', 'union', 'sleep(', 'benchmark(', 'load_file', 'drop table', 'truncate table',
+            'xp_', 'sp_oa', '%27', 'extractvalue', 'updatexml', 'floor(rand',
+            '@@', 'group_concat', 'concat_ws', 'waitfor delay', 'unhex(', '/*', '/**/', '%df', '%bf',
             "' or ", "' and ", 'case when', 'if(',
         ],
         'command'          => [
-            'system', 'exec', 'passthru', 'shell_exec', 'proc_open', 'popen', 'pcntl_exec',
-            'rm ', 'wget', 'curl', 'nc ', 'netcat', 'whoami', '|', '`', '$(',
-            'powershell', 'cmd ', ';id', 'bash', 'sh ', 'python', 'perl', 'php ', 'ruby', 'lua', 'node',
+            'system(', 'exec(', 'passthru(', 'shell_exec(', 'proc_open(', 'popen(', 'pcntl_exec(',
+            'rm -', 'wget ', 'curl ', 'nc -', 'netcat -', '|', '`', '$(',
+            'powershell -', 'cmd /c', 'bash -c', 'sh -c', 'python -c', 'perl -e', 'php -r',
         ],
         'path'             => [
-            '../', '..\\', '%2e%2e', '%252e', '.env', '.git', 'etc/', 'proc/',
+            '../', '..\\', '%2e%2e', '%252e', '/.env', '/.git', 'etc/', 'proc/',
             '.php', '.jsp', '.asp', '.aspx', '.sh', '.py', '.exe', '.dll', '.bat',
             'passwd', '.svn', '.hg', '.bzr', 'htaccess', 'htpasswd', 'web.config',
-            'composer', 'package', 'docker', 'wp-', 'phpmyadmin', 'adminer',
+            'composer.json', 'package.json', 'docker', 'wp-', 'phpmyadmin', 'adminer',
             '%c0', '%ef', '%e0', '%00', 'windows', 'system32',
         ],
         'ldap'             => [')(', '|(', '&(', '*(', '(|', '(&'],
@@ -73,24 +75,43 @@ class PatternService
         'nosql'            => ['$eq', '$ne', '$gt', '$lt', '$gte', '$lte', '$where', '$regex', '$exists', '$type', '$or', '$and', '$mod', '$size', '$all', '$in', '$nin'],
         'ssti'             => ['{{', '}}', '{%', '%}', 'eval(', 'exec('],
         'ssrf'             => [
-            '127.0.0.1', '169.254', 'gopher', 'metadata', 'nip.io', '//', 'redirect_uri',
-            'callback', 'latest/', 'instance-', 'rebind', 'dnsrebind', 'port=',
+            '127.0.0.1', '169.254', 'gopher://', 'metadata', 'nip.io', 'latest/', 'instance-',
+            'rebind', 'dnsrebind',
         ],
-        'encoding'         => ['%25', '%00', '%c0', '%e0', '&#x', '&#', '%u', '%0', '%1', '%2', '%3', '%4', '%5', '%6', '%7', '%8', '%9', '%a', '%b', '%c', '%d', '%e', '%f'],
+        'encoding'         => ['%25', '%00', '%c0', '%e0', '&#x', '&#', '%u', '%0d', '%0a'],
         'header_injection' => ['%0d', '%0a', '\r\n', 'content-type:', 'set-cookie:', 'location:', 'transfer-encoding:'],
         'redirect'         => [
-            'redirect_uri', 'redirect=', 'redirect:', 'callback', 'return_url', '//', 'goto=',
-            'url=', 'target=', 'link=', 'next=', 'dest=', 'return=', 'forward=',
+            'redirect_uri=', 'redirect=', 'redirect:', 'callback=', 'return_url=', '//', 'goto=',
+            // 以下参数名较常见，但结合 redirect 正则的上下文限定可降低误报
+            'url=', 'next=', 'dest=', 'forward=',
         ],
         'file_include'     => [
-            'include(', 'require(', 'php://', 'file_get_contents', '/proc/self/',
-            'data://', 'expect://', 'readfile', 'fopen', 'show_source',
+            'include(', 'require(', 'php://', 'file_get_contents(', '/proc/self/',
+            'data://', 'expect://', 'readfile(', 'fopen(', 'show_source(',
         ],
         'xss_script'       => ['<script', 'javascript:', 'eval('],
-        'xss_dom'          => ['onerror', 'onload', 'onclick', 'onfocus', 'onmouse', 'innerHTML', 'outerHTML'],
+        'xss_dom'          => ['onerror=', 'onload=', 'onclick=', 'onfocus=', 'onmouse', 'innerHTML=', 'outerHTML='],
+        'xss_event'        => ['onerror=', 'onload=', 'onclick=', 'onfocus=', 'onmouseover=', 'onblur=', 'onchange=', 'onsubmit='],
         'xss_tag'          => ['<iframe', '<object', '<embed', '<svg', '<img', '<input'],
         'xss_encoding'     => ['\\u', '&#x', 'base64,', 'data:'],
         'xss_framework'    => ['jQuery.fn', 'constructor', 'prototype', 'v-html'],
+        'table_destruction'     => [
+            'migrate:fresh', 'migrate:refresh', 'migrate:reset', 'migrate:rollback',
+            'db:wipe', 'schema::drop', 'drop table', 'drop database', 'dropifexists',
+            'dropalltables', 'alter table', 'drop view', 'drop procedure', 'drop function',
+            'rename table', 'foreign_key_checks', 'sql_safe_updates',
+        ],
+        'mass_deletion'         => [
+            'truncate table', 'delete from', '->delete(', '::destroy(', 'where 1=1',
+            'where 1', 'where true', 'db::table', 'db::name', 'db::execute',
+            '::all()->', '::query()->', '->each(',
+        ],
+        'code_level_operation'  => [
+            'artisan::call', 'shell_exec(', 'migrate:fresh', 'migrate:refresh',
+            'migrate:rollback', 'db:wipe', 'php artisan', 'db::statement(',
+            'db::unprepared(', 'passthru(', 'proc_open(', 'system(',
+            'new process(', 'fromshellcommandline',
+        ],
     ];
 
     /**
@@ -142,6 +163,29 @@ class PatternService
         $defaults = $this->applyFlatExclusions($defaults, $excludeRules);
 
         return $this->applyFlatInterceptions($defaults, $interceptRules);
+    }
+
+    /**
+     * 获取数据库危险操作模式
+     *
+     * 返回按类型分组的模式数组：
+     *   - table_destruction ：表结构破坏类
+     *   - mass_deletion     ：全量数据删除类
+     *   - code_level_operation：代码级操作识别
+     *
+     * @param array $excludeRules 排除规则列表（精确字符串匹配）
+     * @param array $interceptRules 追加规则 ['high' => [], 'medium' => [], 'low' => []]
+     * @return array<string, array<int, array{pattern:string,risk:string}>>
+     */
+    public function getDatabaseOperationPatterns(array $excludeRules = [], array $interceptRules = []): array
+    {
+        $defaults = $this->loadDataFile('database_operation');
+
+        // 应用排除规则（优先级最高）
+        $defaults = $this->applyExclusions($defaults, $excludeRules);
+
+        // 应用追加规则（优先级次之）
+        return $this->applyInterceptions($defaults, $interceptRules);
     }
 
     /**

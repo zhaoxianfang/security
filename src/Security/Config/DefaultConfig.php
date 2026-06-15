@@ -17,6 +17,7 @@ use zxf\Security\Services\ConfigResolver;
  *
  * @package zxf\Security\Config
  * @since 6.0.0
+ * @version 6.2.0
  */
 class DefaultConfig
 {
@@ -51,11 +52,15 @@ class DefaultConfig
         'xss_tag' => '检测到标签注入攻击，请求已被拦截',
         'xss_encoding' => '检测到XSS编码绕过攻击，请求已被拦截',
         'xss_framework' => '检测到框架特定XSS攻击，请求已被拦截',
+        'xss_event' => '检测到事件处理器XSS攻击，请求已被拦截',
         'dangerous_upload' => '检测到危险文件上传，请求已被拦截',
         'unknown' => '请求包含潜在的安全威胁，已被拦截',
         'custom_high' => '检测到高危安全威胁，请求已被拦截',
         'custom_medium' => '检测到中等安全威胁，请求已被拦截',
         'custom_low' => '检测到低危安全威胁，请求已被拦截',
+        'database_table_destruction' => '检测到数据库表结构破坏操作，请求已被拦截',
+        'database_mass_deletion' => '检测到数据库全量数据删除操作，请求已被拦截',
+        'database_code_level_operation' => '检测到代码级数据库危险操作，请求已被拦截',
     ];
 
     /**
@@ -99,7 +104,15 @@ class DefaultConfig
     /**
      * 默认User-Agent黑名单
      *
-     * @var array<string>
+     * 支持格式：
+     *   - 字符串：不区分大小写的部分匹配（如 'sqlmap'）
+     *   - 正则表达式（以 / 开头）：精确匹配（如 '/python-requests\\//i'）
+     *   - 闭包函数：自定义匹配逻辑
+     *
+     * 注意：通过 str_contains 做字符串部分匹配时，过于通用的词（如 'curl'、'wget'、'python'）
+     * 不建议使用，因为它们会误报正常的 HTTP 请求。如需匹配，请使用正则精确格式。
+     *
+     * @var array<mixed>
      */
     public const USER_AGENT_BLACKLIST = [
         'sqlmap',        // SQLMap 注入工具

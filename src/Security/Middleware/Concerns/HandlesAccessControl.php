@@ -7,10 +7,18 @@ use zxf\Security\Services\IpMatcherService;
 use zxf\Security\Services\ConfigResolver;
 
 /**
- * 访问控制检查
+ * 访问控制检查 — 第一至第三层安全防护
  *
  * 处理路由排除、IP 白名单/黑名单、检测层级开关等门控逻辑。
  * 这些检查是安全防护的第一道防线，发生在攻击检测之前。
+ *
+ * ══════════════════════════════════════════════════════════════════════
+ * 宿主类依赖（由 SecurityMiddleware 提供）：
+ *   - isCliMode(): bool             — 判断当前是否 CLI 模式
+ *   - safePregMatch(): bool         — 安全正则匹配
+ *   - $this->config[][]: mixed      — 安全配置数组
+ *   - $this->ipMatcher: IpMatcherService — IP 匹配服务实例
+ *   - $this->requestId: string      — 唯一请求 ID
  *
  * 跨框架兼容：所有方法接受 object 类型请求对象，内部通过 FrameworkBridge 统一访问。
  *

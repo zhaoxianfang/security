@@ -12,7 +12,7 @@ namespace zxf\Security\Dto;
  *
  * @package zxf\Security\Dto
  * @since 4.0.0
- * @version 6.1.0
+ * @version 6.2.0
  */
 readonly class InterceptionContext
 {

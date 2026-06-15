@@ -7,12 +7,14 @@ use zxf\Security\Bridge\FrameworkBridge;
 use zxf\Security\Dto\InterceptionContext;
 use zxf\Security\Services\IpMatcherService;
 use zxf\Security\Patterns\PatternService;
+use zxf\Security\Services\ConfigResolver;
 use zxf\Security\Middleware\Concerns\UsesSafeRegex;
 use zxf\Security\Middleware\Concerns\HandlesAccessControl;
 use zxf\Security\Middleware\Concerns\ValidatesInputIntegrity;
 use zxf\Security\Middleware\Concerns\DetectsAttackPatterns;
 use zxf\Security\Middleware\Concerns\ManagesMarkdownSafety;
 use zxf\Security\Middleware\Concerns\HandlesFileUploads;
+use zxf\Security\Middleware\Concerns\HandlesDatabaseOperations;
 use zxf\Security\Middleware\Concerns\BuildsInterceptionResponse;
 
 /**
@@ -24,7 +26,7 @@ use zxf\Security\Middleware\Concerns\BuildsInterceptionResponse;
  * 3. 零缓存依赖 - 不使用任何自定义缓存，直接使用框架原生功能
  * 4. 高性能 - 精简逻辑，单次请求处理耗时 < 1ms
  * 5. 灵活配置 - 支持回调、动态规则、路由排除
- * 6. 模块化架构 - 按功能拆分为 7 个 Trait，提高可读性和可维护性
+ * 6. 模块化架构 - 按功能拆分为 8 个 Trait，提高可读性和可维护性
  * 7. 跨框架兼容 - 支持 Laravel 11+ 和 ThinkPHP 8+
  *
  * 安全防护层级（按执行顺序）：
@@ -42,6 +44,7 @@ use zxf\Security\Middleware\Concerns\BuildsInterceptionResponse;
  * 12. 高危攻击检测    → DetectsAttackPatterns + ManagesMarkdownSafety
  * 13. XSS攻击检测     → DetectsAttackPatterns + ManagesMarkdownSafety
  * 14. 文件上传检查    → HandlesFileUploads
+ * 15. 数据库操作检测  → HandlesDatabaseOperations
  *
  * 模块文件：
  *  - Concerns/UsesSafeRegex.php            安全正则 + 输入处理
@@ -50,10 +53,11 @@ use zxf\Security\Middleware\Concerns\BuildsInterceptionResponse;
  *  - Concerns/DetectsAttackPatterns.php    URL路径 + 高危攻击 + XSS 模式检测
  *  - Concerns/ManagesMarkdownSafety.php    Markdown 智能识别与旁路
  *  - Concerns/HandlesFileUploads.php       文件上传安全检查
+ *  - Concerns/HandlesDatabaseOperations.php 数据库危险操作识别与拦截
  *  - Concerns/BuildsInterceptionResponse.php  拦截响应 + 日志 + 回调
  *
  * @package zxf\Security\Middleware
- * @version 6.1.0
+ * @version 6.2.0
  */
 class SecurityMiddleware
 {
@@ -63,6 +67,7 @@ class SecurityMiddleware
     use DetectsAttackPatterns;
     use ManagesMarkdownSafety;
     use HandlesFileUploads;
+    use HandlesDatabaseOperations;
     use BuildsInterceptionResponse;
 
     /**
@@ -123,6 +128,23 @@ class SecurityMiddleware
      * @var InterceptionContext 拦截上下文信息
      */
     protected InterceptionContext $context;
+
+    /**
+     * 缓存已解析的排除规则列表（请求级，避免多次调用 ConfigResolver）
+     *
+     * null = 未解析，首次访问时惰性解析后缓存。
+     * 因为 $this->config 在构造后不变，规则列表也仅需解析一次。
+     *
+     * @var array|null
+     */
+    private ?array $cachedExcludeRules = null;
+
+    /**
+     * 缓存已解析的追加拦截规则列表（请求级，避免多次调用 ConfigResolver）
+     *
+     * @var array|null
+     */
+    private ?array $cachedInterceptRules = null;
 
     /**
      * 构造函数
@@ -333,6 +355,15 @@ class SecurityMiddleware
             });
         }
 
+        // ========== 第十四层：数据库危险操作检测 ==========
+        $dbThreatType = $this->detectDatabaseOperations($request);
+        if ($dbThreatType !== null) {
+            return $this->handleThreatDetection($request, $next, $dbThreatType, function ($request) use ($dbThreatType) {
+                $this->logThreat($request, $dbThreatType, '数据库危险操作模式匹配: ' . $this->lastMatchedPattern);
+                return $this->blockRequest($request, '检测到数据库危险操作，请求已被拦截', 403, $dbThreatType);
+            });
+        }
+
         // 所有安全检查通过，继续处理请求
         return $next($request);
     }
@@ -378,5 +409,41 @@ class SecurityMiddleware
         }
 
         return 'SEC_' . date('YmdHis') . '_' . $randomPart;
+    }
+
+    /**
+     * 获取已解析的排除规则列表（请求级惰性缓存）
+     *
+     * 从 intercept_rules_exclude 配置解析，支持闭包、类名、可调用数组等格式。
+     * 同一请求中多次调用仅解析一次，避免各 trait 方法重复触发 ConfigResolver。
+     *
+     * @return array 排除规则列表（字符串数组）
+     */
+    protected function getExcludeRules(): array
+    {
+        if ($this->cachedExcludeRules === null) {
+            $this->cachedExcludeRules = ConfigResolver::resolve(
+                $this->config['intercept_rules_exclude'] ?? []
+            );
+        }
+        return $this->cachedExcludeRules;
+    }
+
+    /**
+     * 获取已解析的追加拦截规则列表（请求级惰性缓存）
+     *
+     * 从 intercept_rules 配置解析，返回按风险等级分组的数组：
+     * ['high' => [...], 'medium' => [...], 'low' => [...]]
+     *
+     * @return array 追加拦截规则列表（按风险等级分组）
+     */
+    protected function getInterceptRules(): array
+    {
+        if ($this->cachedInterceptRules === null) {
+            $this->cachedInterceptRules = ConfigResolver::resolve(
+                $this->config['intercept_rules'] ?? []
+            );
+        }
+        return $this->cachedInterceptRules;
     }
 }

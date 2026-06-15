@@ -5,13 +5,30 @@ namespace zxf\Security\Services;
 use zxf\Security\Contracts\IpCheckerInterface;
 
 /**
- * IP匹配服务
+ * IP 匹配服务 — 统一的白/黑名单 IP 判断引擎
  *
- * 支持多种IP列表格式：
- * 1. 静态IP字符串或CIDR
- * 2. 闭包函数
- * 3. 类名（实现 IpCheckerInterface）
- * 4. 可调用数组 [类名, 方法名]
+ * ══════════════════════════════════════════════════════════════════════
+ * 支持的 IP 列表格式（按匹配优先级）：
+ *   1. 类名字符串 — 自动实例化，支持 IpCheckerInterface 和 __invoke
+ *   2. 静态 IP 字符串 — 精确匹配
+ *   3. CIDR 网段 — 支持 IPv4（如 10.0.0.0/24）和 IPv6（如 ::1/128）
+ *   4. Closure 闭包 — function(string $ip, object $request): bool
+ *   5. IpCheckerInterface 实例 — 调用 check() 方法
+ *   6. 可调用数组 — [class, method] 格式
+ *
+ * ══════════════════════════════════════════════════════════════════════
+ * CIDR 匹配细节：
+ *   - IPv4：使用 ip2long() 转换为长整型后按位与比较
+ *     • 防御 64 位 PHP 符号扩展问题：通过 & 0xFFFFFFFF 强制无符号化
+ *     • 支持 /0 到 /32 的完整前缀范围
+ *   - IPv6：使用 inet_pton() 转换为二进制字符串后逐字节比较
+ *     • 支持 /0 到 /128 的完整前缀范围
+ *     • 非对齐前缀：剩余位通过掩码 & 0xFF << (8 - bits) 精确匹配
+ *
+ * ══════════════════════════════════════════════════════════════════════
+ * 防御性设计：
+ *   - 所有匹配路径均有 try/catch 保护，单个异常项不影响其他规则
+ *   - ip2long() / inet_pton() 失败时返回 false 而非抛异常
  *
  * 跨框架兼容：$request 参数声明为 object，支持 Laravel 和 ThinkPHP 请求对象。
  *

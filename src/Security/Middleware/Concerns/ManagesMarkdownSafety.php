@@ -15,8 +15,15 @@ namespace zxf\Security\Middleware\Concerns;
  *  - 第一层：allow_script_in_markdown → 控制 XSS 脚本标签检测
  *  - 第二层：allow_dangerous_code_in_markdown → 控制高危代码/命令检测
  *
+ * ══════════════════════════════════════════════════════════════════════
+ * 宿主类依赖（由 SecurityMiddleware + UsesSafeRegex trait 提供）：
+ *   - $this->config[][]: mixed              — 安全配置数组
+ *   - safePregMatch(): bool                 — 安全正则匹配（UsesSafeRegex）
+ *   - safePregReplace(): string             — 安全正则替换（UsesSafeRegex）
+ *
  * @package zxf\Security\Middleware\Concerns
  * @since 5.4.0
+ * @version 6.2.0
  */
 trait ManagesMarkdownSafety
 {
@@ -143,7 +150,14 @@ trait ManagesMarkdownSafety
         $smartDetection = $markdownConfig['smart_detection'] ?? true;
         $allowDangerousCode = $markdownConfig['allow_dangerous_code_in_markdown'] ?? false;
 
-        if (!$smartDetection || !$allowDangerousCode) {
+        // 逻辑优化：当 smart_detection 关闭时，不启用旁路
+        // 当 smart_detection 开启但 allow_dangerous_code_in_markdown 关闭时，也不启用旁路
+        // 只有当两者都开启时才启用旁路
+        if (!$smartDetection) {
+            return false;
+        }
+
+        if (!$allowDangerousCode) {
             return false;
         }
 

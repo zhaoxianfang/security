@@ -3,19 +3,29 @@
 namespace zxf\Security\Services;
 
 /**
- * 配置解析服务
+ * 配置解析服务 — 支持多种格式的统一配置解析
  *
- * 支持多种配置格式的统一解析：
- * 1. 静态数组 — 直接返回
- * 2. 闭包函数 — 调用后返回数组
- * 3. 类名字符串 — 实例化后调用 __invoke 或返回数组的方法
- * 4. 可调用数组 — [类名, 方法名]
+ * ══════════════════════════════════════════════════════════════════════
+ * 支持的配置格式（按解析顺序）：
+ *   1. Closure 闭包 — 调用后返回数组
+ *   2. 可调用数组 — [class, method] 或 [instance, method]
+ *   3. 普通数组 — 直接返回，零开销
+ *   4. 可调用对象 — 实现 __invoke 的实例
+ *   5. 类名字符串 — 自动实例化，按优先级尝试约定方法：
+ *      getItems() → getConfig() → resolve() → toArray() → all() → __invoke()
  *
+ * ══════════════════════════════════════════════════════════════════════
+ * 防御性设计：
+ *   - 所有解析路径均有 try/catch 保护，配置提供者的异常不会中断安全中间件
+ *   - 非数组返回值统一转为空数组，避免下游 foreach 类型错误
+ *   - 类名字符串先检查 class_exists()，防止自动加载失败
+ *
+ * ══════════════════════════════════════════════════════════════════════
  * 应用场景：
- * - trusted_ips、whitelist、blacklist 的动态解析
- * - user_agent_blacklist 的动态扩展
- * - upload.allowed_extensions / blocked_extensions 的动态计算
- * - markdown.syntax_patterns 的动态定义
+ *   - trusted_ips、whitelist、blacklist 的动态解析
+ *   - user_agent_blacklist 的动态扩展
+ *   - upload.allowed_extensions / blocked_extensions 的动态计算
+ *   - markdown.syntax_patterns 的动态定义
  *
  * @package zxf\Security\Services
  * @since 6.0.0

@@ -2,8 +2,8 @@
 
 /**
  * ╔═══════════════════════════════════════════════════════════════════════════╗
- * ║        Laravel / ThinkPHP 安全中间件 - 配置文件 (v6.1)                       ║
- * ║        🔐 14层纵深安全防护，覆盖 OWASP Top 10 核心攻击向量                     ║
+ * ║        Laravel / ThinkPHP 安全中间件 - 配置文件 (v6.2)                       ║
+ * ║        🔐 15层纵深安全防护，覆盖 OWASP Top 10 核心攻击向量                     ║
  * ╚═══════════════════════════════════════════════════════════════════════════╝
  *
  * 📦 支持的 PHP 版本：8.2 / 8.3 / 8.4 / 8.5
@@ -65,6 +65,7 @@ return [
         'xss'          => env('SECURITY_DETECT_XSS', true),          // XSS攻击检测
         'upload'       => env('SECURITY_DETECT_UPLOAD', true),       // 文件上传安全检查
         'redirect'     => env('SECURITY_DETECT_REDIRECT', false),    // 开放重定向检测（默认关闭，易误报）
+        'database_operation' => env('SECURITY_DETECT_DB_OPERATION', false), // 数据库危险操作检测（默认关闭）
     ],
 
     /*
@@ -120,7 +121,7 @@ return [
     | 推荐值：普通网站 60次/分，API 300次/分，后台 20次/分
     */
     'rate_limit' => [
-        'max_attempts' => env('SECURITY_RATE_LIMIT_ATTEMPTS', 60),
+        'max_attempts' => env('SECURITY_RATE_LIMIT_ATTEMPTS', 300),
         'decay_minutes' => env('SECURITY_RATE_LIMIT_DECAY', 1),
         'key_prefix' => env('SECURITY_RATE_LIMIT_KEY_PREFIX', 'security'),
     ],
@@ -205,6 +206,12 @@ return [
         // 允许URL编码绕过安全拦截: %25；如果不需要，直接删除或注释即可；
         '/%25(?:25)+[0-9a-f]{2}/i', // 多重URL编码绕过（%2525...）
         '/%25(?:25)+/i', // 多层%25编码序列
+
+        // 默认排除：业务系统可能正常使用的模式（按需调整）
+        // 示例：如业务使用 unhex() 做密码哈希，可取消注释排除
+        // '/unhex\s*\(/i',
+        // '/benchmark\s*\(/i',
+        // '/\b1\s*=\s*1\b/i',        // 搜索场景常用"1=1"，误报率高
     ],
 
     /*
@@ -440,4 +447,91 @@ return [
     |   ],
     */
     'threat_risk_levels' => [],
+
+    /*
+    |--------------------------------------------------------------------------
+    | 🗄️ 数据库危险操作检测与拦截（第十四层安全防护）
+    |--------------------------------------------------------------------------
+    |
+    | 识别并拦截通过 Web 请求提交的数据库危险操作命令，防止通过 API/表单/URL
+    | 等渠道执行可能造成数据丢失的操作。
+    |
+    | ══════════════════════════════════════════════════════════════════════
+    | 三大检测类别（52 条规则，分阶段匹配）：
+    |
+    | 1. 表结构破坏类（18 条规则，破坏性最强，不可逆）：
+    |    - Laravel Artisan: migrate:fresh、migrate:refresh、migrate:reset、db:wipe
+    |    - ThinkPHP: migrate:rollback
+    |    - Schema Builder: Schema::drop()、dropIfExists()、dropAllTables()、dropDatabase()
+    |    - 原生 SQL DDL: DROP TABLE/DATABASE/VIEW/PROCEDURE/FUNCTION
+    |    - 危险前置操作: ALTER TABLE DROP、RENAME TABLE、SET FOREIGN_KEY_CHECKS=0
+    |                    SET SQL_SAFE_UPDATES=0
+    |
+    | 2. 全量数据删除类（21 条规则，数据不可恢复）：
+    |    - SQL: TRUNCATE TABLE、DELETE FROM 无条件/永真条件（WHERE 1=1/OR 1=1等）
+    |           UPDATE 无条件/永真条件
+    |    - Laravel Eloquent: Model::truncate()、::query()->delete()
+    |                        ::all()->each(...delete...)、->select()->delete()
+    |    - ThinkPHP: Db::table()->delete()、Db::name()->delete()
+    |                Db::execute(DROP/TRUNCATE)、Model::destroy() 无条件
+    |
+    | 3. 代码级操作识别（13 条规则）：
+    |    - Artisan::call() 调用危险迁移命令
+    |    - shell_exec/exec/passthru/system/popen/proc_open 执行 artisan
+    |    - Symfony Process 组件执行 artisan
+    |    - DB::statement()/DB::unprepared() 执行 DROP/TRUNCATE 原生 SQL
+    |
+    | ══════════════════════════════════════════════════════════════════════
+    | 两级过滤性能优化：
+    |   第一级 — str_contains 预过滤（~50μs）：合并关键词列表，排除 95%+ 安全请求
+    |   第二级 — preg_match 正则匹配：仅对通过预过滤的 <5% 输入执行 52 条正则
+    |
+    | ══════════════════════════════════════════════════════════════════════
+    | environments 支持的值及其含义：
+    |   'all'        — 所有环境均拦截（适合高度敏感系统）
+    |   'production' — 仅生产环境拦截（推荐配置，防止线上误操作丢数据）
+    |   'staging'    — 预发布/灰度环境拦截
+    |   'testing'    — 仅测试环境拦截
+    |   'local'      — 仅本地开发环境拦截（调试用）
+    |   'cli'        — 仅 CLI 命令行环境拦截（防止 artisan 命令管道误调用）
+    |
+    | 支持多环境组合：['production', 'staging', 'cli'] 可覆盖多个场景。
+    |
+    | ══════════════════════════════════════════════════════════════════════
+    | 环境配置建议：
+    |   - 开发环境：保持默认（environments 不含 'local'），或仅开启 CLI
+    |   - 测试环境：设置为 ['testing']
+    |   - 预发布环境：设置为 ['staging']
+    |   - 生产环境：设置为 ['production', 'cli']（防止误操作丢数据）
+    |   - 高敏系统：设置为 ['all']
+    |
+    | ══════════════════════════════════════════════════════════════════════
+    | 误拦截排除：
+    |   - exclude_tables: 排除对特定系统表的操作（如 cache/sessions/jobs）
+    |   - exclude_commands: 排除特定 artisan 命令名（如 migrate:rollback）
+    |*/
+    'database_operation' => [
+        // 拦截生效环境：指定在哪些环境下识别并拦截数据库危险操作
+        // 注意：总开关由 detection_layers.database_operation 控制（见上方）
+        // 环境选项：'all' | 'production' | 'staging' | 'testing' | 'local' | 'cli'
+        // 例如：['production'] 仅生产环境拦截，['all'] 所有环境拦截
+        'environments' => ['production'],
+
+        // 是否拦截表结构破坏操作（DROP TABLE、migrate:fresh 等）
+        'block_table_destruction' => env('SECURITY_DB_BLOCK_TABLE_DESTRUCTION', true),
+
+        // 是否拦截全量数据删除操作（TRUNCATE、DELETE 无条件等）
+        'block_mass_deletion' => env('SECURITY_DB_BLOCK_MASS_DELETION', true),
+
+        // 是否拦截代码级数据库危险操作（Artisan::call 等）
+        'block_code_level_operation' => env('SECURITY_DB_BLOCK_CODE_LEVEL', true),
+
+        // 自定义排除表名/命令（不被拦截的表名或命令名称列表）
+        // 例如：['cache', 'sessions', 'jobs'] 表示对 cache/sessions/jobs 表操作不拦截
+        'exclude_tables' => [],
+
+        // 自定义排除命令（不被拦截的 artisan 命令全名列表）
+        // 例如：['migrate:rollback'] 允许 migrate:rollback 执行
+        'exclude_commands' => [],
+    ],
 ];

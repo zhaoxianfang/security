@@ -1,8 +1,30 @@
 <?php
 
 /**
- * 高危攻击检测模式定义（v6.0 元数据格式）
+ * 高危攻击检测模式定义（v6.2 元数据格式）
  *
+ * ═══════════════════════════════════════════════════════════════
+ * 功能概述：
+ *   识别并拦截 Web 请求中输入参数的高危攻击模式，覆盖 SQL 注入、命令注入、
+ *   路径遍历、SSTI、SSRF 等 12 类攻击，共 112 条规则。
+ *
+ * ═══════════════════════════════════════════════════════════════
+ * 检测类别（12 类，共 112 条规则）：
+ *
+ *   一、SQL 注入（sql）              —— 第 17-58 行，共 34 条
+ *   二、命令注入（command）          —— 第 61-70 行，共 8 条
+ *   三、路径遍历（path）             —— 第 73-92 行，共 19 条
+ *   四、LDAP 注入（ldap）            —— 第 95-99 行，共 3 条
+ *   五、XML/XXE（xml）               —— 第 102-107 行，共 4 条
+ *   六、NoSQL 注入（nosql）          —— 第 110-114 行，共 3 条
+ *   七、模板注入 SSTI（ssti）        —— 第 117-122 行，共 4 条
+ *   八、SSRF（ssrf）                 —— 第 125-136 行，共 10 条
+ *   九、编码绕过（encoding）         —— 第 139-150 行，共 10 条
+ *   十、HTTP 头注入（header_injection）—— 第 153-157 行，共 3 条
+ *   十一、开放重定向（redirect）     —— 第 160-167 行，共 6 条
+ *   十二、文件包含（file_include）   —— 第 170-179 行，共 8 条
+ *
+ * ═══════════════════════════════════════════════════════════════
  * 每条规则包含：
  *   pattern — 正则表达式
  *   desc    — 规则说明（用于注释和调试）
@@ -22,9 +44,11 @@ return [
         ['pattern' => '/sp_oacreate\s*/i', 'desc' => 'SQL Server sp_oacreate OLE对象创建攻击', 'risk' => 'high'],
         ['pattern' => '/load_file\s*\(\s*[\'"]?\s*\//i', 'desc' => 'MySQL load_file() 读取服务器文件', 'risk' => 'high'],
         ['pattern' => '/into\s+(outfile|dumpfile)\s+[\'"]?\s*\//i', 'desc' => 'MySQL INTO OUTFILE/DUMPFILE 写文件', 'risk' => 'high'],
-        ['pattern' => '/sleep\s*\(\s*[\'"]?\d{2,}/i', 'desc' => 'MySQL SLEEP() 时间盲注（延时≥2秒）', 'risk' => 'high'],
-        ['pattern' => '/benchmark\s*\(\s*\d{5,}/i', 'desc' => 'MySQL BENCHMARK() 时间盲注（次数≥5万）', 'risk' => 'high'],
-        ['pattern' => '/pg_sleep\s*\(\s*[\'"]?\d{2,}/i', 'desc' => 'PostgreSQL pg_sleep() 时间盲注', 'risk' => 'high'],
+        // 优化：sleep/benchmark 增加SQL上下文限定，避免误报正常业务代码
+        ['pattern' => '/\bselect\s+.*sleep\s*\(\s*\d{2,}/i', 'desc' => 'MySQL SLEEP() 时间盲注（在SELECT上下文中）', 'risk' => 'high'],
+        ['pattern' => '/\bif\s*\(.*,\s*sleep\s*\(/i', 'desc' => 'IF()中包含SLEEP()调用', 'risk' => 'high'],
+        ['pattern' => '/\bbenchmark\s*\(\s*\d{5,}/i', 'desc' => 'MySQL BENCHMARK() 时间盲注（次数≥5万）', 'risk' => 'high'],
+        ['pattern' => '/\bpg_sleep\s*\(\s*\d{2,}/i', 'desc' => 'PostgreSQL pg_sleep() 时间盲注', 'risk' => 'high'],
         ['pattern' => '/waitfor\s+delay\s*[\'"]\d{2,}/i', 'desc' => 'SQL Server WAITFOR DELAY 时间盲注', 'risk' => 'high'],
         ['pattern' => '/extractvalue\s*\(\s*[^,]+,\s*concat/i', 'desc' => 'MySQL extractvalue() 报错注入', 'risk' => 'high'],
         ['pattern' => '/updatexml\s*\(\s*[^,]+,\s*concat/i', 'desc' => 'MySQL updatexml() 报错注入', 'risk' => 'high'],
@@ -38,15 +62,18 @@ return [
         ['pattern' => '/unhex\s*\(/i', 'desc' => 'MySQL UNHEX() 解码注入载荷', 'risk' => 'medium'],
         ['pattern' => '/hex\s*\(\s*[\'"]?[a-z0-9_]+[\'"]?\s*\)/i', 'desc' => 'HEX() 编码注入载荷（常与UNHEX配合）', 'risk' => 'medium'],
         ['pattern' => '/@@(version|datadir|basedir|hostname)/i', 'desc' => '@@变量信息探测（版本/数据目录等）', 'risk' => 'medium'],
-        ['pattern' => '/database\s*\(\s*\)/i', 'desc' => '探测当前数据库名', 'risk' => 'medium'],
-        ['pattern' => '/user\s*\(\s*\)/i', 'desc' => '探测当前数据库用户名', 'risk' => 'medium'],
-        ['pattern' => '/system_user\s*\(/i', 'desc' => '探测系统用户（MySQL system_user()）', 'risk' => 'medium'],
-        ['pattern' => '/current_user\s*\(/i', 'desc' => '探测当前用户（current_user()）', 'risk' => 'medium'],
+        // 优化：database()/user() 增加SQL上下文限定，避免误报函数调用
+        ['pattern' => '/\bselect\s+.*database\s*\(\s*\)/i', 'desc' => 'SELECT 上下文中探测当前数据库名', 'risk' => 'medium'],
+        ['pattern' => '/\bselect\s+.*user\s*\(\s*\)/i', 'desc' => 'SELECT 上下文中探测当前数据库用户名', 'risk' => 'medium'],
+        ['pattern' => '/\bselect\s+.*system_user\s*\(/i', 'desc' => 'SELECT 上下文中探测系统用户', 'risk' => 'medium'],
+        ['pattern' => '/\bselect\s+.*current_user\s*\(/i', 'desc' => 'SELECT 上下文中探测当前用户', 'risk' => 'medium'],
         ['pattern' => '/group_concat\s*\(/i', 'desc' => 'GROUP_CONCAT() 批量数据提取', 'risk' => 'medium'],
         ['pattern' => '/concat_ws\s*\(/i', 'desc' => 'CONCAT_WS() 字符串拼接提取数据', 'risk' => 'medium'],
         ['pattern' => '/%df%27/i', 'desc' => 'GBK宽字节注入（%df吃掉转义符）', 'risk' => 'high'],
         ['pattern' => '/%bf%27/i', 'desc' => 'GBK宽字节注入变体（%bf%27）', 'risk' => 'high'],
-        ['pattern' => '/\b1\s*=\s*1\b/i', 'desc' => '经典永真条件（1=1）用于绕过认证', 'risk' => 'low'],
+        // 优化：1=1 增加SQL上下文限定（需在SQL语句上下文中），降低误报
+        ['pattern' => '/\bwhere\s+.*\b1\s*=\s*1\b/i', 'desc' => 'WHERE子句中的永真条件（1=1）', 'risk' => 'low'],
+        ['pattern' => '/\b1\s*=\s*1\s*(?:--|\#|\/\*)/i', 'desc' => '永真条件后接SQL注释', 'risk' => 'medium'],
         ['pattern' => '/\'\s*(?:or|and)\s+\d+\s*=\s*\d+/i', 'desc' => '引号闭合后的 OR/AND 数字等式注入', 'risk' => 'low'],
         ['pattern' => '/[\'"]\s*(?:or|and)\s+[\'"]?\d+[\'"]?\s*=\s*[\'"]?\d+[\'"]?/i', 'desc' => '引号内 OR/AND 数字等式注入', 'risk' => 'low'],
         ['pattern' => '/\\\\[\'"]/', 'desc' => '反斜杠转义引号（绕过magic_quotes）', 'risk' => 'medium'],
@@ -126,10 +153,10 @@ return [
         ['pattern' => '/\b(127\.0\.0\.1|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3}|0\.0\.0\.0)\b/', 'desc' => 'SSRF内网IPv4地址探测', 'risk' => 'high'],
         ['pattern' => '/\b(169\.254\.169\.254|metadata\.google\.internal|100\.100\.100\.200)\b/i', 'desc' => '云服务元数据服务地址探测', 'risk' => 'high'],
         ['pattern' => '/\blatest\/(meta-data|user-data|dynamic)\b/i', 'desc' => 'AWS/阿里云元数据API路径访问', 'risk' => 'high'],
-        ['pattern' => '/\b(instance-identity|instance-id|hostname|public-keys|security-credentials)\b/i', 'desc' => '云实例敏感信息获取', 'risk' => 'high'],
+        ['pattern' => '/\b(instance-identity|instance-id|public-keys|security-credentials)\b/i', 'desc' => '云实例敏感信息获取（instance-identity/instance-id等）', 'risk' => 'high'],
         ['pattern' => '/\b(gopher|dict|file|ftp|ldap|tftp|netdoc|jar):\/\//i', 'desc' => 'SSRF危险协议访问（gopher/dict/file等）', 'risk' => 'high'],
-        ['pattern' => '/\b(?:url|redirect_uri|callback|webhook|target|link)\s*=\s*[\'"]?\s*(?:https?:)?\/\/(?:127\.|10\.|172\.1[6-9]|172\.2\d|172\.3[01]|192\.168\.|0\.0\.0\.0|localhost)/i', 'desc' => 'URL参数指向内网地址', 'risk' => 'high'],
-        ['pattern' => '/\b(?:url|redirect_uri|callback|webhook|target|link)\s*=\s*[\'"]?\s*\/\//i', 'desc' => 'URL参数使用协议相对路径（//evil.com）', 'risk' => 'medium'],
+        ['pattern' => '/\b(?:redirect_uri|redirect_url|callback|webhook|forward|dest)\s*=\s*[\'"]?\s*(?:https?:)?\/\/(?:127\.|10\.|172\.1[6-9]|172\.2\d|172\.3[01]|192\.168\.|0\.0\.0\.0|localhost)/i', 'desc' => 'URL参数指向内网地址（仅检测重定向/回调参数）', 'risk' => 'high'],
+        ['pattern' => '/\b(?:redirect_uri|redirect_url|callback|webhook|forward|dest)\s*=\s*[\'"]?\s*\/\//i', 'desc' => 'URL参数使用协议相对路径（仅检测重定向/回调参数）', 'risk' => 'medium'],
         ['pattern' => '/^\/\/[a-z0-9][a-z0-9\-_]*\.[a-z]{2,}/i', 'desc' => '裸协议相对URL（//evil.com）', 'risk' => 'medium'],
         ['pattern' => '/\b(rebind|dnsrebind|nip\.io|xip\.io|sslip\.io|burpcollaborator)\b/i', 'desc' => 'DNS重绑定攻击域名', 'risk' => 'high'],
         ['pattern' => '/\b(port\s*[=:]\s*)\d{1,5}\b/i', 'desc' => 'SSRF端口探测参数', 'risk' => 'medium'],
@@ -158,11 +185,11 @@ return [
 
     // ========== 开放重定向检测 ==========
     'redirect' => [
-        ['pattern' => '/(?:redirect_uri|redirect_url|redirect|callback|return_url|return|goto|next|target|link|dest|destination|webhook|notify_url)\s*=\s*(?:https?:\/\/|\/\/|%3[aA]%2[fF]%2[fF]|%2[fF]%2[fF])[^\s&]+/i', 'desc' => '重定向参数指向外部完整URL', 'risk' => 'medium'],
+        ['pattern' => '/(?:redirect_uri|redirect_url|redirect|callback|return_url|return_to|goto|dest|destination|webhook|notify_url)\s*=\s*(?:https?:\/\/|\/\/|%3[aA]%2[fF]%2[fF]|%2[fF]%2[fF])[^\s&]+/i', 'desc' => '重定向参数指向外部完整URL（仅检测明确重定向参数）', 'risk' => 'medium'],
         ['pattern' => '/(?:https?|ftp):\/\/(?:\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}|[a-z0-9](?:[a-z0-9\-_]*[a-z0-9])?\.[a-z]{2,})/i', 'desc' => '参数值为独立外部URL（IP或域名）', 'risk' => 'medium'],
         ['pattern' => '/\/[a-z0-9](?:[a-z0-9\-]*[a-z0-9])?\.[a-z]{2,}\//i', 'desc' => '单斜杠后接域名（/evil.com/框架绕过）', 'risk' => 'medium'],
         ['pattern' => '/%2[fF]%2[fF][a-z0-9](?:[a-z0-9\-_]*[a-z0-9])?\.[a-z]{2,}/i', 'desc' => 'URL编码双斜杠后接域名', 'risk' => 'medium'],
-        ['pattern' => '/(?:redirect|url|goto|target|link|next|callback)\s*[=:]\s*(?:data\s*:\s*text\/html|javascript\s*:|vbscript\s*:)/i', 'desc' => '重定向参数使用data:/javascript:伪协议', 'risk' => 'high'],
+        ['pattern' => '/(?:redirect|callback|goto|dest)\s*[=:]\s*(?:data\s*:\s*text\/html|javascript\s*:|vbscript\s*:)/i', 'desc' => '重定向参数使用data:/javascript:伪协议（仅检测明确重定向参数）', 'risk' => 'high'],
         ['pattern' => '/%0[dD]%0[aA].*(?:location|content-type|set-cookie)\s*:/i', 'desc' => 'CRLF后接location/content-type/set-cookie', 'risk' => 'high'],
     ],
 

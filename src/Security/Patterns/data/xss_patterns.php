@@ -1,10 +1,30 @@
 <?php
 
 /**
- * XSS攻击检测模式定义（v6.0 元数据格式）
+ * XSS 攻击检测模式定义（v6.2 元数据格式）
  *
- * 每条规则包含：pattern, desc, risk
+ * ═══════════════════════════════════════════════════════════════
+ * 功能概述：
+ *   识别并拦截 Web 请求中的跨站脚本攻击（XSS）模式，覆盖脚本注入、DOM 型、
+ *   标签注入、编码绕过及框架特定 XSS 共 5 个子类型，共 20 条规则。
+ *
+ * ═══════════════════════════════════════════════════════════════
+ * 检测类别（5 类，共 20 条规则）：
+ *
+ *   一、脚本注入（script）    —— 第 11-14 行，共 3 条
+ *   二、DOM 型（dom）          —— 第 16-19 行，共 2 条
+ *   三、标签注入（tag）        —— 第 20-27 行，共 6 条
+ *   四、编码绕过（encoding）   —— 第 28-34 行，共 5 条
+ *   五、框架特定（framework）  —— 第 35-40 行，共 4 条
+ *
+ * ═══════════════════════════════════════════════════════════════
+ * 每条规则包含：
+ *   pattern — 正则表达式
+ *   desc    — 规则说明（用于注释和调试）
+ *   risk    — 风险等级：high / medium / low
+ *
  * ⚠️ 此文件不会在 php artisan optimize 时加载
+ * 仅在实际执行安全检查时由 PatternService 按需加载
  */
 
 return [
@@ -14,8 +34,14 @@ return [
         ['pattern' => '/javascript:\s*(alert|confirm|prompt|eval)\s*\(/i', 'desc' => 'javascript:伪协议执行弹窗或eval', 'risk' => 'high'],
     ],
     'dom' => [
-        ['pattern' => '/\b(on(error|load|click|mouseover|focus|blur|change|submit|keydown|keyup|keypress|mousemove|mouseout|unload))\s*=\s*[\'"]?\s*(alert|confirm|prompt|eval|document\.cookie|window\.location)\s*\(/i', 'desc' => 'DOM事件处理器绑定恶意函数（onerror=alert()等）', 'risk' => 'high'],
+        // 优化：onXxx事件属性限定必须出现在HTML标签上下文中，避免在JSON数据或普通文本中误报
+        ['pattern' => '/<[a-z]+\s[^>]*\bon(error|load|click|mouseover|focus|blur|change|submit|keydown|keyup|keypress|mousemove|mouseout|unload)\s*=\s*[\'"]?\s*(alert|confirm|prompt|eval|document\.cookie|window\.location)\s*\(/i', 'desc' => 'HTML标签中的DOM事件处理器绑定恶意函数', 'risk' => 'high'],
         ['pattern' => '/\.?(innerHTML|outerHTML)\s*=\s*[\'"]?\s*<\s*(script|img|iframe|svg)/i', 'desc' => 'innerHTML/outerHTML赋值为危险标签', 'risk' => 'medium'],
+    ],
+    // 新增：通用事件处理器检测（低风险，仅在无HTML标签上下文时作为后备）
+    // 注意：此规则需配合 checkXssPatterns 中的预过滤使用，仅当输入包含 onerror=、onload= 等关键词时才执行正则
+    'event' => [
+        ['pattern' => '/\b(?:onerror|onload|onclick|onmouseover|onfocus|onblur|onchange|onsubmit)\s*=\s*[\'"]?(?:\s*alert\s*\(|confirm\s*\(|prompt\s*\(|eval\s*\()/i', 'desc' => '通用事件处理器绑定恶意函数（低风险）', 'risk' => 'low'],
     ],
     'tag' => [
         ['pattern' => '/<iframe\b[^>]*src\s*=\s*[\'"]?\s*javascript:/i', 'desc' => 'iframe src使用javascript:伪协议', 'risk' => 'high'],

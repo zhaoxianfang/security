@@ -15,8 +15,15 @@ use zxf\Security\Bridge\FrameworkBridge;
  * 跨框架兼容：通过 FrameworkBridge::requestAllFiles() 统一获取上传文件，
  * 支持 Laravel 11+ 和 ThinkPHP 8+。
  *
+ * ══════════════════════════════════════════════════════════════════════
+ * 宿主类依赖（由 SecurityMiddleware 提供）：
+ *   - $this->config[][]: mixed              — 安全配置数组
+ *   - $this->lastMatchedPattern: string     — 最后匹配的正则模式
+ *   - $this->lastMatchedContent: string     — 最后匹配的内容片段
+ *
  * @package zxf\Security\Middleware\Concerns
  * @since 6.1.0
+ * @version 6.2.0
  */
 trait HandlesFileUploads
 {
