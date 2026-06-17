@@ -9,10 +9,11 @@ use zxf\Security\Bridge\FrameworkBridge;
  *
  * 负责基于正则模式的攻击检测，包括：
  *  - URL 路径攻击（路径遍历、敏感文件泄露）
- *  - 高危攻击（SQL注入、命令注入、SSTI、SSRF 等 12 类）
+ *  - 高危攻击（SQL注入、命令注入、SSTI、SSRF 等 18 类）
  *  - XSS 攻击（脚本注入、DOM型、标签注入、编码绕过、框架特定）
  *
  * 支持 Markdown 智能旁路（通过 ManagesMarkdownSafety trait）。
+ * 支持 JSON API 上下文感知旁路（减少 API 请求的 SQL/XSS 误报）。
  *
  * 跨框架兼容：所有方法接受 object 类型请求对象，内部通过 FrameworkBridge 统一访问。
  *
@@ -24,6 +25,7 @@ use zxf\Security\Bridge\FrameworkBridge;
  *   - safePregMatch(): bool      — 安全正则匹配
  *   - sanitizeMatchedContent(): string — 脱敏处理匹配内容
  *   - getInputString(): string   — 扁平化获取请求输入
+ *   - isJsonApiRequest(): bool  — 判断是否为JSON API请求
  *   - $this->config[][]: mixed   — 安全配置数组
  *   - $this->patternService: PatternService — 模式服务实例
  *   - $this->threats[]: array    — 检测到的威胁类型数组
@@ -32,7 +34,7 @@ use zxf\Security\Bridge\FrameworkBridge;
  *
  * @package zxf\Security\Middleware\Concerns
  * @since 5.4.0
- * @version 6.2.0
+ * @version 6.3.0
  */
 trait DetectsAttackPatterns
 {
@@ -49,29 +51,26 @@ trait DetectsAttackPatterns
      */
     protected function detectUrlPathAttacks(object $request): bool
     {
-        // 使用缓存规则方法，避免同一请求中多次调用 ConfigResolver
         $excludeRules = $this->getExcludeRules();
         $interceptRules = $this->getInterceptRules();
 
-        // 从 PatternService 获取模式（延迟加载 + 统一排除/追加规则）
         $pathPatterns = $this->patternService->getUrlPathPatterns($excludeRules, $interceptRules);
 
         if (empty($pathPatterns)) {
             return false;
         }
 
-        // 收集所有需要检查的来源
         $checkSources = [];
 
-        // 1. URL路径（原始和解码）— 先截断防止超长 URL 消耗内存
-        $url = $this->truncateInput(FrameworkBridge::requestFullUrl($request));
-        $checkSources['url'] = [$url, urldecode($url)];
+        // 1. URL路径（原始和解码）— 使用快速截断（框架返回值已是合法 UTF-8）
+        $url = $this->truncateInputKnown(FrameworkBridge::requestFullUrl($request));
+        $checkSources['url'] = [$url, $this->truncateInputKnown($this->cachedUrldecode($url, 1))];
 
         // 2. 路由参数（含解码变形）
         $routeParams = FrameworkBridge::requestRouteParams($request);
         $this->collectParamsForCheck($routeParams, $checkSources, 'route');
 
-        // 3. 查询参数值（独立检查每个参数值，避免仅依赖 fullUrl 整体匹配）
+        // 3. 查询参数值
         $queryParams = FrameworkBridge::requestQuery($request);
         $this->collectParamsForCheck($queryParams, $checkSources, 'query');
 
@@ -108,23 +107,20 @@ trait DetectsAttackPatterns
      */
     protected function collectParamsForCheck(array $params, array &$checkSources, string $prefix, int $depth = 0): void
     {
-        // 防御：限制递归深度，防止攻击者发送超深嵌套数组导致栈溢出
         if ($depth > 10) {
             return;
         }
 
         foreach ($params as $key => $value) {
             if (is_string($value)) {
-                // 原始值（截断防止超长输入消耗内存）
                 $truncated = $this->truncateInput($value);
                 $checkSources[$prefix . '.' . $key][] = $truncated;
-                // 解码后的值
-                $decoded = urldecode($truncated);
+                // 使用请求级缓存解码（避免同一请求重复 urldecode）
+                $decoded = $this->truncateInput($this->cachedUrldecode($value, 1));
                 $checkSources[$prefix . '.' . $key][] = $decoded;
-                // 双重解码
-                $checkSources[$prefix . '.' . $key][] = urldecode($decoded);
+                $doubleDecoded = $this->truncateInput($this->cachedUrldecode($value, 2));
+                $checkSources[$prefix . '.' . $key][] = $doubleDecoded;
             } elseif (is_array($value)) {
-                // 递归处理数组
                 $this->collectParamsForCheck($value, $checkSources, $prefix . '.' . $key, $depth + 1);
             }
         }
@@ -157,13 +153,24 @@ trait DetectsAttackPatterns
             return null;
         }
 
-        // 如果开放重定向检测被关闭，从模式中移除 redirect 类型
-        // 避免误报：多数应用中 redirect_uri/callback 参数是正常的业务行为
-        if (!($this->config['detection_layers']['redirect'] ?? false)) {
-            unset($patterns['redirect']);
-            if (empty($patterns)) {
-                return null;
+        // 根据 detection_layers 配置过滤已关闭的检测类型
+        // 新类型默认开启，可通过配置关闭以减少特定场景误报
+        $layerTypeMap = [
+            'redirect' => 'redirect',
+            'deserialization' => 'deserialization',
+            'prototype_pollution' => 'prototype_pollution',
+            'jndi' => 'jndi',
+            'http_smuggling' => 'http_smuggling',
+            'graphql' => 'graphql',
+            'webshell' => 'webshell',
+        ];
+        foreach ($layerTypeMap as $layer => $type) {
+            if (!($this->config['detection_layers'][$layer] ?? false)) {
+                unset($patterns[$type]);
             }
+        }
+        if (empty($patterns)) {
+            return null;
         }
 
         // 1. 首先检查URL路径（重要：路径遍历攻击通常直接出现在URL中）
@@ -178,8 +185,8 @@ trait DetectsAttackPatterns
             }
         }
 
-        // 2. 检查完整URL（包含查询字符串）— 全量检测（使用 redirect 策略1模式）
-        $fullUrl = $this->truncateInput(FrameworkBridge::requestFullUrl($request));
+        // 2. 检查完整URL（包含查询字符串）— 全量检测
+        $fullUrl = $this->truncateInputKnown(FrameworkBridge::requestFullUrl($request));
         $urlResult = $this->checkPatternsAgainstInput($patterns, $fullUrl);
         if ($urlResult !== null) {
             return $urlResult;
@@ -199,9 +206,8 @@ trait DetectsAttackPatterns
         }
 
         // 5. 检查请求输入数据（支持 Markdown 智能识别旁路）
-        // 注意：getInputString 会合并所有参数值，用于检测跨参数关联的攻击
         $input = $this->getInputString($request, false);
-        $input = $this->truncateInput($input);
+        $input = $this->truncateInputKnown($input);
 
         $inputResult = $this->checkHighRiskInputWithMarkdownBypass($patterns, $input);
         if ($inputResult !== null) {
@@ -233,14 +239,15 @@ trait DetectsAttackPatterns
 
         $types = $limitTypes ?? array_keys($patterns);
 
-        foreach ($types as $type) {
-            // 跳过不存在的类型
-            if (!isset($patterns[$type])) {
-                continue;
-            }
+        // 批量预过滤：一次 strtolower + 一次遍历，对同一 input 检查所有候选类型
+        $activeTypes = $this->patternService->preFilterBatch($input, $types);
 
-            // 预过滤优化：通过 str_contains 快速跳过不相关的模式组
-            if (!$this->patternService->preFilter($type, $input)) {
+        if (empty($activeTypes)) {
+            return null; // 没有任何类型通过预过滤，快速跳过
+        }
+
+        foreach ($activeTypes as $type) {
+            if (!isset($patterns[$type])) {
                 continue;
             }
 
@@ -305,9 +312,9 @@ trait DetectsAttackPatterns
 
                 $isUrlParam = in_array(strtolower($key), $urlParamNames, true);
 
-                // 解码变体：1次解码、2次解码
-                $decoded1 = urldecode($value);
-                $decoded2 = urldecode($decoded1);
+                // 解码变体：使用请求级缓存
+                $decoded1 = $this->cachedUrldecode($value, 1);
+                $decoded2 = $this->cachedUrldecode($value, 2);
 
                 // 检查解码后是否包含 URL 特征
                 $candidates = [];
@@ -362,8 +369,7 @@ trait DetectsAttackPatterns
     protected function isUrlLike(string $value): bool
     {
         // 先解码再截断，避免截断破坏 URL 编码序列（如 %3A 被截成 %3）
-        $decoded = $this->truncateInput(urldecode($value));
-        // 检测完整协议头 或 // 协议省略型
+        $decoded = $this->truncateInput($this->cachedUrldecode($value, 1));
         return $this->safePregMatch('#\b(?:https?|ftp|gopher|dict|file)://#i', $decoded)
             || $this->safePregMatch('#^//[a-z0-9]#i', $decoded);
     }
@@ -374,13 +380,18 @@ trait DetectsAttackPatterns
      * 与合并输入检测互补：合并检测识别上下文关联的攻击（如完整SQL语句），
      * 本方法确保单个参数中的攻击载荷不被合并后的其他数据稀释。
      *
-     * 适用类型：sql, command, encoding, ssti, nosql, xml, ldap, file_include, path
+     * 适用类型：sql, command, encoding, ssti, nosql, xml, ldap, file_include, path,
+     *          deserialization, prototype_pollution, jndi, http_smuggling, graphql, webshell
      * 不适用：redirect, ssrf（由 checkUrlParamsForSsrRedirect 专门处理）
      *         header_injection（由 HTTP 头检查专门处理）
      *
      * 注意：path 类型同时由 detectUrlPathAttacks 和本方法检查，形成防御纵深。
      *       即使 url_path 检测层被关闭，高危检测层仍能拦截 query string 中的
      *       .php/.asp/.jsp 等脚本扩展名和路径遍历。
+     *
+     * JSON 感知优化：
+     *   - 当 JSON API 旁路启用且请求为 JSON 格式时，跳过 sql/xss 类检测
+     *   - 保留 ssrf/command/file_include/deserialization 等类型（JSON 场景仍可能发生）
      *
      * @param array $patterns 攻击模式数组
      * @param object $request HTTP请求对象
@@ -391,38 +402,58 @@ trait DetectsAttackPatterns
         // 需要独立检查的类型（不与合并输入混淆）
         // path 类型也包含在内：防止 url_path 检测层关闭后，query string 中的
         // .php/.asp/.jsp 等脚本扩展名和路径遍历被绕过（防御纵深）
-        $checkTypes = array_intersect(
-            ['sql', 'command', 'encoding', 'ssti', 'nosql', 'xml', 'ldap', 'file_include', 'path'],
-            array_keys($patterns)
-        );
+        $baseCheckTypes = ['sql', 'command', 'encoding', 'ssti', 'nosql', 'xml', 'ldap', 'file_include', 'path'];
+        $extendedCheckTypes = ['deserialization', 'prototype_pollution', 'jndi', 'http_smuggling', 'graphql', 'webshell'];
+        
+        $allCandidateTypes = array_merge($baseCheckTypes, $extendedCheckTypes);
+        $checkTypes = array_intersect($allCandidateTypes, array_keys($patterns));
 
         if (empty($checkTypes)) {
             return null;
         }
 
-        // 收集所有参数值并解码 — 逐来源遍历避免 array_merge 复制大数组
+        // JSON API 智能旁路：对于 JSON 请求跳过 SQL/XSS 类检测以减少误报
+        // JSON 数据中常见 SQL关键字（select/from/where）或 HTML标签作为纯数据内容
+        $isJsonApi = $this->isJsonApiRequest($request);
+        $jsonBypassEnabled = $this->config['detection_layers']['json_aware_bypass'] ?? true;
+        
+        if ($isJsonApi && $jsonBypassEnabled) {
+            // JSON 场景中排除高误报类型，保留真正高危的类型
+            $jsonSkipTypes = ['sql', 'ssti'];
+            $checkTypes = array_values(array_diff($checkTypes, $jsonSkipTypes));
+        }
+
+        if (empty($checkTypes)) {
+            return null;
+        }
+
+        // ═══ 获取输入并缓存解码结果 ═══
+        // 此处生成的候选值在后续 checkIndividualParamsForHighRisk 等多个步骤中复用，
+        // 通过 UsesSafeRegex 的 cachedUrldecode() 和 normalizeInput() 缓存避免重复计算。
         foreach ([FrameworkBridge::requestQuery($request), FrameworkBridge::requestPost($request), FrameworkBridge::requestRouteParams($request)] as $source) {
             foreach ($source as $value) {
                 if (!is_string($value) || $value === '') {
                     continue;
                 }
 
-                $candidates = [
-                    $value,                    // 原始值
-                    urldecode($value),         // 解码1次
-                    urldecode(urldecode($value)), // 解码2次
-                ];
+                // 内联去重替代 array_unique([$value, urldecode($value), urldecode(urldecode($value))])
+                // 3 元素场景下 array_unique 创建哈希表的开销 > 手动比较
+                $candidate1 = $this->truncateInput($value);
+                $candidate2 = $this->truncateInput($this->cachedUrldecode($value, 1));
+                $candidate3 = $this->truncateInput($this->cachedUrldecode($value, 2));
 
-                foreach (array_unique($candidates) as $candidate) {
-                    $candidate = $this->truncateInput($candidate);
+                // 手工去重 (3 元素，最多 3 次 string 比较)
+                $candidates = [$candidate1];
+                if ($candidate2 !== $candidate1) {
+                    $candidates[] = $candidate2;
+                }
+                if ($candidate3 !== $candidate1 && $candidate3 !== $candidate2) {
+                    $candidates[] = $candidate3;
+                }
 
-                    // 预过滤：快速跳过不可能的类型
-                    $activeTypes = [];
-                    foreach ($checkTypes as $type) {
-                        if ($this->patternService->preFilter($type, $candidate)) {
-                            $activeTypes[] = $type;
-                        }
-                    }
+                foreach ($candidates as $candidate) {
+                    // 批量预过滤：一次 strtolower + str_contains 遍历所有候选类型
+                    $activeTypes = $this->patternService->preFilterBatch($candidate, $checkTypes);
 
                     if (empty($activeTypes)) {
                         continue;
@@ -509,6 +540,22 @@ trait DetectsAttackPatterns
      */
     protected function detectXssAttacks(object $request): ?string
     {
+        // JSON API 智能旁路：JSON 请求体中 HTML 标签通常是纯数据
+        $jsonBypassEnabled = $this->config['detection_layers']['json_aware_bypass'] ?? true;
+        if ($jsonBypassEnabled && $this->isJsonApiRequest($request)) {
+            $urlPath = $this->truncateInput($this->cachedUrldecode(FrameworkBridge::requestPath($request), 1));
+            $queryString = $this->truncateInput($this->cachedUrldecode(FrameworkBridge::requestGetQueryString($request) ?? '', 1));
+            
+            // 对 URL 路径和查询字符串做轻量级预检：包含 < 且包含 >
+            if (!str_contains($urlPath, '<') && !str_contains($urlPath, '>')
+                && !str_contains($queryString, '<') && !str_contains($queryString, '>')
+                && !str_contains(strtolower($queryString), 'javascript')
+                && !str_contains(strtolower($queryString), 'onerror')
+            ) {
+                return null; // 快速跳过
+            }
+        }
+
         // 使用缓存规则方法，避免同一请求中多次调用 ConfigResolver
         $excludeRules = $this->getExcludeRules();
         $interceptRules = $this->getInterceptRules();
@@ -521,14 +568,14 @@ trait DetectsAttackPatterns
         }
 
         // 1. 检查URL路径（反射型XSS常出现在URL中）
-        $urlPath = urldecode($this->truncateInput(FrameworkBridge::requestPath($request)));
+        $urlPath = $this->truncateInput($this->cachedUrldecode(FrameworkBridge::requestPath($request), 1));
         $urlPathResult = $this->checkXssPatterns($patterns, $urlPath, $urlPath);
         if ($urlPathResult !== null) {
             return $urlPathResult;
         }
 
         // 2. 检查查询字符串（整体）
-        $queryString = urldecode($this->truncateInput(FrameworkBridge::requestGetQueryString($request) ?? ''));
+        $queryString = $this->truncateInput($this->cachedUrldecode(FrameworkBridge::requestGetQueryString($request) ?? '', 1));
         $queryResult = $this->checkXssPatterns($patterns, $queryString, $queryString);
         if ($queryResult !== null) {
             return $queryResult;
@@ -577,13 +624,22 @@ trait DetectsAttackPatterns
         $smartDetection = $markdownConfig['smart_detection'] ?? true;
         $allowScriptInMarkdown = $markdownConfig['allow_script_in_markdown'] ?? false;
 
-        foreach ($patterns as $type => $typePatterns) {
-            // 预过滤优化：快速跳过不相关的 XSS 类型
-            if (!$this->patternService->preFilter('xss_' . $type, $input)) {
+        // 批量预过滤：一次 strtolower 检查所有 XSS 类型
+        $xssTypeKeys = array_map(fn(string $type) => 'xss_' . $type, array_keys($patterns));
+        $activeTypes = $this->patternService->preFilterBatch($input, $xssTypeKeys);
+
+        if (empty($activeTypes)) {
+            return null;
+        }
+
+        $activeTypes = array_map(fn(string $t) => substr($t, 4), $activeTypes);
+
+        foreach ($activeTypes as $type) {
+            if (!isset($patterns[$type])) {
                 continue;
             }
 
-            foreach ($typePatterns as $item) {
+            foreach ($patterns[$type] as $item) {
                 $pattern = $item['pattern'];
                 $matches = [];
                 if ($this->safePregMatch($pattern, $input, $matches)) {
@@ -636,23 +692,23 @@ trait DetectsAttackPatterns
                     continue;
                 }
 
-                // 多级解码：原始 → 1次解码 → 2次解码
-                $candidates = array_unique([
-                    $value,
-                    urldecode($value),
-                    urldecode(urldecode($value)),
-                ]);
+                // 内联去重替代 array_unique（节省哈希表创建开销）
+                $c1 = $this->truncateInput($value);
+                $c2 = $this->truncateInput($this->cachedUrldecode($value, 1));
+                $c3 = $this->truncateInput($this->cachedUrldecode($value, 2));
+
+                $candidates = [$c1];
+                if ($c2 !== $c1) $candidates[] = $c2;
+                if ($c3 !== $c1 && $c3 !== $c2) $candidates[] = $c3;
 
                 foreach ($candidates as $candidate) {
-                    $candidate = $this->truncateInput($candidate);
-
-                    // 预过滤：快速跳过不相关的 XSS 类型
-                    $activeTypes = [];
-                    foreach ($allTypes as $type) {
-                        if ($this->patternService->preFilter('xss_' . $type, $candidate)) {
-                            $activeTypes[] = $type;
-                        }
-                    }
+                    // 批量预过滤：一次 strtolower 检查所有 XSS 类型
+                    $activeTypes = $this->patternService->preFilterBatch(
+                        $candidate, 
+                        array_map(fn(string $t) => 'xss_' . $t, $allTypes)
+                    );
+                    // 还原为原始类型名（去掉 xss_ 前缀）
+                    $activeTypes = array_map(fn(string $t) => substr($t, 4), $activeTypes);
 
                     if (empty($activeTypes)) {
                         continue;
@@ -681,5 +737,65 @@ trait DetectsAttackPatterns
         }
 
         return null;
+    }
+
+    // ==================== JSON API 智能旁路 ====================
+
+    /**
+     * 判断是否为 JSON API 请求
+     *
+     * 用于智能旁路：JSON 数据中的 SQL 关键字/HTML 标签通常是纯数据内容而非攻击载荷。
+     * 检测维度（四维判定）：
+     *  1. Content-Type 为 application/json 或 multipart/related（广泛兼容）
+     *  2. 请求 Accept 头明确偏好 JSON（排除 text/html 和通配符）
+     *  3. 请求路径匹配 API 前缀（/api/, /v1/ 等）
+     *  4. X-Requested-With: XMLHttpRequest + Accept JSON（Ajax 调用）
+     *
+     * @param object $request HTTP请求对象
+     * @return bool
+     */
+    protected function isJsonApiRequest(object $request): bool
+    {
+        // 1. Content-Type 检查（支持 JSON 变体）
+        $contentType = FrameworkBridge::requestGetHeader($request, 'Content-Type');
+        if ($contentType !== null) {
+            $ctLower = strtolower($contentType);
+            if (str_contains($ctLower, 'application/json') 
+                || str_contains($ctLower, 'application/vnd.api+json')
+                || str_contains($ctLower, 'application/problem+json')
+            ) {
+                return true;
+            }
+        }
+
+        // 2. Accept 头检查（仅当明确只接受 JSON 时）
+        $accept = FrameworkBridge::requestGetHeader($request, 'Accept');
+        if ($accept !== null) {
+            $acceptLower = strtolower($accept);
+            if (str_contains($acceptLower, 'application/json') 
+                && !str_contains($acceptLower, 'text/html')
+                && !str_contains($acceptLower, '*/*')
+            ) {
+                return true;
+            }
+        }
+
+        // 3. 路径模式检查
+        $path = strtolower(FrameworkBridge::requestPath($request));
+        $apiPrefixes = ['/api/', '/v1/', '/v2/', '/v3/', '/graphql'];
+        foreach ($apiPrefixes as $prefix) {
+            if (str_starts_with($path, $prefix)) {
+                return true;
+            }
+        }
+
+        // 4. Ajax 调用 + JSON Accept 组合
+        $isAjax = FrameworkBridge::requestIsAjax($request);
+        $expectsJson = FrameworkBridge::requestExpectsJson($request);
+        if ($isAjax || $expectsJson) {
+            return true;
+        }
+
+        return false;
     }
 }

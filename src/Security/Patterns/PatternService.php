@@ -44,24 +44,49 @@ class PatternService
     ];
 
     /**
+     * 已编译的模式验证缓存
+     * key = 模式 MD5，value = true（编译通过）
+     *
+     * @var array<string, bool>
+     */
+    private static array $validatedPatterns = [];
+
+    /**
+     * 请求级预过滤结果缓存（避免同一输入对同一类型反复 str_contains）
+     * key = "type::input_hash"，value = true/false
+     * 可选启用，通过 PatternService::enableRequestCache() 控制
+     *
+     * @var array<string, bool>
+     */
+    private static array $preFilterRequestCache = [];
+
+    /**
+     * 是否启用请求级预过滤缓存
+     */
+    private static bool $requestCacheEnabled = false;
+
+    /**
      * 快速预过滤关键词映射
      * 用于通过 str_contains 快速跳过不可能匹配的输入
+     *
+     * 关键词按长度降序排列（长词优先短路），在首次访问时自动排序。
      *
      * @var array<string, array<string>>
      */
     private static array $preFilters = [
         'sql'              => [
-            // 注意：不使用裸 'select' 关键词（几乎所有 SQL 都包含，会令预过滤失效），
-            // 改用 'union select' 检测 UNIONSELECT 注入变体
             'union select', 'union', 'sleep(', 'benchmark(', 'load_file', 'drop table', 'truncate table',
             'xp_', 'sp_oa', '%27', 'extractvalue', 'updatexml', 'floor(rand',
             '@@', 'group_concat', 'concat_ws', 'waitfor delay', 'unhex(', '/*', '/**/', '%df', '%bf',
             "' or ", "' and ", 'case when', 'if(',
+            'substr(', 'substring(', 'json_extract', 'json_value', 'json_query',
+            'regexp', 'procedure analyse', 'into outfile', 'into dumpfile',
         ],
         'command'          => [
             'system(', 'exec(', 'passthru(', 'shell_exec(', 'proc_open(', 'popen(', 'pcntl_exec(',
             'rm -', 'wget ', 'curl ', 'nc -', 'netcat -', '|', '`', '$(',
             'powershell -', 'cmd /c', 'bash -c', 'sh -c', 'python -c', 'perl -e', 'php -r',
+            '${IFS}', 'whoami', 'id ', 'nslookup',
         ],
         'path'             => [
             '../', '..\\', '%2e%2e', '%252e', '/.env', '/.git', 'etc/', 'proc/',
@@ -76,18 +101,42 @@ class PatternService
         'ssti'             => ['{{', '}}', '{%', '%}', 'eval(', 'exec('],
         'ssrf'             => [
             '127.0.0.1', '169.254', 'gopher://', 'metadata', 'nip.io', 'latest/', 'instance-',
-            'rebind', 'dnsrebind',
+            'rebind', 'dnsrebind', 'xip.io', 'sslip.io', 'burpcollaborator',
         ],
         'encoding'         => ['%25', '%00', '%c0', '%e0', '&#x', '&#', '%u', '%0d', '%0a'],
         'header_injection' => ['%0d', '%0a', '\r\n', 'content-type:', 'set-cookie:', 'location:', 'transfer-encoding:'],
         'redirect'         => [
             'redirect_uri=', 'redirect=', 'redirect:', 'callback=', 'return_url=', '//', 'goto=',
-            // 以下参数名较常见，但结合 redirect 正则的上下文限定可降低误报
             'url=', 'next=', 'dest=', 'forward=',
         ],
         'file_include'     => [
             'include(', 'require(', 'php://', 'file_get_contents(', '/proc/self/',
             'data://', 'expect://', 'readfile(', 'fopen(', 'show_source(',
+            'phar://', 'compress.zlib://', 'compress.bzip2://',
+        ],
+        'deserialization' => [
+            'unserialize(', 'O:', 'C:', '__wakeup', '__destruct', '__toString',
+            '__call', '__get', '__set', 'phar://',             'GuzzleHttp', 'Monolog',
+        ],
+        'prototype_pollution' => [
+            '__proto__', 'constructor', 'prototype', 'Object.assign',
+            'Object.create', 'defineProperty',
+        ],
+        'jndi' => [
+            'jndi:', 'ldap://', 'rmi://', '${jndi', '${lower:',
+            '${upper:', '${env:', '${::-j}', '${::-n}',
+        ],
+        'http_smuggling' => [
+            'transfer-encoding', 'content-length:', 'chunked',
+        ],
+        'graphql' => [
+            '__schema', '__type', '__typename', 'fragment',
+            'mutation', 'subscription',
+        ],
+        'webshell' => [
+            '$_GET', '$_POST', '$_REQUEST', 'base64_decode(', 'str_rot13(',
+            'gzuncompress(', 'assert(', 'preg_replace(', 'create_function(',
+            'call_user_func(', 'chr(', '\\x',
         ],
         'xss_script'       => ['<script', 'javascript:', 'eval('],
         'xss_dom'          => ['onerror=', 'onload=', 'onclick=', 'onfocus=', 'onmouse', 'innerHTML=', 'outerHTML='],
@@ -100,17 +149,20 @@ class PatternService
             'db:wipe', 'schema::drop', 'drop table', 'drop database', 'dropifexists',
             'dropalltables', 'alter table', 'drop view', 'drop procedure', 'drop function',
             'rename table', 'foreign_key_checks', 'sql_safe_updates',
+            'database.connections', 'db_database', 'db_host',
         ],
         'mass_deletion'         => [
             'truncate table', 'delete from', '->delete(', '::destroy(', 'where 1=1',
             'where 1', 'where true', 'db::table', 'db::name', 'db::execute',
-            '::all()->', '::query()->', '->each(',
+            '::all()->', '::query()->', '->each(', '->chunk(', '->cursor(',
+            'db::raw', 'schema:dump',
         ],
         'code_level_operation'  => [
             'artisan::call', 'shell_exec(', 'migrate:fresh', 'migrate:refresh',
             'migrate:rollback', 'db:wipe', 'php artisan', 'db::statement(',
             'db::unprepared(', 'passthru(', 'proc_open(', 'system(',
             'new process(', 'fromshellcommandline',
+            'db::raw(', 'config::set', 'db::connect',
         ],
     ];
 
@@ -326,7 +378,10 @@ class PatternService
     }
 
     /**
-     * 获取预过滤关键词
+     * 获取预过滤关键词（首次访问时按长度降序排列）
+     *
+     * 关键词越长，命中概率越高（长词包含短词特征），
+     * 按长度降序排列可使 str_contains 更快短路。
      *
      * @param string $type 模式类型
      * @return array<string>
@@ -335,7 +390,27 @@ class PatternService
     {
         $type = $this->normalizeType($type);
 
-        return self::$preFilters[$type] ?? [];
+        if (!isset(self::$preFilters[$type])) {
+            return [];
+        }
+
+        // 懒排序：首次访问时排序，后续直接返回
+        $keywords = self::$preFilters[$type];
+        $firstKey = array_key_first($keywords);
+        // 通过检查第一个关键词是否为最长来判定是否已排序
+        $firstLen = strlen((string) $keywords[$firstKey] ?? '');
+        $maxLen = 0;
+        foreach ($keywords as $k) {
+            $l = strlen($k);
+            if ($l > $maxLen) $maxLen = $l;
+        }
+
+        if ($firstLen < $maxLen) {
+            // 需要排序
+            usort(self::$preFilters[$type], fn(string $a, string $b) => strlen($b) - strlen($a));
+        }
+
+        return self::$preFilters[$type];
     }
 
     /**
@@ -345,26 +420,158 @@ class PatternService
      * 返回 false 表示可以安全跳过该类型的正则检查。
      *
      * @param string $type 模式类型
-     * @param string $input 输入字符串
+     * @param string $input 输入字符串（调用方应已转为小写以复用）
+     * @param bool $isLowered 输入是否已转为小写（默认 false，内部转换）
      * @return bool true=可能包含特征需进一步检查，false=安全跳过
      */
-    public function preFilter(string $type, string $input): bool
+    public function preFilter(string $type, string $input, bool $isLowered = false): bool
     {
         $keywords = $this->getPreFilterKeywords($type);
 
         if (empty($keywords)) {
-            return true; // 无预过滤规则，必须检查
+            return true;
         }
 
-        $lowerInput = strtolower($input);
+        // 请求级缓存：同一输入+类型组合跳过重复检查
+        $useCache = self::$requestCacheEnabled;
+        $cacheKey = $useCache ? ($type . '::' . crc32($input)) : '';
+
+        if ($useCache && isset(self::$preFilterRequestCache[$cacheKey])) {
+            return self::$preFilterRequestCache[$cacheKey];
+        }
+
+        $lowerInput = $isLowered ? $input : strtolower($input);
 
         foreach ($keywords as $keyword) {
             if (str_contains($lowerInput, $keyword)) {
+                if ($useCache) {
+                    self::$preFilterRequestCache[$cacheKey] = true;
+                }
                 return true;
             }
         }
 
+        if ($useCache && count(self::$preFilterRequestCache) < 500) {
+            self::$preFilterRequestCache[$cacheKey] = false;
+        }
+
         return false;
+    }
+
+    /**
+     * 批量预过滤（单次遍历多类型）
+     *
+     * 一次性检查输入字符串对多种类型的预过滤结果，
+     * 仅执行一次 strtolower()，避免多类型重复检查。
+     *
+     * @param string $input 输入字符串
+     * @param array<string> $types 要检查的类型列表
+     * @return array<string> 通过预过滤的类型列表（需进一步正则检查）
+     */
+    public function preFilterBatch(string $input, array $types): array
+    {
+        if (empty($types)) {
+            return [];
+        }
+
+        $lowerInput = strtolower($input);
+        $activeTypes = [];
+
+        foreach ($types as $type) {
+            if ($this->preFilter($type, $lowerInput, true)) {
+                $activeTypes[] = $type;
+            }
+        }
+
+        return $activeTypes;
+    }
+
+    /**
+     * 预验证正则模式（在加载时调用一次）
+     *
+     * 对指定类型的模式进行预编译验证，缓存验证结果。
+     * 已验证通过的模式在运行时无需 @ 错误抑制开销。
+     *
+     * @param string $type 模式类型
+     * @return int 通过验证的模式数量
+     */
+    public function validatePatterns(string $type): int
+    {
+        $patterns = $this->loadDataFile($type);
+        $count = 0;
+
+        // 扁平化：按类型分组或扁平数组
+        $flatPatterns = [];
+        if (!empty($patterns)) {
+            $firstValue = reset($patterns);
+            if (is_array($firstValue) && isset($firstValue['pattern'])) {
+                // 扁平数组
+                $flatPatterns = $patterns;
+            } elseif (is_array($firstValue)) {
+                // 类型分组
+                foreach ($patterns as $groupPatterns) {
+                    if (is_array($groupPatterns)) {
+                        foreach ($groupPatterns as $item) {
+                            if (isset($item['pattern'])) {
+                                $flatPatterns[] = $item;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        foreach ($flatPatterns as $item) {
+            $pattern = $item['pattern'] ?? null;
+            if (!is_string($pattern) || $pattern === '') {
+                continue;
+            }
+
+            $hash = md5($pattern);
+            if (isset(self::$validatedPatterns[$hash])) {
+                $count++;
+                continue;
+            }
+
+            // 用空字符串测试编译（不会实际匹配，仅验证模式语法）
+            $result = @preg_match($pattern, '');
+            self::$validatedPatterns[$hash] = $result !== false;
+            if ($result !== false) {
+                $count++;
+            }
+        }
+
+        return $count;
+    }
+
+    /**
+     * 检查模式是否已通过编译验证
+     *
+     * @param string $pattern 正则模式
+     * @return bool true=已验证通过/无需验证，false=未验证
+     */
+    public function isPatternValidated(string $pattern): bool
+    {
+        return isset(self::$validatedPatterns[md5($pattern)]);
+    }
+
+    /**
+     * 启用请求级预过滤缓存
+     *
+     * 当同一请求中对同一输入多次执行 preFilter 时可显著减少 strtolower + str_contains 开销。
+     * 需在请求开始时调用 enableRequestCache()，结束时调用 clearRequestCache()。
+     */
+    public static function enableRequestCache(): void
+    {
+        self::$requestCacheEnabled = true;
+    }
+
+    /**
+     * 清除请求级预过滤缓存
+     */
+    public static function clearRequestCache(): void
+    {
+        self::$preFilterRequestCache = [];
     }
 
     /**

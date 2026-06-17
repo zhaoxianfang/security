@@ -49,6 +49,12 @@ class ThreatData
         'redirect' => '检测到开放重定向攻击，试图将用户跳转到恶意站点',
         'file_include' => '检测到文件包含攻击(LFI/RFI)',
         'high_risk_pattern' => '检测到高风险攻击模式',
+        'deserialization' => '检测到PHP反序列化攻击，试图注入恶意对象',
+        'prototype_pollution' => '检测到JavaScript原型污染攻击',
+        'jndi' => '检测到JNDI注入攻击(Log4Shell类漏洞利用)',
+        'http_smuggling' => '检测到HTTP请求走私攻击',
+        'graphql' => '检测到GraphQL注入/滥用攻击',
+        'webshell' => '检测到WebShell上传或执行攻击',
 
         // XSS攻击
         'xss' => '检测到跨站脚本攻击(XSS)，试图注入恶意脚本',
@@ -98,6 +104,11 @@ class ThreatData
         'dangerous_upload' => 'high',
         'header_injection' => 'high',
         'file_include' => 'high',
+        'deserialization' => 'high',
+        'prototype_pollution' => 'high',
+        'jndi' => 'high',
+        'http_smuggling' => 'high',
+        'webshell' => 'high',
 
         // 中危 — 可能造成数据泄露或损坏
         'redirect' => 'medium',
@@ -107,6 +118,7 @@ class ThreatData
         'xss_tag' => 'medium',
         'url_path_attack' => 'medium',
         'bad_user_agent' => 'medium',
+        'graphql' => 'medium',
 
         // 低危 — 可能是误报或低风险行为
         'ldap' => 'low',
@@ -172,6 +184,12 @@ class ThreatData
         'database_table_destruction' => 'database_operation',
         'database_mass_deletion' => 'database_operation',
         'database_code_level_operation' => 'database_operation',
+        'deserialization' => 'injection',
+        'prototype_pollution' => 'client_side',
+        'jndi' => 'injection',
+        'http_smuggling' => 'protocol_attack',
+        'graphql' => 'api_abuse',
+        'webshell' => 'backdoor',
     ];
 
     /**
@@ -215,6 +233,12 @@ class ThreatData
         'database_table_destruction' => '数据库表结构破坏操作',
         'database_mass_deletion' => '数据库全量数据删除操作',
         'database_code_level_operation' => '代码级数据库危险操作',
+        'deserialization' => 'PHP反序列化攻击',
+        'prototype_pollution' => '原型污染攻击',
+        'jndi' => 'JNDI注入攻击',
+        'http_smuggling' => 'HTTP请求走私攻击',
+        'graphql' => 'GraphQL注入/滥用',
+        'webshell' => 'WebShell攻击',
     ];
 
     /**
@@ -257,6 +281,12 @@ class ThreatData
         'database_table_destruction' => '检测到数据库表结构破坏操作，请求已被拦截',
         'database_mass_deletion' => '检测到数据库全量数据删除操作，请求已被拦截',
         'database_code_level_operation' => '检测到代码级数据库危险操作，请求已被拦截',
+        'deserialization' => '检测到PHP反序列化攻击，请求已被拦截',
+        'prototype_pollution' => '检测到原型污染攻击，请求已被拦截',
+        'jndi' => '检测到JNDI注入攻击，请求已被拦截',
+        'http_smuggling' => '检测到HTTP请求走私攻击，请求已被拦截',
+        'graphql' => '检测到GraphQL注入/滥用，请求已被拦截',
+        'webshell' => '检测到WebShell攻击，请求已被拦截',
     ];
 
     /**
@@ -267,10 +297,15 @@ class ThreatData
     public const RESPONSE_HEADERS = [
         'X-Content-Type-Options' => 'nosniff',
         'X-Frame-Options' => 'DENY',
-        'X-XSS-Protection' => '1; mode=block',
-        'Referrer-Policy' => 'no-referrer',
+        // X-XSS-Protection 在主流浏览器中已被弃用，但仍提供对旧浏览器的兼容
+        'X-XSS-Protection' => '0',
+        'Referrer-Policy' => 'strict-origin-when-cross-origin',
         'Cache-Control' => 'no-store, no-cache, must-revalidate, max-age=0',
         'Pragma' => 'no-cache',
+        'X-Permitted-Cross-Domain-Policies' => 'none',
+        'Cross-Origin-Resource-Policy' => 'same-origin',
+        'Cross-Origin-Opener-Policy' => 'same-origin',
+        'Cross-Origin-Embedder-Policy' => 'require-corp',
     ];
 
     /**

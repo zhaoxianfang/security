@@ -6,10 +6,11 @@ namespace zxf\Security\Middleware\Concerns;
  * Markdown 内容智能识别与安全旁路管理
  *
  * 核心功能：
- *  1. Markdown 文档识别（评分机制 + 多特征检测）
- *  2. 代码块内匹配定位（围栏式 + 缩进式）
+ *  1. Markdown 文档识别（多维评分机制 + YAML frontmatter + GFM 特性检测）
+ *  2. 代码块内匹配定位（围栏式 + 缩进式 + 嵌套检测）
  *  3. 危险代码旁路策略（双层控制模型）
  *  4. 代码块清理（移除 Markdown 标记后检测）
+ *  5. 多行注释/文档结构识别（避免误报教学/文档型内容）
  *
  * 双层控制模型：
  *  - 第一层：allow_script_in_markdown → 控制 XSS 脚本标签检测
@@ -23,36 +24,71 @@ namespace zxf\Security\Middleware\Concerns;
  *
  * @package zxf\Security\Middleware\Concerns
  * @since 5.4.0
- * @version 6.2.0
+ * @version 6.4.0
  */
 trait ManagesMarkdownSafety
 {
     /**
-     * 判断内容是否为 Markdown 文档（增强评分版）
+     * 请求级 Markdown 检测结果缓存
      *
-     * 采用评分机制，综合判断以下特征：
-     *  - 围栏式代码块（```/~~~）— 强信号（+5分）
-     *  - 行内代码 `backticks` — 中信号（+2分）
+     * isMarkdownContent() 含 16 条正则匹配，一个请求中可能被多次调用
+     * （shouldBypassMarkdownDangerousCode + isLikelyMarkdownContent）。
+     * 通过 crc32b 哈希缓存结果，避免重复计算。
+     *
+     * @var array<int, bool>
+     */
+    private array $mdContentCache = [];
+
+    /**
+     * 判断内容是否为 Markdown 文档（增强多维评分版 + 请求级缓存）
+     *
+     * 采用多维度评分机制，综合判断以下特征：
+     *  - 围栏式代码块（```/~~~）— 强信号（+6分）
+     *  - YAML frontmatter（开头 --- 闭合）— 强文档信号（+5分）
+     *  - 行内代码 `backticks` — 中信号（+3分）
+     *  - HTML 注释块 — 文档特征（+3分）
      *  - Markdown 语法模式（标题/列表/链接/表格等）— 基础分（+1分/个）
-     *  - YAML frontmatter / HTML 注释 — 文档特征
+     *  - GFM 特性（任务列表/删除线/脚注）— 额外分（+1分/个）
      *
      * @param string $content 原始内容
      * @return bool true=是 Markdown 文档，false=不是
      */
     protected function isMarkdownContent(string $content): bool
     {
+        // 请求级缓存：同一请求中对同一内容多次调用不重复计算
+        $cacheKey = crc32($content);
+        if (isset($this->mdContentCache[$cacheKey])) {
+            return $this->mdContentCache[$cacheKey];
+        }
+
         $markdownConfig = $this->config['markdown'] ?? [];
 
         // 最小长度检查
         $minLength = $markdownConfig['min_length'] ?? 80;
         if (strlen($content) < $minLength) {
+            $this->mdContentCache[$cacheKey] = false;
             return false;
         }
 
         $codeBlockMarkers = $markdownConfig['code_block_markers'] ?? ['```', '~~~'];
         $inlineCodeMarker = $markdownConfig['inline_code_marker'] ?? '`';
 
-        // 围栏式代码块检测
+        // YAML frontmatter 检测（开头 --- 后内容，再遇到 --- 闭合）
+        $hasFrontmatter = false;
+        if (str_starts_with(ltrim($content), '---')) {
+            $lines = explode("\n", $content);
+            $firstLine = trim($lines[0] ?? '');
+            if ($firstLine === '---') {
+                for ($i = 1, $len = min(count($lines), 30); $i < $len; $i++) {
+                    if (trim($lines[$i]) === '---') {
+                        $hasFrontmatter = true;
+                        break;
+                    }
+                }
+            }
+        }
+
+        // 围栏式代码块检测（双标签配对）
         $hasCodeBlock = false;
         foreach ($codeBlockMarkers as $marker) {
             if (substr_count($content, $marker) >= 2) {
@@ -61,9 +97,12 @@ trait ManagesMarkdownSafety
             }
         }
 
-        // 行内代码检测
+        // 行内代码检测（至少 2 对反引号 = 4 次出现）
         $inlineCodeCount = substr_count($content, $inlineCodeMarker);
         $hasInlineCode = $inlineCodeCount >= 4;
+
+        // HTML 注释块检测（文档/博客常见）
+        $hasHtmlComment = str_contains($content, '<!--') && str_contains($content, '-->');
 
         // Markdown 语法模式匹配
         $markdownPatterns = \zxf\Security\Config\DefaultConfig::getMarkdownSyntaxPatterns($this->config);
@@ -75,20 +114,32 @@ trait ManagesMarkdownSafety
             }
         }
 
-        // 代码块是强信号，大幅加分（表明这是技术文档）
+        // 代码块是强信号，大幅加分
         if ($hasCodeBlock) {
+            $syntaxScore += 6;
+        }
+
+        // YAML frontmatter 是明确 Markdown 文档标志
+        if ($hasFrontmatter) {
             $syntaxScore += 5;
         }
 
         // 行内代码也有一定加分
         if ($hasInlineCode) {
-            $syntaxScore += 2;
+            $syntaxScore += 3;
         }
 
-        $minScore = $markdownConfig['min_syntax_score'] ?? 2;
+        // HTML 注释在文档/博客中也算一个信号
+        if ($hasHtmlComment) {
+            $syntaxScore += 3;
+        }
 
-        // 综合判定：代码块存在 或 语法特征足够
-        return $hasCodeBlock || $syntaxScore >= $minScore;
+        $minScore = $markdownConfig['min_syntax_score'] ?? 3;
+
+        // 综合判定：代码块存在、frontmatter 存在、或语法特征足够
+        $result = $hasCodeBlock || $hasFrontmatter || $syntaxScore >= $minScore;
+        $this->mdContentCache[$cacheKey] = $result;
+        return $result;
     }
 
     /**
@@ -193,7 +244,8 @@ trait ManagesMarkdownSafety
      * 检查匹配的XSS/高危模式是否位于Markdown代码块内
      *
      * 通过 PREG_OFFSET_CAPTURE 定位匹配位置，避免逐行执行正则。
-     * 支持围栏式代码块（``` 和 ~~~）以及缩进式代码块（4空格/Tab）。
+     * 支持围栏式代码块（``` 和 ~~~）、缩进式代码块（4空格/Tab）、
+     * 以及嵌套围栏（外层~~~内层```等）。
      *
      * @param string $content 原始内容
      * @param string $pattern 匹配的正则模式
@@ -208,15 +260,21 @@ trait ManagesMarkdownSafety
         }
 
         $matchOffset = $matches[0][1];
-        $beforeMatch = substr($content, 0, $matchOffset);
 
-        // 解析围栏式代码块状态（同类型关闭）
-        $lines = explode("\n", $beforeMatch);
+        // ═══ 单次 explode，同时用于围栏状态解析和缩进检测 ═══
+        // 之前代码两次调用 explode("\n", ...)，对大内容 Markdown 开销翻倍
+        $allLines = explode("\n", $content);
+
+        // 首次遍历：解析围栏式代码块状态，同时定位匹配行索引
         $inFencedBlock = false;
         $fenceMarker = '';
+        $matchedLineIdx = 0;
+        $charPos = 0;
 
-        foreach ($lines as $line) {
+        foreach ($allLines as $idx => $line) {
             $trimmed = trim($line);
+
+            // 围栏切换
             if (str_starts_with($trimmed, '```') || str_starts_with($trimmed, '~~~')) {
                 $currentMarker = str_starts_with($trimmed, '```') ? '```' : '~~~';
                 if (!$inFencedBlock) {
@@ -226,23 +284,26 @@ trait ManagesMarkdownSafety
                     $inFencedBlock = false;
                 }
             }
+
+            // 通过字符偏移定位匹配所在行
+            if ($matchedLineIdx === 0 && $matchOffset <= $charPos + strlen($line)) {
+                $matchedLineIdx = $idx;
+                if ($inFencedBlock) {
+                    return true; // 匹配在围栏代码块内 → 尽快返回
+                }
+            }
+
+            $charPos += strlen($line) + 1; // +1 for \n
         }
 
-        if ($inFencedBlock) {
-            return true;
-        }
-
-        // 缩进式代码块检测（4空格或1Tab开头，且非空行）
-        // ⚠️ 关键：$matchOffset 不一定是行首，必须从完整行内容检测缩进
-        $allLines = explode("\n", $content);
-        $matchedLineIdx = count($lines) - 1; // 匹配行在 allLines 中的索引
+        // 缩进式代码块检测
         $matchedLine = $allLines[$matchedLineIdx] ?? '';
 
         if ((str_starts_with($matchedLine, '    ') || str_starts_with($matchedLine, "\t")) && trim($matchedLine) !== '') {
             $indentedCount = 1;
 
-            // 向前检查（最多检查前3行）
-            for ($j = $matchedLineIdx - 1; $j >= max(0, $matchedLineIdx - 3); $j--) {
+            // 向前检查（最多前 5 行）
+            for ($j = $matchedLineIdx - 1; $j >= max(0, $matchedLineIdx - 5); $j--) {
                 $prevLine = $allLines[$j] ?? '';
                 if ((str_starts_with($prevLine, '    ') || str_starts_with($prevLine, "\t")) && trim($prevLine) !== '') {
                     $indentedCount++;
@@ -252,8 +313,8 @@ trait ManagesMarkdownSafety
                     break;
                 }
             }
-            // 向后检查（最多检查后3行）
-            for ($j = $matchedLineIdx + 1; $j < min(count($allLines), $matchedLineIdx + 4); $j++) {
+            // 向后检查（最多后 5 行）
+            for ($j = $matchedLineIdx + 1; $j < min(count($allLines), $matchedLineIdx + 6); $j++) {
                 $nextLine = $allLines[$j] ?? '';
                 if ((str_starts_with($nextLine, '    ') || str_starts_with($nextLine, "\t")) && trim($nextLine) !== '') {
                     $indentedCount++;
@@ -264,8 +325,19 @@ trait ManagesMarkdownSafety
                 }
             }
 
-            // 标准 Markdown 规范：单行 4 空格或 Tab 缩进即构成代码块
-            return $indentedCount >= 1;
+            if ($indentedCount >= 2) {
+                return true;
+            }
+
+            if ($indentedCount === 1) {
+                $codeClues = [';', '=>', '->', 'function', 'class ', 'SELECT', 'DROP ',
+                    'preg_', 'public ', 'private ', 'protected ', 'echo ', 'return '];
+                foreach ($codeClues as $clue) {
+                    if (str_contains($matchedLine, $clue)) {
+                        return true;
+                    }
+                }
+            }
         }
 
         return false;
@@ -282,9 +354,16 @@ trait ManagesMarkdownSafety
      */
     protected function removeMarkdownCodeBlocks(string $content): string
     {
-        $content = $this->safePregReplace('/```[\s\S]*?```/', ' ', $content);
-        $content = $this->safePregReplace('/~~~[\s\S]*?~~~/', ' ', $content);
-        $content = $this->safePregReplace('/`[^`]+`/', ' ', $content);
+        // 快速预检：无围栏标记则跳过正则替换
+        if (str_contains($content, '```')) {
+            $content = $this->safePregReplace('/```[\s\S]*?```/', ' ', $content);
+        }
+        if (str_contains($content, '~~~')) {
+            $content = $this->safePregReplace('/~~~[\s\S]*?~~~/', ' ', $content);
+        }
+        if (str_contains($content, '`')) {
+            $content = $this->safePregReplace('/`[^`]+`/', ' ', $content);
+        }
 
         return $content;
     }

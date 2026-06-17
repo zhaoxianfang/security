@@ -65,7 +65,14 @@ return [
         'xss'          => env('SECURITY_DETECT_XSS', true),          // XSS攻击检测
         'upload'       => env('SECURITY_DETECT_UPLOAD', true),       // 文件上传安全检查
         'redirect'     => env('SECURITY_DETECT_REDIRECT', false),    // 开放重定向检测（默认关闭，易误报）
+        'deserialization'    => env('SECURITY_DETECT_DESERIALIZATION', true),    // PHP反序列化攻击检测
+        'prototype_pollution' => env('SECURITY_DETECT_PROTOTYPE_POLLUTION', true), // 原型污染攻击检测
+        'jndi'        => env('SECURITY_DETECT_JNDI', true),          // JNDI注入检测（Log4Shell等）
+        'http_smuggling' => env('SECURITY_DETECT_HTTP_SMUGGLING', true), // HTTP请求走私检测
+        'graphql'     => env('SECURITY_DETECT_GRAPHQL', true),       // GraphQL注入/滥用检测
+        'webshell'    => env('SECURITY_DETECT_WEBSHELL', true),      // WebShell变种检测
         'database_operation' => env('SECURITY_DETECT_DB_OPERATION', false), // 数据库危险操作检测（默认关闭）
+        'json_aware_bypass' => env('SECURITY_JSON_AWARE_BYPASS', true), // JSON API智能旁路（减少API误报）
     ],
 
     /*
@@ -375,6 +382,7 @@ return [
 
         'dangerous_code_types' => [
             'sql', 'command', 'path', 'nosql', 'ldap', 'file_include',
+            'deserialization', 'jndi', 'webshell',
         ],
 
         'code_block_markers' => ['```', '~~~'],

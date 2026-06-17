@@ -283,13 +283,10 @@ trait ValidatesInputIntegrity
             $urlLength = strlen($rawUrl);
             $percentThreshold = $config['percent_threshold'] ?? 0.30;
 
-            // 如果URL中%字符占比超过阈值，可能是编码攻击
-            // 注意：percent_threshold 默认为 0.30（即 30%），该值为直接百分比，不含倍数因子
-            // 实际经验：正常 URL 中 % 编码占比通常低于 5%，超过 30% 则极大概率为编码攻击
             if ($urlLength > 0 && $percentCount / $urlLength > $percentThreshold) {
-                // 进一步检查是否有危险模式的编码
-                $decoded = urldecode($rawUrl);
-                $doubleDecoded = urldecode($decoded);
+                // 使用请求级缓存解码（避免同一请求重复 urldecode）
+                $decoded = $this->cachedUrldecode($rawUrl, 1);
+                $doubleDecoded = $this->cachedUrldecode($decoded, 1);
 
                 // 解码后检查可疑模式
                 $suspicious = \zxf\Security\Config\DefaultConfig::getEncodingSuspiciousPatterns($this->config);

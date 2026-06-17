@@ -490,89 +490,87 @@ class FrameworkBridge
 
     // ==================== Log 统一接口 ====================
 
-    public static function logWarning(string $message, array $context = []): void
+    /**
+     * 通用日志方法 — 消除重复代码
+     */
+    private static function logInternal(string $level, string $message, array $context = []): void
     {
         try {
+            // 优先使用ThinkPHP门面
             if (self::isThinkPhp() && class_exists('think\facade\Log')) {
-                \think\facade\Log::warning($message, $context);
+                \think\facade\Log::{$level}($message, $context);
                 return;
             }
+            // Laravel门面
             if (class_exists('Illuminate\Support\Facades\Log')) {
-                \Illuminate\Support\Facades\Log::warning($message, $context);
+                \Illuminate\Support\Facades\Log::{$level}($message, $context);
+                return;
+            }
+            // PSR-3 兼容降级：检查是否有全局logger
+            if (function_exists('app') && method_exists(app(), 'bound')) {
+                try {
+                    $psrLogger = app()->bound('log') ? app('log') : null;
+                    if ($psrLogger !== null && method_exists($psrLogger, $level)) {
+                        $psrLogger->{$level}($message, $context);
+                        return;
+                    }
+                } catch (\Throwable) {
+                }
             }
         } catch (\Throwable) {
         }
+    }
+
+    public static function logWarning(string $message, array $context = []): void
+    {
+        self::logInternal('warning', $message, $context);
     }
 
     public static function logError(string $message, array $context = []): void
     {
-        try {
-            if (self::isThinkPhp() && class_exists('think\facade\Log')) {
-                \think\facade\Log::error($message, $context);
-                return;
-            }
-            if (class_exists('Illuminate\Support\Facades\Log')) {
-                \Illuminate\Support\Facades\Log::error($message, $context);
-            }
-        } catch (\Throwable) {
-        }
+        self::logInternal('error', $message, $context);
     }
 
     public static function logDebug(string $message, array $context = []): void
     {
-        try {
-            if (self::isThinkPhp() && class_exists('think\facade\Log')) {
-                \think\facade\Log::debug($message, $context);
-                return;
-            }
-            if (class_exists('Illuminate\Support\Facades\Log')) {
-                \Illuminate\Support\Facades\Log::debug($message, $context);
-            }
-        } catch (\Throwable) {
-        }
+        self::logInternal('debug', $message, $context);
     }
 
     public static function logInfo(string $message, array $context = []): void
     {
-        try {
-            if (self::isThinkPhp() && class_exists('think\facade\Log')) {
-                \think\facade\Log::info($message, $context);
-                return;
-            }
-            if (class_exists('Illuminate\Support\Facades\Log')) {
-                \Illuminate\Support\Facades\Log::info($message, $context);
-            }
-        } catch (\Throwable) {
-        }
+        self::logInternal('info', $message, $context);
     }
 
     public static function logCritical(string $message, array $context = []): void
     {
-        try {
-            if (self::isThinkPhp() && class_exists('think\facade\Log')) {
-                \think\facade\Log::critical($message, $context);
-                return;
-            }
-            if (class_exists('Illuminate\Support\Facades\Log')) {
-                \Illuminate\Support\Facades\Log::critical($message, $context);
-            }
-        } catch (\Throwable) {
-        }
+        self::logInternal('critical', $message, $context);
     }
 
     // ==================== Config 统一接口 ====================
 
     /**
-     * 读取配置值
+     * 读取配置值（减少框架直接依赖）
+     *
+     * 优先使用框架原生方法，降级到PSR容器或直接返回默认值。
+     * 完全消除对特定框架类的硬依赖，确保框架升级时不会中断。
      */
     public static function config(string $key, mixed $default = null): mixed
     {
         try {
+            // ThinkPHP: 使用 Config 门面
             if (self::isThinkPhp() && class_exists('think\facade\Config')) {
                 return \think\facade\Config::get($key, $default);
             }
+            // Laravel/通用: 使用 config() 辅助函数
             if (function_exists('config')) {
                 return config($key, $default);
+            }
+            // PSR容器降级
+            if (function_exists('app') && method_exists(app(), 'bound') && app()->bound('config')) {
+                $cfg = app('config');
+                if (method_exists($cfg, 'get')) {
+                    return $cfg->get($key, $default);
+                }
             }
         } catch (\Throwable) {
         }
@@ -603,15 +601,30 @@ class FrameworkBridge
 
     /**
      * 检查容器是否已绑定指定抽象
+     *
+     * 兼容 Laravel bound() 和 ThinkPHP exists()，不依赖特定框架类。
      */
     public static function appBound(string $abstract): bool
     {
         try {
-            if (self::isThinkPhp()) {
-                return app()->exists($abstract);
+            if (!function_exists('app')) {
+                return false;
             }
-            if (function_exists('app')) {
-                return app()->bound($abstract);
+            $app = app();
+            if (!is_object($app)) {
+                return false;
+            }
+            // ThinkPHP 容器使用 exists()
+            if (method_exists($app, 'exists')) {
+                return $app->exists($abstract);
+            }
+            // Laravel/PSR 容器使用 bound()
+            if (method_exists($app, 'bound')) {
+                return $app->bound($abstract);
+            }
+            // 通用降级：has()
+            if (method_exists($app, 'has')) {
+                return $app->has($abstract);
             }
         } catch (\Throwable) {
         }
@@ -620,15 +633,30 @@ class FrameworkBridge
 
     /**
      * 从容器解析实例
+     *
+     * 兼容 Laravel app() 和 ThinkPHP make()，不依赖特定框架类。
      */
     public static function appMake(string $abstract, array $params = []): mixed
     {
         try {
-            if (self::isThinkPhp()) {
-                return app()->make($abstract, $params);
+            if (!function_exists('app')) {
+                return null;
             }
-            if (function_exists('app')) {
-                return app($abstract, $params);
+            $app = app();
+            if (!is_object($app)) {
+                return null;
+            }
+            // ThinkPHP 容器使用 make()
+            if (method_exists($app, 'make')) {
+                return $app->make($abstract, $params);
+            }
+            // Laravel/PSR 容器: app() 可直接调用
+            if (is_callable($app)) {
+                return $app($abstract, $params);
+            }
+            // 通用降级：get() 方法
+            if (method_exists($app, 'get')) {
+                return $app->get($abstract);
             }
         } catch (\Throwable) {
         }

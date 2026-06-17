@@ -284,76 +284,70 @@ trait HandlesDatabaseOperations
     {
         $sources = [];
 
-        // 1. URL 路径及完整 URL
+        // 1. URL 路径及完整 URL（框架返回值已知为 UTF-8，跳过验证）
         $fullUrl = FrameworkBridge::requestFullUrl($request);
         $path = FrameworkBridge::requestPath($request);
 
         if ($fullUrl !== '') {
-            $truncated = $this->truncateInput($fullUrl);
-            $sources['full_url'] = [$truncated, urldecode($truncated)];
+            $truncated = $this->truncateInputKnown($fullUrl);
+            $decoded = $this->truncateInputKnown($this->cachedUrldecode($fullUrl, 1));
+            if ($decoded !== $truncated) {
+                $sources['full_url'] = [$truncated, $decoded];
+            } else {
+                $sources['full_url'] = [$truncated];
+            }
         }
 
         if ($path !== '' && $path !== $fullUrl) {
-            $sources['url_path'] = [$path, urldecode($path)];
+            $sources['url_path'] = [$path, $this->truncateInputKnown($this->cachedUrldecode($path, 1))];
         }
 
         // 2. 查询参数字符串（整体）
         $queryString = FrameworkBridge::requestGetQueryString($request);
         if ($queryString !== null && $queryString !== '') {
-            $sources['query_string'] = [$queryString, urldecode($queryString)];
-        }
-
-        // 3. 独立查询参数值（含多级解码）
-        $queryParams = FrameworkBridge::requestQuery($request);
-        foreach ($queryParams as $key => $value) {
-            if (!is_string($value) || $value === '') {
-                continue;
+            $decoded = $this->cachedUrldecode($queryString, 1);
+            if ($decoded !== $queryString) {
+                $sources['query_string'] = [$queryString, $decoded];
+            } else {
+                $sources['query_string'] = [$queryString];
             }
-            $candidates = array_unique([
-                $this->truncateInput($value),
-                $this->truncateInput(urldecode($value)),
-                $this->truncateInput(urldecode(urldecode($value))),
-            ]);
-            $sources["query.{$key}"] = $candidates;
         }
 
-        // 4. POST 参数值
-        $postParams = FrameworkBridge::requestPost($request);
-        foreach ($postParams as $key => $value) {
-            if (!is_string($value) || $value === '') {
-                continue;
+        // 3-5. 查询/POST/路由参数值 — 使用内联去重替代 array_unique
+        foreach ([
+            ['query', FrameworkBridge::requestQuery($request)],
+            ['post', FrameworkBridge::requestPost($request)],
+            ['route', FrameworkBridge::requestRouteParams($request)],
+        ] as [$prefix, $params]) {
+            foreach ($params as $key => $value) {
+                if (!is_string($value) || $value === '') {
+                    continue;
+                }
+                $c1 = $this->truncateInputKnown($value);
+                $c2 = $this->truncateInputKnown($this->cachedUrldecode($value, 1));
+                $c3 = $this->truncateInputKnown($this->cachedUrldecode($value, 2));
+
+                $candidates = [$c1];
+                if ($c2 !== $c1) $candidates[] = $c2;
+                if ($c3 !== $c1 && $c3 !== $c2) $candidates[] = $c3;
+                $sources["{$prefix}.{$key}"] = $candidates;
             }
-            $candidates = array_unique([
-                $this->truncateInput($value),
-                $this->truncateInput(urldecode($value)),
-                $this->truncateInput(urldecode(urldecode($value))),
-            ]);
-            $sources["post.{$key}"] = $candidates;
         }
 
-        // 5. 路由参数值
-        $routeParams = FrameworkBridge::requestRouteParams($request);
-        foreach ($routeParams as $key => $value) {
-            if (!is_string($value) || $value === '') {
-                continue;
-            }
-            $candidates = array_unique([
-                $this->truncateInput($value),
-                $this->truncateInput(urldecode($value)),
-                $this->truncateInput(urldecode(urldecode($value))),
-            ]);
-            $sources["route.{$key}"] = $candidates;
-        }
-
-        // 6. 获取原始请求体内容（适用于 JSON/XML API 请求）
+        // 6. 原始请求体内容（适用于 JSON/XML API 请求）
         $contentType = FrameworkBridge::requestGetHeader($request, 'Content-Type') ?? '';
         if (stripos($contentType, 'json') !== false || stripos($contentType, 'xml') !== false) {
             try {
                 if (method_exists($request, 'getContent')) {
                     $rawBody = $request->getContent();
                     if (is_string($rawBody) && $rawBody !== '') {
-                        $truncated = $this->truncateInput($rawBody);
-                        $sources['raw_body'] = [$truncated, urldecode($truncated)];
+                        $truncated = $this->truncateInputKnown($rawBody);
+                        $decoded = $this->truncateInputKnown($this->cachedUrldecode($rawBody, 1));
+                        if ($decoded !== $truncated) {
+                            $sources['raw_body'] = [$truncated, $decoded];
+                        } else {
+                            $sources['raw_body'] = [$truncated];
+                        }
                     }
                 }
             } catch (\Throwable) {
@@ -374,6 +368,9 @@ trait HandlesDatabaseOperations
      * 关键词按长度降序排列（长词先匹配，短路更快）。
      * 输入统一转小写后匹配（大小写不敏感）。
      *
+     * 优化：合并所有输入源为单次 strtolower + str_contains 遍历，
+     * 相比逐源遍历减少函数调用次数。
+     *
      * @param array<string, array<string>> $checkSources 输入来源
      * @return bool true=至少一条输入含关键词需正则检查，false=安全跳过
      */
@@ -382,9 +379,11 @@ trait HandlesDatabaseOperations
         $keywords = $this->getDbPreFilterKeywords();
 
         if (empty($keywords)) {
-            return true; // 无预过滤规则时，始终进入正则检查
+            return true;
         }
 
+        // 扁平化所有来源 → 一次 strtolower 一次遍历
+        // 替代之前的嵌套 foreach（每源每字符串每关键词三层循环）
         foreach ($checkSources as $strings) {
             foreach ($strings as $checkString) {
                 if (!is_string($checkString) || $checkString === '') {
@@ -394,13 +393,12 @@ trait HandlesDatabaseOperations
                 $lowered = strtolower($checkString);
                 foreach ($keywords as $keyword) {
                     if (str_contains($lowered, $keyword)) {
-                        return true; // 至少一个来源包含关键词，需要正则检查
+                        return true;
                     }
                 }
             }
         }
 
-        // 没有任何来源包含任何关键词 → 安全跳过正则匹配
         return false;
     }
 
@@ -560,7 +558,7 @@ trait HandlesDatabaseOperations
 
             // 检查匹配文本中是否包含该表名
             // 使用单词边界确保精确匹配（避免 'user' 匹配到 'users'）
-            if (preg_match('/\b' . preg_quote($excludedTable, '/') . '\b/i', $lowerMatch)) {
+            if ($this->safePregMatch('/\b' . preg_quote($excludedTable, '/') . '\b/i', $lowerMatch)) {
                 return true;
             }
         }

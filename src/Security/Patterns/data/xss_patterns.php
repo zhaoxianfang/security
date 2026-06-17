@@ -38,7 +38,7 @@ return [
         ['pattern' => '/<[a-z]+\s[^>]*\bon(error|load|click|mouseover|focus|blur|change|submit|keydown|keyup|keypress|mousemove|mouseout|unload)\s*=\s*[\'"]?\s*(alert|confirm|prompt|eval|document\.cookie|window\.location)\s*\(/i', 'desc' => 'HTML标签中的DOM事件处理器绑定恶意函数', 'risk' => 'high'],
         ['pattern' => '/\.?(innerHTML|outerHTML)\s*=\s*[\'"]?\s*<\s*(script|img|iframe|svg)/i', 'desc' => 'innerHTML/outerHTML赋值为危险标签', 'risk' => 'medium'],
     ],
-    // 新增：通用事件处理器检测（低风险，仅在无HTML标签上下文时作为后备）
+    // 通用事件处理器检测（低风险，仅在无HTML标签上下文时作为后备）
     // 注意：此规则需配合 checkXssPatterns 中的预过滤使用，仅当输入包含 onerror=、onload= 等关键词时才执行正则
     'event' => [
         ['pattern' => '/\b(?:onerror|onload|onclick|onmouseover|onfocus|onblur|onchange|onsubmit)\s*=\s*[\'"]?(?:\s*alert\s*\(|confirm\s*\(|prompt\s*\(|eval\s*\()/i', 'desc' => '通用事件处理器绑定恶意函数（低风险）', 'risk' => 'low'],

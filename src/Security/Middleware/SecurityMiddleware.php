@@ -18,14 +18,14 @@ use zxf\Security\Middleware\Concerns\HandlesDatabaseOperations;
 use zxf\Security\Middleware\Concerns\BuildsInterceptionResponse;
 
 /**
- * 安全拦截中间件（跨框架版）
+ * 安全拦截中间件（跨框架版 6.3）
  *
  * 核心设计理念：
  * 1. 高危操作精准拦截 - 采用高置信度检测模式，确保攻击被拦截
- * 2. 低误报率 - 智能识别合法内容（如Markdown文档中的代码示例）
- * 3. 零缓存依赖 - 不使用任何自定义缓存，直接使用框架原生功能
- * 4. 高性能 - 精简逻辑，单次请求处理耗时 < 1ms
- * 5. 灵活配置 - 支持回调、动态规则、路由排除
+ * 2. 低误报率 - 智能识别合法内容（Markdown文档、JSON API数据）
+ * 3. 现代化攻击防御 - 覆盖反序列化/JNDI/原型污染/HTTP走私等18类攻击
+ * 4. 高性能 - 预过滤+请求级缓存，单次请求处理耗时 < 1ms
+ * 5. 灵活配置 - 支持回调、动态规则、路由排除、JSON智能旁路
  * 6. 模块化架构 - 按功能拆分为 8 个 Trait，提高可读性和可维护性
  * 7. 跨框架兼容 - 支持 Laravel 11+ 和 ThinkPHP 8+
  *
@@ -33,7 +33,7 @@ use zxf\Security\Middleware\Concerns\BuildsInterceptionResponse;
  *  1. 路由排除检查    → HandlesAccessControl
  *  2. IP 白名单检查   → HandlesAccessControl
  *  3. IP 黑名单检查   → HandlesAccessControl
- *  4. URL路径攻击检测 → DetectsAttackPatterns
+ *  4. URL路径攻击检测 → DetectsAttackPatterns (含CI/CD/云元数据)
  *  5. 多重编码检测    → ValidatesInputIntegrity
  *  6. User-Agent检查  → ValidatesInputIntegrity
  *  7. HTTP头检查      → ValidatesInputIntegrity
@@ -41,23 +41,30 @@ use zxf\Security\Middleware\Concerns\BuildsInterceptionResponse;
  *  9. 请求速率限制    → ValidatesInputIntegrity
  * 10. HTTP方法检查    → ValidatesInputIntegrity
  * 11. URL长度检查     → ValidatesInputIntegrity
- * 12. 高危攻击检测    → DetectsAttackPatterns + ManagesMarkdownSafety
- * 13. XSS攻击检测     → DetectsAttackPatterns + ManagesMarkdownSafety
+ * 12. 高危攻击检测    → DetectsAttackPatterns (18类，含反序列化/JNDI/WebShell等)
+ * 13. XSS攻击检测     → DetectsAttackPatterns + JSON智能旁路
  * 14. 文件上传检查    → HandlesFileUploads
  * 15. 数据库操作检测  → HandlesDatabaseOperations
  *
+ * 本版本特性：
+ *  - 18类攻击检测：含反序列化/JNDI/原型污染/HTTP走私/GraphQL/WebShell
+ *  - JSON API 智能旁路：减少SQL/XSS误报
+ *  - 请求级输入规范化缓存：减少重复urldecode/strtolower
+ *  - CI/CD 泄露检测：GitHub Actions/GitLab CI/Jenkins/k8s配置
+ *  - 云元数据探测：AWS/阿里云/GCP/Azure IMDS攻击
+ *
  * 模块文件：
- *  - Concerns/UsesSafeRegex.php            安全正则 + 输入处理
+ *  - Concerns/UsesSafeRegex.php            安全正则 + 输入处理 + 请求级缓存
  *  - Concerns/HandlesAccessControl.php     路由排除 + IP黑白名单 + 检测层开关
  *  - Concerns/ValidatesInputIntegrity.php  UA/Headers/Body/Rate/Method/URL/编码检查
- *  - Concerns/DetectsAttackPatterns.php    URL路径 + 高危攻击 + XSS 模式检测
+ *  - Concerns/DetectsAttackPatterns.php    URL路径 + 高危攻击 + XSS + JSON智能旁路
  *  - Concerns/ManagesMarkdownSafety.php    Markdown 智能识别与旁路
  *  - Concerns/HandlesFileUploads.php       文件上传安全检查
  *  - Concerns/HandlesDatabaseOperations.php 数据库危险操作识别与拦截
  *  - Concerns/BuildsInterceptionResponse.php  拦截响应 + 日志 + 回调
  *
  * @package zxf\Security\Middleware
- * @version 6.2.0
+ * @version 6.3.0
  */
 class SecurityMiddleware
 {
@@ -145,6 +152,18 @@ class SecurityMiddleware
      * @var array|null
      */
     private ?array $cachedInterceptRules = null;
+    
+    /**
+     * 请求级输入规范化缓存
+     * 
+     * 避免同一请求中多个检测层（URL路径、高危攻击、XSS）重复执行
+     * urldecode() / strtolower() 操作。键为原始字符串，值为已规范化的字符串。
+     * 
+     * 仅缓存请求期间使用，请求结束后由 PHP GC 自动回收。
+     *
+     * @var array<string, string>
+     */
+    private array $normalizedInputCache = [];
 
     /**
      * 构造函数
@@ -198,6 +217,17 @@ class SecurityMiddleware
         $this->config = $loadedConfig;
         $this->ipMatcher = new IpMatcherService();
         $this->patternService = FrameworkBridge::appMake(PatternService::class) ?? new PatternService();
+
+        // 启用请求级预过滤缓存：同一请求中对同一输入多次执行 preFilter 可复用结果
+        PatternService::enableRequestCache();
+    }
+
+    /**
+     * 析构函数：清理请求级缓存
+     */
+    public function __destruct()
+    {
+        PatternService::clearRequestCache();
     }
 
     /**

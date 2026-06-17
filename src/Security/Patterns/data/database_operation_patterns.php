@@ -1,43 +1,46 @@
 <?php
 
 /**
- * 数据库危险操作检测模式（v6.2 元数据格式）
+ * 数据库危险操作检测模式（v6.4 增强版元数据格式）
  *
  * ═══════════════════════════════════════════════════════════════
  * 功能概述：
  *   识别并拦截 Web 请求中携带的数据库危险操作命令，防止通过 API/表单/URL
  *   等渠道执行可能造成数据丢失的数据库操作。覆盖 Laravel/ThinkPHP 等框架的
- *   ORM/QueryBuilder/Artisan 调用，以及原生 SQL 注入中的危险操作。
+ *   ORM/QueryBuilder/Artisan/种子填充/数据库连接配置篡改等操作。
  *
  * ═══════════════════════════════════════════════════════════════
- * 检测目标（三大类别，共 52 条规则）：
+ * 检测目标（三大类别，共 52+ 条规则）：
  *
- *   一、表结构破坏类（table_destruction）—— 第 82-155 行，共 18 条
+ *   一、表结构破坏类（table_destruction）— 18 条
  *     - Laravel/ThinkPHP Artisan: migrate:fresh / migrate:refresh / migrate:reset /
- *       migrate:rollback / db:wipe
+ *       migrate:rollback / db:wipe / schema:dump
  *     - Schema Builder:  Schema::drop() / dropIfExists() / dropAllTables() / dropDatabase()
  *     - 原生 SQL DDL:   DROP TABLE / DATABASE / VIEW / PROCEDURE / FUNCTION
  *     - 危险前置操作:   ALTER TABLE DROP COLUMN/CONSTRAINT/INDEX/KEY
  *                      RENAME TABLE（破坏表依赖）、SET FOREIGN_KEY_CHECKS=0
  *                      SET SQL_SAFE_UPDATES=0
  *     - 堆叠查询:       分号后的 DROP/TRUNCATE（SQL 多语句注入变体）
+ *     - 环境破坏:       .env 数据库连接配置篡改
  *
- *   二、全量数据删除类（mass_deletion）—— 第 163-246 行，共 21 条
+ *   二、全量数据删除类（mass_deletion）— 21+ 条
  *     - SQL 原生命令:   TRUNCATE TABLE、DELETE FROM 无条件/永真条件
  *     - 永真条件变体:   WHERE 1=1 / WHERE 1 / WHERE true / WHERE '1'='1' / OR 1=1
- *                      以及更隐蔽的永真条件（WHERE 'a'='a' 等）
+ *                      隐蔽永真条件（WHERE 'a'='a' 等）
  *     - 无条件 UPDATE:  UPDATE ... SET（无 WHERE，全表更新）
  *     - Eloquent:       Model::truncate()、Model::query()->delete()
  *                      Model::all()->each(...delete...)、->select()->delete()
+ *                      chunk/delete 组合、cursor 遍历删除
  *     - ThinkPHP:       Db::table()->delete()、Db::name()->delete()
  *                      Db::execute() 执行危险 SQL、Model::destroy() 无参数调用
+ *     - DB::raw() 注入: 通过 DB::raw() 传递危险 SQL 片段
  *
- *   三、代码级操作识别（code_level_operation）—— 第 254-303 行，共 13 条
+ *   三、代码级操作识别（code_level_operation）— 13+ 条
  *     - Artisan 调用:   Artisan::call('migrate:fresh') 等危险命令
  *     - PHP 命令执行:   shell_exec / exec / passthru / system / popen / proc_open
- *                      执行 artisan 危险命令
- *     - Process 组件:   new Process() / Process::fromShellCommandline() 调用 artisan
+ *     - Process 组件:   new Process() / Process::fromShellCommandline()
  *     - DB Facade:      DB::statement() / DB::unprepared() 执行 DROP/TRUNCATE
+ *     - 连接配置篡改:   config(['database.connections...'])、env() 修改
  *
  * ═══════════════════════════════════════════════════════════════
  * 每条规则包含：
@@ -47,28 +50,17 @@
  *
  * ═══════════════════════════════════════════════════════════════
  * 设计原则（六大原则）：
- *   1. 高精确度 — 避免过度泛化的模式（如仅 ->delete() 不捕获），
- *       每条规则必须包含足够的上下文限定词
- *   2. 低误报   — 通过单词边界 \b、空格容忍 \s*、框架调用语法等精确定位
- *   3. 防绕过   — 覆盖多种编码绕过（% 编码、URL 编码、双编码）、
- *       大小写变体（i 修饰符）、空白字符变体（\s* 容忍空格/换行/制表符）
- *   4. 防回溯   — 使用有限量词 {0,N} 替代 [\s\S]*? 和 .*，避免 ReDoS
- *       （正则回溯灾难）攻击。量词上限基于实际 SQL 语句长度权衡
- *   5. 跨框架   — 同时覆盖 Laravel Eloquent/QueryBuilder/Artisan 和
- *       ThinkPHP Db/Model 语法
+ *   1. 高精确度 — 避免过度泛化的模式，每条规则包含充分的上下文限定
+ *   2. 低误报   — 通过单词边界 \b、空格容忍 \s*、框架调用语法精确定位
+ *   3. 防绕过   — 覆盖多种编码、大小写变体、空白字符变体
+ *   4. 防回溯   — 使用有限量词 {0,N} 替代 [\s\S]*? 和 .*，防止 ReDoS
+ *   5. 跨框架   — 同时覆盖 Laravel Eloquent/QueryBuilder/Artisan 和 ThinkPHP Db/Model
  *   6. 可扩展   — 支持通过 intercept_rules_exclude 排除和 intercept_rules 追加
- *
- * ═══════════════════════════════════════════════════════════════
- * 性能提示：
- *   - PatternService 的 preFilters 在正则匹配前进行 str_contains 预检，
- *     通过关键词快速排除 95%+ 的正常请求
- *   - 数据文件仅在检测开关启用时由 PatternService 按需 require 加载
- *   - 所有模式的量词均有限制，单次 preg_match 最大回溯步数约 1000 以内
  *
  * ═══════════════════════════════════════════════════════════════
  * 安全提示：
  *   - 修改本文件请确保充分测试，不当的泛化模式可能造成大面积误拦截
- *   - 新增规则请同时更新 PatternService::$preFilters 中的对应关键词
+ *   - 修改/添加规则请同时更新 PatternService::$preFilters 中的对应关键词
  *   - 低风险（risk=low）规则默认仅记录不拦截，需配合 threat_risk_levels 调整
  */
 
@@ -152,6 +144,14 @@ return [
         ['pattern' => '/\bSET\s+SQL_SAFE_UPDATES\s*=\s*0\b/i',
             'desc' => 'MySQL SET SQL_SAFE_UPDATES=0（关闭安全更新模式，允许无条件 UPDATE/DELETE）',
             'risk' => 'high'],
+
+        // --- 数据库连接配置篡改（2 条）---
+        ['pattern' => '/\bconfig\s*\(\s*[\'"]database\.connections\.\w+\.\w+[\'"]\s*[,)]/i',
+            'desc' => 'Laravel config() 动态修改数据库连接配置（通过请求篡改 DB 连接参数）',
+            'risk' => 'high'],
+        ['pattern' => '/\benv\s*\(\s*[\'"]DB_(?:DATABASE|HOST|PORT|USERNAME|PASSWORD)[\'"]\s*[,)]/i',
+            'desc' => 'Laravel env() 函数调用读取数据库连接敏感配置（信息泄露）',
+            'risk' => 'high'],
     ],
 
     // ══════════════════════════════════════════════════════════════════════
@@ -216,6 +216,17 @@ return [
         ['pattern' => '/->\s*get\s*\(\s*\)\s*->\s*each\s*\(\s*.*delete/i',
             'desc' => 'Laravel ->get()->each(...delete...)（获取记录后删除）',
             'risk' => 'medium'],
+
+        // --- 批量/游标危险操作（3 条）---
+        ['pattern' => '/->\s*chunk\s*\(\s*\d+\s*,\s*function\s*\([^)]*\)\s*use\b[^;]{0,200}->delete\s*\(\s*\)/i',
+            'desc' => 'Laravel chunk() 批量遍历删除（分块全表记录删除）',
+            'risk' => 'high'],
+        ['pattern' => '/->\s*cursor\s*\(\s*\)\s*->\s*each\s*\(\s*.*delete\b/i',
+            'desc' => 'Laravel cursor() 游标遍历删除（逐行删除全表数据）',
+            'risk' => 'high'],
+        ['pattern' => '/DB\s*::\s*raw\s*\(\s*[\'"].*(?:drop\s+table|truncate\s+table|delete\s+from\b)/i',
+            'desc' => 'Laravel DB::raw() 中嵌入 DROP/TRUNCATE/DELETE SQL（绕过 QueryBuilder 安全层）',
+            'risk' => 'high'],
 
         // --- Model::destroy()（3 条，第 1 条为低风险仅记录）---
         ['pattern' => '/::\s*destroy\s*\(\s*\)/i',
@@ -302,6 +313,22 @@ return [
             'risk' => 'high'],
         ['pattern' => '/DB\s*::\s*unprepared\s*\(\s*[\'"].*(drop\s+(table|database|view)|truncate\s+table)\b/i',
             'desc' => 'Laravel DB::unprepared() 执行 DROP/TRUNCATE（绕过预处理，最危险的原生 SQL 调用方式）',
+            'risk' => 'high'],
+
+        // --- 数据库种子填充危险操作（2 条）---
+        ['pattern' => '/->\s*seed\s*\(\s*\)\s*->\s*truncate\s*\(\s*\)/i',
+            'desc' => 'Laravel db:seed 前先 truncate（数据被清空后重新填充，数据不可恢复）',
+            'risk' => 'high'],
+        ['pattern' => '/\bschema:dump\b/i',
+            'desc' => 'Laravel schema:dump（导出数据库结构快照，可能泄露表结构信息）',
+            'risk' => 'medium'],
+
+        // --- ThinkPHP 数据库配置篡改（2 条）---
+        ['pattern' => '/Config\s*::\s*set\s*\(\s*[\'"]database\.[\'"][^)]{0,200}(?:drop|truncate|delete)/i',
+            'desc' => 'ThinkPHP Config::set() 动态修改数据库配置并执行危险操作',
+            'risk' => 'high'],
+        ['pattern' => '/Db\s*::\s*connect\s*\(\s*\[[^\]]{0,200}(?:drop|truncate)\b/i',
+            'desc' => 'ThinkPHP Db::connect() 连接配置中包含危险 SQL 操作',
             'risk' => 'high'],
     ],
 ];

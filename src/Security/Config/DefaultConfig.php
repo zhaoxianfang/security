@@ -61,6 +61,12 @@ class DefaultConfig
         'database_table_destruction' => '检测到数据库表结构破坏操作，请求已被拦截',
         'database_mass_deletion' => '检测到数据库全量数据删除操作，请求已被拦截',
         'database_code_level_operation' => '检测到代码级数据库危险操作，请求已被拦截',
+        'deserialization' => '检测到PHP反序列化攻击，请求已被拦截',
+        'prototype_pollution' => '检测到原型污染攻击，请求已被拦截',
+        'jndi' => '检测到JNDI注入攻击，请求已被拦截',
+        'http_smuggling' => '检测到HTTP请求走私攻击，请求已被拦截',
+        'graphql' => '检测到GraphQL注入/滥用，请求已被拦截',
+        'webshell' => '检测到WebShell攻击，请求已被拦截',
     ];
 
     /**
@@ -115,6 +121,7 @@ class DefaultConfig
      * @var array<mixed>
      */
     public const USER_AGENT_BLACKLIST = [
+        // 注入/扫描工具
         'sqlmap',        // SQLMap 注入工具
         'nmap',          // Nmap 扫描器
         'nikto',         // Nikto Web扫描器
@@ -128,6 +135,30 @@ class DefaultConfig
         'masscan',       // Masscan 端口扫描
         'censys',        // Censys 搜索引擎
         'shodan',        // Shodan 搜索引擎
+        // 恶意爬虫/自动化工具
+        'zgrab',         // ZGrab 扫描
+        'gobuster',      // GoBuster 目录爆破
+        'ffuf',          // FFUF Web fuzzer
+        'nuclei',        // Nuclei 漏洞扫描
+        'whatweb',       // WhatWeb 指纹识别
+        'grendel-scan',  // Grendel 扫描器
+        'netsparker',    // Netsparker 企业扫描器
+        'appscan',       // IBM AppScan
+        'webinspect',    // HP WebInspect
+        'w3af',          // w3af 扫描框架
+        'hydra',         // THC-Hydra 暴力破解
+        'medusa',        // Medusa 暴力破解
+        // AI 爬虫（占用资源且未经授权访问内容）
+        'gptbot',        // OpenAI GPTBot
+        'ccbot',         // Common Crawl (如不需要)
+        'claudebot',     // Anthropic ClaudeBot
+        'perplexitybot', // Perplexity AI Bot
+        'bytespider',    // ByteDance Spider
+        'amazonbot',     // Amazon Bot
+        'omgili',        // Omgili Bot
+        'zoominfobot',   // ZoomInfo Bot
+        'ahrefsbot',     // Ahrefs SEO Bot (可配置)
+        'semrushbot',    // SEMrush Bot (可配置)
     ];
 
     /**

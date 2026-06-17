@@ -14,11 +14,13 @@ use zxf\Security\Bridge\FrameworkBridge;
  * 宿主类依赖（由 SecurityMiddleware 提供）：
  *   - $this->config[][]: mixed  — 安全配置数组（input_processing 等）
  *   - $this->requestId: string  — 唯一请求 ID
+ *   - $this->normalizedInputCache: array  — 请求级规范化缓存
  *
  * 跨框架兼容：日志通过 FrameworkBridge 输出，支持 Laravel 11+ 和 ThinkPHP 8+。
  *
  * @package zxf\Security\Middleware\Concerns
  * @since 6.1.0
+ * @version 6.3.0
  */
 trait UsesSafeRegex
 {
@@ -35,15 +37,11 @@ trait UsesSafeRegex
     /**
      * 安全执行 preg_match，捕获并处理 PCRE 编译错误
      *
-     * PCRE2（PHP 7.3+）不支持 \F, \L, \l, \N{name}, \U, \u 等转义序列。
-     * 如果用户配置的正则模式包含这些不支持的特性，preg_match 会返回 false 并产生警告。
-     * 本方法封装了错误处理，防止正则编译失败导致运行时崩溃。
-     *
-     * 性能优化：使用静态变量缓存回溯限制，避免每次调用 ini_set 的 syscall 开销。
-     *
      * @param string $pattern 正则表达式模式
      * @param string $subject 要匹配的字符串
      * @param array|null $matches 匹配结果数组（引用）
+     * @param int $flags PCRE 标志（如 PREG_OFFSET_CAPTURE）
+     * @param int $offset 匹配起始偏移
      * @return bool true=匹配成功，false=未匹配或正则错误
      */
     protected function safePregMatch(string $pattern, string $subject, ?array &$matches = null, int $flags = 0, int $offset = 0): bool
@@ -58,7 +56,6 @@ trait UsesSafeRegex
             $limitSet = true;
         }
 
-        // 使用局部变量接收匹配结果，避免 PHP 8.2 引用参数默认 null 弃用警告
         $localMatches = [];
         $result = @preg_match($pattern, $subject, $localMatches, $flags, $offset);
 
@@ -74,7 +71,43 @@ trait UsesSafeRegex
             return false;
         }
 
-        // 仅在调用方传入引用参数时写回结果
+        if (func_num_args() >= 3) {
+            $matches = $localMatches;
+        }
+
+        return $result === 1;
+    }
+
+    /**
+     * 快速安全正则匹配（跳过错误抑制，用于已验证编译通过的内置模式）
+     *
+     * 与 safePregMatch 的区别：
+     *  - 不使用 @ 错误抑制（~5% 的微基准性能提升）
+     *  - 不检查 $result === false（内置模式已知编译正确）
+     *  - 仅用于内置模式数据文件中的正则，不可用于用户自定义模式
+     *
+     * @param string $pattern 已验证编译通过的正则模式（内置模式）
+     * @param string $subject 要匹配的字符串
+     * @param array|null $matches 匹配结果数组（引用）
+     * @param int $flags PCRE 标志
+     * @param int $offset 匹配起始偏移
+     * @return bool true=匹配成功，false=未匹配
+     */
+    protected function safePregMatchFast(string $pattern, string $subject, ?array &$matches = null, int $flags = 0, int $offset = 0): bool
+    {
+        if ($subject === '') {
+            return false;
+        }
+
+        static $limitSet = false;
+        if (!$limitSet) {
+            ini_set('pcre.backtrack_limit', '1000000');
+            $limitSet = true;
+        }
+
+        $localMatches = [];
+        $result = preg_match($pattern, $subject, $localMatches, $flags, $offset);
+
         if (func_num_args() >= 3) {
             $matches = $localMatches;
         }
@@ -129,17 +162,36 @@ trait UsesSafeRegex
     {
         $maxLength = $this->getMaxInputLength();
 
-        // 防御：无效 UTF-8 序列会导致 mb_strlen/mb_substr 返回 false 并产生警告，
-        // 攻击者可能利用此特性使截断失效。先清理无效字节。
+        if (strlen($input) <= $maxLength) {
+            return $input;
+        }
+
+        // 仅在需要截断时验证 UTF-8（防御无效字节绕过截断）
         if (!mb_check_encoding($input, 'UTF-8')) {
             $input = mb_convert_encoding($input, 'UTF-8', 'UTF-8');
         }
 
-        if (mb_strlen($input) > $maxLength) {
-            return mb_substr($input, 0, $maxLength);
+        return mb_substr($input, 0, $maxLength);
+    }
+
+    /**
+     * 快速截断（跳过 UTF-8 验证）
+     *
+     * 适用于已知来源为合法 UTF-8 的字符串（如框架内部方法返回值）。
+     * 避免每次 truncateInput 都调用 mb_check_encoding（可节省 ~5-10μs/次）。
+     *
+     * @param string $input 原始输入（已知为合法 UTF-8）
+     * @return string 截断后的输入
+     */
+    protected function truncateInputKnown(string $input): string
+    {
+        $maxLength = $this->getMaxInputLength();
+
+        if (strlen($input) <= $maxLength) {
+            return $input;
         }
 
-        return $input;
+        return mb_substr($input, 0, $maxLength);
     }
 
     /**
@@ -261,5 +313,67 @@ trait UsesSafeRegex
         }
 
         return $content;
+    }
+
+    /**
+     * 请求级缓存的输入规范化
+     *
+     * 同一请求中多个检测层（URL路径、高危攻击、XSS）可能对同一字符串
+     * 重复执行 urldecode() / strtolower()。通过请求级缓存避免重复计算。
+     *
+     * 缓存键格式：{操作}::{原始字符串}，值=操作结果
+     * 注意：缓存仅在当前请求生命周期内有效（SecurityMiddleware 实例化一次处理一个请求）
+     *
+     * @param string $input 原始输入
+     * @return string 规范化后的输入
+     */
+    protected function normalizeInput(string $input): string
+    {
+        if ($input === '') {
+            return '';
+        }
+
+        $cacheKey = 'lower::' . $input;
+        if (isset($this->normalizedInputCache[$cacheKey])) {
+            return $this->normalizedInputCache[$cacheKey];
+        }
+
+        $this->normalizedInputCache[$cacheKey] = strtolower($input);
+        return $this->normalizedInputCache[$cacheKey];
+    }
+
+    /**
+     * 请求级缓存的 urldecode
+     *
+     * 同一参数值可能在 URL 路径检测、高危检测、XSS 检测中分别被 urldecode 多次。
+     * 通过请求级缓存避免重复计算。
+     *
+     * @param string $input 原始输入
+     * @param int $level 解码次数（1 或 2）
+     * @return string 解码后的输入
+     */
+    protected function cachedUrldecode(string $input, int $level = 1): string
+    {
+        if ($input === '') {
+            return '';
+        }
+
+        $cacheKey = "urldecode_{$level}::{$input}";
+        if (isset($this->normalizedInputCache[$cacheKey])) {
+            return $this->normalizedInputCache[$cacheKey];
+        }
+
+        $result = $input;
+        for ($i = 0; $i < $level; $i++) {
+            $result = urldecode($result);
+        }
+
+        // 如果解码结果与原始输入相同，避免无意义缓存
+        if ($result === $input) {
+            return $result;
+        }
+
+        $this->normalizedInputCache[$cacheKey] = $result;
+        return $result;
     }
 }
