@@ -14,11 +14,15 @@ use zxf\Security\ThreatData;
  *  - 构建标准化拦截响应（JSON / 视图）
  *  - 自定义视图渲染（支持闭包/类/视图名）
  *  - 拦截决策回调（before_block_callback）
- *  - 安全威胁日志记录（多级别、可选完整请求数据）
+ *  - 安全威胁日志记录（一次请求最多一次，包含完整审计信息）
  *  - 拦截上下文对象创建
  *
- * 跨框架兼容：所有 Request/Response/Log/View 操作均通过 FrameworkBridge 封装，
- * 支持 Laravel 11+ 和 ThinkPHP 8+。
+ * ══════════════════════════════════════════════════════════════════════
+ * 日志保障机制：
+ *  - $interceptionLogged 标志：同一请求中无论触发多少次拦截检测，
+ *    日志只会写入一次（在 blockRequest() 入口处统一判断）
+ *  - 日志仅在拦截发生时写入（未拦截的请求零日志开销）
+ *  - 日志包含完整的运行环境、请求信息、所有累积威胁类型
  *
  * ══════════════════════════════════════════════════════════════════════
  * 宿主类依赖（由 SecurityMiddleware 提供）：
@@ -31,14 +35,30 @@ use zxf\Security\ThreatData;
  *   - $this->lastMatchedContent: string     — 最后匹配的内容片段
  *   - $this->context: InterceptionContext   — 拦截上下文对象
  *
+ * 跨框架兼容：所有 Request/Response/Log/View 操作均通过 FrameworkBridge 封装，
+ * 支持 Laravel 11+ 和 ThinkPHP 8+。
+ *
  * @package zxf\Security\Middleware\Concerns
  * @since 6.1.0
- * @version 6.2.0
+ * @version 6.3.0
  */
 trait BuildsInterceptionResponse
 {
     /**
+     * 当前请求是否已记录过拦截日志
+     *
+     * 同一请求中无论多少层检测触发拦截，日志只输出一次。
+     *
+     * @var bool
+     */
+    private bool $interceptionLogged = false;
+    /**
      * 拦截请求并返回响应
+     *
+     * ═══════════════════════════════════════════════════════════════
+     * 日志保障：本方法入口处调用 logInterceptionOnce()，
+     * 通过 $interceptionLogged 标志确保同一请求最多记录一次日志。
+     * 无需调用方手动调用 logThreat()。
      *
      * @param object $request HTTP请求对象（Laravel Request 或 ThinkPHP Request）
      * @param string $message 拦截提示消息
@@ -48,10 +68,30 @@ trait BuildsInterceptionResponse
      */
     protected function blockRequest(object $request, string $message, int $status = 403, string $threatType = '')
     {
-        $defaultStatus = $this->config['response']['blocked_status'] ?? 403;
-        $status = $status === 429
-            ? ($this->config['response']['rate_limit_status'] ?? 429)
-            : $defaultStatus;
+        // ═══ 统一日志入口：一次请求最多记录一次日志 ═══
+        $this->logInterceptionOnce($request, $threatType);
+
+        // 原始传入状态码（用于后续回退判断，避免 status_codes 覆盖值被 elseif 二次改写）
+        $originalStatus = $status;
+
+        // 按威胁类型自定义状态码（优先级最高）
+        // 如果配置了 response.status_codes.SOME_TYPE，直接使用该值，跳过回退逻辑
+        if ($threatType !== '') {
+            $customStatus = $this->config['response']['status_codes'][$threatType] ?? null;
+            if ($customStatus !== null && is_int($customStatus)) {
+                $status = $customStatus;
+            }
+        }
+
+        // 仅当 status_codes 未覆盖时，执行默认回退逻辑
+        // 判断依据：status 仍为原始值（未被 status_codes 改写）
+        if ($status === $originalStatus) {
+            if ($originalStatus === 429) {
+                $status = $this->config['response']['rate_limit_status'] ?? 429;
+            } elseif ($originalStatus === 403) {
+                $status = $this->config['response']['blocked_status'] ?? 403;
+            }
+        }
 
         $showDetails = $this->config['response']['show_threat_details'] ?? false;
 
@@ -424,18 +464,30 @@ trait BuildsInterceptionResponse
         );
     }
 
-    // ==================== 安全日志 ====================
+    // ==================== 统一拦截日志 ====================
 
     /**
-     * 记录安全威胁日志
+     * 统一拦截日志入口 — 每次请求最多调用一次
+     *
+     * 设计原则：
+     *  1. 仅在拦截发生时记录（未拦截 = 零日志开销）
+     *  2. 同一请求只记录一次（$interceptionLogged 标志）
+     *  3. 包含完整的运行环境、请求信息、所有威胁、拦截决策
      *
      * @param object $request HTTP请求对象（跨框架兼容）
-     * @param string $type 威胁类型
-     * @param string $details 详细信息
+     * @param string $threatType 当前触发拦截的威胁类型
+     * @return void
      */
-    protected function logThreat(object $request, string $type, string $details): void
+    protected function logInterceptionOnce(object $request, string $threatType): void
     {
+        // 双重保障：同一请求只记录一次
+        if ($this->interceptionLogged) {
+            return;
+        }
+
+        // 日志总开关关闭时静默跳过
         if (!($this->config['log_enabled'] ?? true)) {
+            $this->interceptionLogged = true;
             return;
         }
 
@@ -443,49 +495,119 @@ trait BuildsInterceptionResponse
             $logLevel = $this->config['log_level'] ?? 'warning';
             $logFullRequest = $this->config['log_full_request'] ?? false;
 
-            $logData = [
-                'type' => $type,
-                'ip' => FrameworkBridge::requestIp($request) ?? 'unknown',
-                'method' => FrameworkBridge::requestMethod($request),
-                'url' => FrameworkBridge::requestFullUrl($request),
-                'user_agent' => FrameworkBridge::requestUserAgent($request) ?? '',
-                'details' => $details,
-                'threat_type' => $this->currentThreatType,
-                'threat_type_text' => isset($this->context) ? $this->context->getThreatTypeDescription() : '未知威胁',
-                'risk_level' => $this->getRiskLevel($type),
-                'request_id' => $this->requestId,
-                'timestamp' => FrameworkBridge::nowIso8601(),
+            // ══ 运行环境信息 ══
+            $environment = [
+                'framework'  => FrameworkBridge::getFramework(),
+                'app_env'    => FrameworkBridge::config('app.env', 'unknown'),
+                'php_version' => PHP_VERSION,
+                'sapi'       => PHP_SAPI,
+                'is_cli'     => $this->isCliMode(),
             ];
 
-            // 如果开启完整请求记录，添加更多数据
+            // ══ 请求概要 ══
+            $ip = FrameworkBridge::requestIp($request);
+            $requestSummary = [
+                'method'      => FrameworkBridge::requestMethod($request),
+                'url'         => FrameworkBridge::requestFullUrl($request),
+                'path'        => FrameworkBridge::requestPath($request),
+                'ip'          => $ip ?? 'unknown',
+                'user_agent'  => FrameworkBridge::requestUserAgent($request) ?? '',
+                'content_type' => FrameworkBridge::requestGetHeader($request, 'Content-Type') ?? '',
+            ];
+
+            // ══ 所有累积的威胁（去重） ══
+            $allThreats = array_values(array_unique($this->threats));
+            $threatDetails = [];
+            foreach ($allThreats as $t) {
+                $threatDetails[] = [
+                    'type'         => $t,
+                    'name'         => ThreatData::getName($t),
+                    'risk_level'   => $this->getRiskLevel($t),
+                    'category'     => $this->getThreatCategory($t),
+                ];
+            }
+
+            // ══ 当前触发威胁详情 ══
+            $triggerThreat = [
+                'type'             => $threatType,
+                'name'             => ThreatData::getName($threatType),
+                'risk_level'       => $this->getRiskLevel($threatType),
+                'category'         => $this->getThreatCategory($threatType),
+                'matched_pattern'  => $this->lastMatchedPattern,
+                'matched_content'  => mb_substr($this->lastMatchedContent, 0, 200),
+            ];
+
+            // ══ 构建完整日志载荷 ══
+            $logData = [
+                'request_id'  => $this->requestId,
+                'timestamp'   => FrameworkBridge::nowIso8601(),
+                'environment' => $environment,
+                'request'     => $requestSummary,
+                'decision'    => [
+                    'action'      => 'blocked',
+                    'http_status' => $this->config['response']['blocked_status'] ?? 403,
+                ],
+                'trigger'     => $triggerThreat,
+                'all_threats' => $threatDetails,
+            ];
+
+            // 如果开启完整请求记录，追加更多数据
             if ($logFullRequest) {
-                $logData['headers'] = FrameworkBridge::requestHeaders($request);
-                $logData['query'] = FrameworkBridge::requestQuery($request);
-                // 兼容 ThinkPHP（无 except 方法）：手动排除敏感字段
-                $allInput = array_merge(
+                $logData['request']['headers'] = FrameworkBridge::requestHeaders($request);
+                $logData['request']['query_params'] = FrameworkBridge::requestQuery($request);
+                // 兼容 ThinkPHP：手动排除敏感字段
+                $bodySafe = array_merge(
                     FrameworkBridge::requestQuery($request),
                     FrameworkBridge::requestPost($request)
                 );
-                foreach (['password', 'token', 'secret'] as $key) {
-                    unset($allInput[$key]);
+                foreach (['password', 'token', 'secret', 'api_key', 'authorization'] as $key) {
+                    unset($bodySafe[$key]);
                 }
-                $logData['body'] = $allInput;
-                $logData['matched_pattern'] = $this->lastMatchedPattern;
-                $logData['matched_content'] = $this->lastMatchedContent;
+                $logData['request']['body'] = $bodySafe;
             }
+
+            // ══ 日志消息：包含关键信息便于快速搜索 ══
+            $threatNames = implode(', ', array_column($threatDetails, 'type'));
+            $logMessage = sprintf(
+                '[Security] 请求已被拦截 | Threats: %s | Risk: %s | IP: %s | %s %s',
+                $threatNames,
+                $this->getRiskLevel($threatType),
+                $ip ?? 'unknown',
+                FrameworkBridge::requestMethod($request),
+                FrameworkBridge::requestPath($request)
+            );
 
             // 根据日志级别使用不同的日志方法
             match ($logLevel) {
-                'debug' => FrameworkBridge::logDebug('[Security] 安全威胁检测', $logData),
-                'info' => FrameworkBridge::logInfo('[Security] 安全威胁检测', $logData),
-                'error' => FrameworkBridge::logError('[Security] 安全威胁检测', $logData),
-                'critical' => FrameworkBridge::logCritical('[Security] 安全威胁检测', $logData),
-                default => FrameworkBridge::logWarning('[Security] 安全威胁检测', $logData),
+                'debug'    => FrameworkBridge::logDebug($logMessage, $logData),
+                'info'     => FrameworkBridge::logInfo($logMessage, $logData),
+                'error'    => FrameworkBridge::logError($logMessage, $logData),
+                'critical' => FrameworkBridge::logCritical($logMessage, $logData),
+                default    => FrameworkBridge::logWarning($logMessage, $logData),
             };
         } catch (\Throwable) {
-            // 日志系统异常（如磁盘满、驱动不可用）时不应阻断正常流程。
-            // CLI 模式下尤其关键：artisan 命令、队列任务不能因日志失败而崩溃。
-            // 静默降级，已在其他地方抛出异常或拦截则无需重复处理。
+            // 日志系统异常（磁盘满、驱动不可用）不应阻断拦截流程。
+            // CLI 模式尤其关键：artisan 命令、队列任务不能因日志失败而崩溃。
         }
+
+        // ═══ 标记已记录，后续调用直接返回 ═══
+        $this->interceptionLogged = true;
+    }
+
+    /**
+     * 记录安全威胁日志（已废弃，委托给 logInterceptionOnce）
+     *
+     * 保留此方法以兼容外部扩展调用。实际日志已统一在 blockRequest()
+     * 入口通过 logInterceptionOnce() 集中处理，保证一次请求最多一次日志。
+     *
+     * @param object $request HTTP请求对象（跨框架兼容）
+     * @param string $type 威胁类型
+     * @param string $details 详细信息
+     * @deprecated 6.3.0 日志已统一由 logInterceptionOnce() 在 blockRequest() 入口处理
+     */
+    protected function logThreat(object $request, string $type, string $details): void
+    {
+        // 委托给统一日志入口（内部有 $interceptionLogged 标志保护，不重复写入）
+        $this->logInterceptionOnce($request, $type);
     }
 }

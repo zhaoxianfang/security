@@ -44,6 +44,16 @@ class PatternService
     ];
 
     /**
+     * 用户自定义模式数据文件（追加到内置模式之后）
+     *
+     * key = 模式类型（high_risk / xss / url_path / database_operation）
+     * value = 文件路径数组
+     *
+     * @var array<string, array<string>>
+     */
+    private static array $customDataFiles = [];
+
+    /**
      * 已编译的模式验证缓存
      * key = 模式 MD5，value = true（编译通过）
      *
@@ -150,6 +160,8 @@ class PatternService
             'dropalltables', 'alter table', 'drop view', 'drop procedure', 'drop function',
             'rename table', 'foreign_key_checks', 'sql_safe_updates',
             'database.connections', 'db_database', 'db_host',
+            'module:migrate-refresh', 'module:migrate-fresh', 'module:migrate-reset',
+            'module:migrate-rollback', 'module:delete',
         ],
         'mass_deletion'         => [
             'truncate table', 'delete from', '->delete(', '::destroy(', 'where 1=1',
@@ -163,6 +175,8 @@ class PatternService
             'db::unprepared(', 'passthru(', 'proc_open(', 'system(',
             'new process(', 'fromshellcommandline',
             'db::raw(', 'config::set', 'db::connect',
+            'module:delete', 'module:migrate-refresh', 'module:migrate-fresh',
+            'module:migrate-reset', 'module:migrate-rollback',
         ],
     ];
 
@@ -291,8 +305,8 @@ class PatternService
     /**
      * 应用追加规则到类型分组模式
      *
-     * 追加规则不区分类型，统一追加到所有类型中作为通配检测。
-     * 实际检测时，intercept_rules 作为独立类型 '_custom_high' / '_custom_medium' / '_custom_low' 处理。
+     * 追加规则不区分类型，统一追加到独立类型 'custom_high' / 'custom_medium' / 'custom_low' 中。
+     * 类型键与 DefaultConfig::RESPONSE_MESSAGES / ThreatData 保持一致（无下划线前缀）。
      *
      * @param array<string, array<int, array{pattern:string,risk:string}>> $patterns
      * @param array{high?:array<string>,medium?:array<string>,low?:array<string>} $interceptRules
@@ -306,7 +320,7 @@ class PatternService
                 continue;
             }
 
-            $typeKey = '_custom_' . $risk;
+            $typeKey = 'custom_' . $risk;
             $customPatterns = [];
 
             foreach ($rules as $rule) {
@@ -596,16 +610,29 @@ class PatternService
 
         $file = self::$dataFiles[$name] ?? null;
 
-        if ($file === null || !file_exists($file)) {
-            self::$loadedPatterns[$name] = [];
-            return [];
+        $patterns = [];
+
+        // 加载内置模式文件
+        if ($file !== null && file_exists($file)) {
+            $patterns = require $file;
+            if (!is_array($patterns)) {
+                $patterns = [];
+            }
         }
 
-        // 从独立数据文件加载（不会触发 config 缓存）
-        $patterns = require $file;
-
-        if (!is_array($patterns)) {
-            $patterns = [];
+        // 加载用户自定义模式文件（追加到内置规则后面）
+        $customFiles = self::$customDataFiles[$name] ?? [];
+        foreach ($customFiles as $customFile) {
+            if (file_exists($customFile) && is_readable($customFile)) {
+                try {
+                    $customPatterns = require $customFile;
+                    if (is_array($customPatterns) && !empty($customPatterns)) {
+                        $patterns = $this->mergePatterns($patterns, $customPatterns);
+                    }
+                } catch (\Throwable) {
+                    // 自定义模式文件加载失败不阻断内置规则加载
+                }
+            }
         }
 
         self::$loadedPatterns[$name] = $patterns;
@@ -614,21 +641,123 @@ class PatternService
     }
 
     /**
+     * 合并自定义模式到内置模式数组
+     *
+     * 支持类型分组数组和扁平数组两种格式。
+     *
+     * @param array $builtin 内置模式
+     * @param array $custom 自定义模式
+     * @return array 合并后的模式数组
+     */
+    private function mergePatterns(array $builtin, array $custom): array
+    {
+        if (empty($custom)) {
+            return $builtin;
+        }
+
+        if (empty($builtin)) {
+            return $custom;
+        }
+
+        // 检测是否为类型分组数组（第一个元素有 'pattern' 键 → 扁平数组）
+        $firstBuiltin = reset($builtin);
+        $firstCustom = reset($custom);
+
+        $builtinIsFlat = is_array($firstBuiltin) && isset($firstBuiltin['pattern']);
+        $customIsFlat = is_array($firstCustom) && isset($firstCustom['pattern']);
+
+        if ($builtinIsFlat && $customIsFlat) {
+            // 两个都是扁平数组，直接合并
+            return array_merge($builtin, $custom);
+        }
+
+        if (!$builtinIsFlat && !$customIsFlat) {
+            // 两个都是类型分组，按类型合并
+            foreach ($custom as $type => $typePatterns) {
+                if (is_array($typePatterns) && !empty($typePatterns)) {
+                    if (isset($builtin[$type])) {
+                        $builtin[$type] = array_merge($builtin[$type], $typePatterns);
+                    } else {
+                        $builtin[$type] = $typePatterns;
+                    }
+                }
+            }
+            return $builtin;
+        }
+
+        // 格式不一致，将自定义追加到内置
+        if ($builtinIsFlat) {
+            foreach ($custom as $item) {
+                if (is_array($item) && isset($item['pattern'])) {
+                    $builtin[] = $item;
+                }
+            }
+        } else {
+            // 内置是类型分组，自定义是扁平数组 → 追加到所有类型
+            foreach ($builtin as $type => &$typePatterns) {
+                foreach ($custom as $item) {
+                    if (is_array($item) && isset($item['pattern'])) {
+                        $typePatterns[] = $item;
+                    }
+                }
+            }
+            unset($typePatterns);
+        }
+
+        return $builtin;
+    }
+
+    /**
      * 标准化类型名称
      */
     private function normalizeType(string $type): string
     {
-        // 处理 xss_* 前缀的类型
+        // 保留 xss_* 前缀的类型
         if (str_starts_with($type, 'xss_')) {
             return $type;
         }
 
-        // 处理自定义规则类型
-        if (str_starts_with($type, '_custom_')) {
+        // 保留 custom_* 前缀的类型
+        if (str_starts_with($type, 'custom_')) {
             return $type;
         }
 
         return $type;
+    }
+
+    /**
+     * 注册自定义模式文件
+     *
+     * 开发者可通过此方法添加额外的模式文件，追加到内置规则后面。
+     * 文件格式需与内置模式文件一致（PHP 文件 return 数组）。
+     *
+     * @param string $type 模式类型：'high_risk' | 'xss' | 'url_path' | 'database_operation'
+     * @param string $filePath 模式文件绝对路径
+     */
+    public static function registerCustomPattern(string $type, string $filePath): void
+    {
+        if (file_exists($filePath) && is_readable($filePath)) {
+            self::$customDataFiles[$type][] = $filePath;
+        }
+    }
+
+    /**
+     * 批量注册自定义模式文件（从配置）
+     *
+     * @param array<string, array<string>> $customPatterns 类型 => 文件路径数组
+     */
+    public static function registerCustomPatternsFromConfig(array $customPatterns): void
+    {
+        foreach ($customPatterns as $type => $files) {
+            if (!is_array($files) || empty($files)) {
+                continue;
+            }
+            foreach ($files as $filePath) {
+                if (is_string($filePath) && $filePath !== '') {
+                    self::registerCustomPattern($type, $filePath);
+                }
+            }
+        }
     }
 
     /**
@@ -637,6 +766,9 @@ class PatternService
     public static function clearCache(): void
     {
         self::$loadedPatterns = [];
+        self::$customDataFiles = [];
+        self::$validatedPatterns = [];
+        self::$preFilterRequestCache = [];
     }
 
     /**

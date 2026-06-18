@@ -5,8 +5,11 @@ namespace zxf\Security\Providers;
 use Throwable;
 use Illuminate\Support\ServiceProvider;
 use Illuminate\Foundation\Console\AboutCommand;
+use Illuminate\Console\Events\CommandStarting;
 use zxf\Security\Middleware\SecurityMiddleware;
 use zxf\Security\Patterns\PatternService;
+use zxf\Security\Services\CliCommandProtector;
+use zxf\Security\Services\CliResult;
 use Composer\InstalledVersions;
 
 /**
@@ -56,6 +59,9 @@ class SecurityServiceProvider extends ServiceProvider
         // 注册安全中间件
         $this->registerMiddleware();
 
+        // 注册 Artisan CLI 命令保护（拦截危险 artisan 命令）
+        $this->registerConsoleProtection();
+
         // 注册about命令信息
         $this->registerAboutCommand();
     }
@@ -83,7 +89,15 @@ class SecurityServiceProvider extends ServiceProvider
         // PatternService 使用独立数据文件存储正则模式，
         // 不会在 php artisan optimize 时加载，有效解决内存溢出问题
         $this->app->singleton(PatternService::class, function () {
-            return new PatternService();
+            $patternService = new PatternService();
+
+            // 注册自定义模式文件（从配置，一次性加载）
+            $customPatternsConfig = config('security.custom_patterns', []);
+            if (!empty($customPatternsConfig)) {
+                PatternService::registerCustomPatternsFromConfig($customPatternsConfig);
+            }
+
+            return $patternService;
         });
     }
 
@@ -203,6 +217,146 @@ class SecurityServiceProvider extends ServiceProvider
             'Rate Limiting' => function () {
                 return config('security.detection_layers.rate_limit', true) ? 'Enabled' : 'Disabled';
             },
+            'CLI Protection' => function () {
+                return config('security.detection_layers.database_operation', false) ? 'Enabled' : 'Disabled';
+            },
         ]);
     }
+
+    /**
+     * 注册 Artisan CLI 命令保护
+     *
+     * 通过监听 Illuminate\Console\Events\CommandStarting 事件，
+     * 在危险数据库命令执行前进行拦截。这是 SecurityMiddleware 的 CLI 端补充，
+     * 填补了 HTTP 中间件无法拦截 CLI 命令的空白。
+     *
+     * 受保护的危险命令（与 database_operation 检测层共享配置）：
+     *   - migrate:fresh / migrate:refresh / migrate:reset / migrate:rollback
+     *   - db:wipe / schema:dump
+     *   - module:migrate-refresh / module:migrate-fresh / module:migrate-reset / module:migrate-rollback
+     *
+     * 配置键：
+     *   - detection_layers.database_operation           — 总开关
+     *   - database_operation.environments               — 环境控制
+     *   - database_operation.block_table_destruction    — 表结构破坏开关
+     *   - database_operation.exclude_commands           — 排除命令
+     */
+    protected function registerConsoleProtection(): void
+    {
+        // 仅在 CLI 环境下注册监听器
+        if (PHP_SAPI !== 'cli' && PHP_SAPI !== 'phpdbg') {
+            return;
+        }
+
+        // 双重门检查（委托给 CliCommandProtector 静态方法）
+        $securityConfig = config('security', []);
+        if (!CliCommandProtector::isCliProtectionEnabled($securityConfig)) {
+            return;
+        }
+
+        // 确保事件调度器可用
+        if (!isset($this->app['events'])) {
+            return;
+        }
+
+        // 创建保护器实例（单例复用）
+        $protector = new CliCommandProtector($securityConfig);
+
+        $this->app['events']->listen(CommandStarting::class, function (CommandStarting $event) use ($protector) {
+            $this->handleDangerousCommand($event, $protector);
+        });
+    }
+
+    /**
+     * 处理危险 Artisan 命令（委托给 CliCommandProtector）
+     *
+     * @param CommandStarting $event 命令启动事件
+     * @param CliCommandProtector $protector CLI 保护器实例
+     */
+    protected function handleDangerousCommand(CommandStarting $event, CliCommandProtector $protector): void
+    {
+        // 提取命令名
+        $commandName = '';
+        try {
+            $commandName = $event->command ?? '';
+            if (!is_string($commandName)) {
+                $commandName = '';
+            }
+        } catch (\Throwable) {
+            return;
+        }
+
+        if ($commandName === '') {
+            return;
+        }
+
+        $appEnv = config('app.env', 'local') ?: 'local';
+
+        // 委托给 CliCommandProtector 检查
+        $result = $protector->check(
+            $commandName,
+            $appEnv,
+            $event->input ?? null,
+            $event->output ?? null
+        );
+
+        if ($result->isPass()) {
+            return;
+        }
+
+        if ($result->isBlocked()) {
+            $protector->renderBlockBanner($commandName, $appEnv, $event->output ?? null);
+            $this->logCliDecision($commandName, $appEnv, false);
+            exit(1);
+        }
+
+        // confirm 模式：交互式确认
+        $confirmed = $protector->confirm(
+            $commandName,
+            $appEnv,
+            $event->input ?? null,
+            $event->output ?? null
+        );
+
+        $this->logCliDecision($commandName, $appEnv, $confirmed);
+
+        if (!$confirmed) {
+            exit(1);
+        }
+    }
+
+    /**
+     * 记录 CLI 拦截决策日志
+     *
+     * @param string $commandName 命令名
+     * @param string $appEnv 当前环境
+     * @param bool $confirmed 是否确认执行
+     */
+    protected function logCliDecision(string $commandName, string $appEnv, bool $confirmed): void
+    {
+        if (!config('security.log_enabled', true)) {
+            return;
+        }
+
+        try {
+            $logLevel = config('security.log_level', 'warning');
+            $action = $confirmed ? 'confirmed' : 'cancelled';
+
+            if (class_exists('Illuminate\Support\Facades\Log')) {
+                \Illuminate\Support\Facades\Log::{$logLevel}(
+                    "[Security] Database dangerous CLI command {$action}: {$commandName}",
+                    [
+                        'command' => $commandName,
+                        'env' => $appEnv,
+                        'action' => $action,
+                        'type' => 'database_table_destruction',
+                        'channel' => 'cli',
+                    ]
+                );
+            }
+        } catch (\Throwable) {
+            // 日志失败不应阻断拦截流程
+        }
+    }
+
 }

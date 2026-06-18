@@ -64,7 +64,7 @@ use zxf\Security\Middleware\Concerns\BuildsInterceptionResponse;
  *  - Concerns/BuildsInterceptionResponse.php  拦截响应 + 日志 + 回调
  *
  * @package zxf\Security\Middleware
- * @version 6.3.0
+ * @version 6.4.0
  */
 class SecurityMiddleware
 {
@@ -218,6 +218,12 @@ class SecurityMiddleware
         $this->ipMatcher = new IpMatcherService();
         $this->patternService = FrameworkBridge::appMake(PatternService::class) ?? new PatternService();
 
+        // 注册自定义模式文件（从配置，一次性加载）
+        $customPatternsConfig = $loadedConfig['custom_patterns'] ?? [];
+        if (!empty($customPatternsConfig)) {
+            PatternService::registerCustomPatternsFromConfig($customPatternsConfig);
+        }
+
         // 启用请求级预过滤缓存：同一请求中对同一输入多次执行 preFilter 可复用结果
         PatternService::enableRequestCache();
     }
@@ -286,7 +292,6 @@ class SecurityMiddleware
         // ========== 第二层：IP 黑名单检查 ==========
         if ($ip !== '' && $this->isBlacklisted($ip, $request)) {
             return $this->handleThreatDetection($request, $next, 'blacklist', function ($request) {
-                $this->logThreat($request, 'blacklist', 'IP地址位于黑名单中: ' . (FrameworkBridge::requestIp($request) ?? 'unknown'));
                 return $this->blockRequest($request, 'IP已被禁止访问', 403, 'blacklist');
             });
         }
@@ -294,7 +299,6 @@ class SecurityMiddleware
         // ========== 第三层：URL路径攻击检测 ==========
         if ($this->isDetectionEnabled('url_path') && $this->detectUrlPathAttacks($request)) {
             return $this->handleThreatDetection($request, $next, 'url_path_attack', function ($request) {
-                $this->logThreat($request, 'url_path_attack', 'URL路径包含攻击模式: ' . $this->lastMatchedPattern);
                 return $this->blockRequest($request, '请求包含非法内容', 403, 'url_path_attack');
             });
         }
@@ -302,7 +306,6 @@ class SecurityMiddleware
         // ========== 第四层：多重编码检测 ==========
         if ($this->isDetectionEnabled('encoding') && $this->detectMultiEncodingAttacks($request)) {
             return $this->handleThreatDetection($request, $next, 'encoding_bypass', function ($request) {
-                $this->logThreat($request, 'encoding_bypass', '检测到编码绕过攻击');
                 return $this->blockRequest($request, '请求格式非法', 403, 'encoding_bypass');
             });
         }
@@ -310,7 +313,6 @@ class SecurityMiddleware
         // ========== 第五层：User-Agent检查 ==========
         if ($this->isDetectionEnabled('user_agent') && $this->isBadUserAgent($request)) {
             return $this->handleThreatDetection($request, $next, 'bad_user_agent', function ($request) {
-                $this->logThreat($request, 'bad_user_agent', '恶意User-Agent: ' . (FrameworkBridge::requestUserAgent($request) ?? ''));
                 return $this->blockRequest($request, '请求被拒绝', 403, 'bad_user_agent');
             });
         }
@@ -318,7 +320,6 @@ class SecurityMiddleware
         // ========== 第六层：HTTP头检查 ==========
         if ($this->isDetectionEnabled('headers') && $this->hasInvalidHeaders($request)) {
             return $this->handleThreatDetection($request, $next, 'invalid_headers', function ($request) {
-                $this->logThreat($request, 'invalid_headers', 'HTTP头检查失败');
                 return $this->blockRequest($request, '请求被拒绝', 403, 'invalid_headers');
             });
         }
@@ -326,7 +327,6 @@ class SecurityMiddleware
         // ========== 第七层：请求体大小检查 ==========
         if ($this->isDetectionEnabled('body_size') && $this->isBodyTooLarge($request)) {
             return $this->handleThreatDetection($request, $next, 'body_too_large', function ($request) {
-                $this->logThreat($request, 'body_too_large', '请求体大小超过限制');
                 return $this->blockRequest($request, '请求体过大', 403, 'body_too_large');
             });
         }
@@ -334,7 +334,6 @@ class SecurityMiddleware
         // ========== 第八层：请求速率限制 ==========
         if ($this->isDetectionEnabled('rate_limit') && $this->isRateLimited($request)) {
             return $this->handleThreatDetection($request, $next, 'rate_limit', function ($request) {
-                $this->logThreat($request, 'rate_limit', '请求频率超过限制');
                 return $this->blockRequest($request, '请求过于频繁，请稍后再试', 429, 'rate_limit');
             });
         }
@@ -342,7 +341,6 @@ class SecurityMiddleware
         // ========== 第九层：HTTP方法检查 ==========
         if ($this->isDetectionEnabled('http_method') && $this->hasInvalidMethod($request)) {
             return $this->handleThreatDetection($request, $next, 'invalid_method', function ($request) {
-                $this->logThreat($request, 'invalid_method', '非法HTTP方法: ' . FrameworkBridge::requestMethod($request));
                 return $this->blockRequest($request, '不支持的请求方法', 403, 'invalid_method');
             });
         }
@@ -350,7 +348,6 @@ class SecurityMiddleware
         // ========== 第十层：URL长度检查 ==========
         if ($this->isDetectionEnabled('url_length') && $this->isUrlTooLong($request)) {
             return $this->handleThreatDetection($request, $next, 'url_too_long', function ($request) {
-                $this->logThreat($request, 'url_too_long', 'URL长度超限');
                 return $this->blockRequest($request, '请求URL过长', 403, 'url_too_long');
             });
         }
@@ -360,7 +357,6 @@ class SecurityMiddleware
             $threatType = $this->detectHighRiskAttacks($request);
             if ($threatType !== null) {
                 return $this->handleThreatDetection($request, $next, $threatType, function ($request) use ($threatType) {
-                    $this->logThreat($request, $threatType, '高危模式匹配: ' . $this->lastMatchedPattern);
                     return $this->blockRequest($request, '请求包含高危安全威胁', 403, $threatType);
                 });
             }
@@ -371,7 +367,6 @@ class SecurityMiddleware
             $xssType = $this->detectXssAttacks($request);
             if ($xssType !== null) {
                 return $this->handleThreatDetection($request, $next, $xssType, function ($request) use ($xssType) {
-                    $this->logThreat($request, $xssType, 'XSS模式匹配: ' . $this->lastMatchedPattern);
                     return $this->blockRequest($request, '请求包含潜在的安全威胁', 403, $xssType);
                 });
             }
@@ -380,7 +375,6 @@ class SecurityMiddleware
         // ========== 第十三层：文件上传检查 ==========
         if ($this->isDetectionEnabled('upload') && $this->hasDangerousUpload($request)) {
             return $this->handleThreatDetection($request, $next, 'dangerous_upload', function ($request) {
-                $this->logThreat($request, 'dangerous_upload', '检测到危险文件上传');
                 return $this->blockRequest($request, '文件上传被拒绝', 403, 'dangerous_upload');
             });
         }
@@ -389,7 +383,6 @@ class SecurityMiddleware
         $dbThreatType = $this->detectDatabaseOperations($request);
         if ($dbThreatType !== null) {
             return $this->handleThreatDetection($request, $next, $dbThreatType, function ($request) use ($dbThreatType) {
-                $this->logThreat($request, $dbThreatType, '数据库危险操作模式匹配: ' . $this->lastMatchedPattern);
                 return $this->blockRequest($request, '检测到数据库危险操作，请求已被拦截', 403, $dbThreatType);
             });
         }

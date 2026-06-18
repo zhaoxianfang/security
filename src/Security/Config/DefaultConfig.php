@@ -47,6 +47,8 @@ class DefaultConfig
         'encoding' => '检测到编码绕过攻击，请求已被拦截',
         'redirect' => '检测到开放重定向攻击，请求已被拦截',
         'file_include' => '检测到文件包含攻击，请求已被拦截',
+        'ssrf' => '检测到SSRF攻击，请求已被拦截',
+        'header_injection' => '检测到HTTP头注入攻击，请求已被拦截',
         'xss_script' => '检测到脚本注入攻击，请求已被拦截',
         'xss_dom' => '检测到DOM型XSS攻击，请求已被拦截',
         'xss_tag' => '检测到标签注入攻击，请求已被拦截',
@@ -136,7 +138,6 @@ class DefaultConfig
         'censys',        // Censys 搜索引擎
         'shodan',        // Shodan 搜索引擎
         // 恶意爬虫/自动化工具
-        'zgrab',         // ZGrab 扫描
         'gobuster',      // GoBuster 目录爆破
         'ffuf',          // FFUF Web fuzzer
         'nuclei',        // Nuclei 漏洞扫描
@@ -340,5 +341,123 @@ class DefaultConfig
         }
 
         return ConfigResolver::resolve($userList);
+    }
+
+    /**
+     * 默认 XSS 子类型开关（全部开启）
+     *
+     * @var array<string, bool>
+     */
+    public const XSS_SUBTYPES = [
+        'script'    => true,
+        'dom'       => true,
+        'event'     => true,
+        'tag'       => true,
+        'encoding'  => true,
+        'framework' => true,
+    ];
+
+    /**
+     * 默认 API 旁路配置
+     *
+     * @var array<string, mixed>
+     */
+    public const API_BYPASS_DEFAULTS = [
+        'prefixes'            => ['/api/', '/v1/', '/v2/', '/v3/', '/graphql'],
+        'skip_high_risk_types' => ['sql', 'ssti'],
+        'url_param_names'     => [
+            'redirect_uri', 'redirect_url', 'redirect', 'redirect_to',
+            'callback', 'callback_url', 'return_url', 'return_to',
+            'webhook', 'webhook_url', 'notify_url', 'notify',
+            'forward', 'dest', 'destination', 'goto', 'continue',
+        ],
+    ];
+
+    /**
+     * 内置 CLI 危险命令清单（14 条，三级分类）
+     *
+     * @var array<string>
+     */
+    public const DANGEROUS_COMMANDS = [
+        // 🔴 最高危 — 模块/数据库不可逆删除
+        'module:delete',
+        // 🟠 高危 — 数据库表结构破坏
+        'migrate:fresh', 'migrate:refresh', 'migrate:reset', 'migrate:rollback',
+        'db:wipe', 'schema:dump',
+        'module:migrate-refresh', 'module:migrate-fresh',
+        'module:migrate-reset', 'module:migrate-rollback',
+        // 🟡 中危 — 批量数据操作
+        'module:migrate', 'module:seed', 'module:migrate-status',
+    ];
+
+    /**
+     * 获取按威胁类型自定义的 HTTP 状态码
+     *
+     * @param array $userConfig 用户配置
+     * @param string $threatType 威胁类型
+     * @return int|null 自定义状态码，null 表示未配置（使用默认 403）
+     */
+    public static function getThreatStatusCode(array $userConfig, string $threatType): ?int
+    {
+        $statusCodes = self::get($userConfig, 'response.status_codes', []);
+        if (!is_array($statusCodes) || empty($statusCodes)) {
+            return null;
+        }
+
+        return isset($statusCodes[$threatType]) && is_int($statusCodes[$threatType])
+            ? $statusCodes[$threatType]
+            : null;
+    }
+
+    /**
+     * 获取 XSS 子类型配置（合并用户配置与默认值）
+     *
+     * @param array $userConfig 用户配置
+     * @return array<string, bool>
+     */
+    public static function getXssSubtypes(array $userConfig): array
+    {
+        $userSubtypes = self::get($userConfig, 'xss_subtypes', []);
+        if (!is_array($userSubtypes) || empty($userSubtypes)) {
+            return self::XSS_SUBTYPES;
+        }
+
+        return array_merge(self::XSS_SUBTYPES, $userSubtypes);
+    }
+
+    /**
+     * 获取 API 旁路前缀列表
+     *
+     * @param array $userConfig 用户配置
+     * @return array<string>
+     */
+    public static function getApiBypassPrefixes(array $userConfig): array
+    {
+        $prefixes = self::get($userConfig, 'api_bypass.prefixes');
+        return is_array($prefixes) ? $prefixes : self::API_BYPASS_DEFAULTS['prefixes'];
+    }
+
+    /**
+     * 获取 API 旁路跳过的检测类型
+     *
+     * @param array $userConfig 用户配置
+     * @return array<string>
+     */
+    public static function getApiBypassSkipTypes(array $userConfig): array
+    {
+        $skipTypes = self::get($userConfig, 'api_bypass.skip_high_risk_types');
+        return is_array($skipTypes) ? $skipTypes : self::API_BYPASS_DEFAULTS['skip_high_risk_types'];
+    }
+
+    /**
+     * 获取 URL 类参数名列表
+     *
+     * @param array $userConfig 用户配置
+     * @return array<string>
+     */
+    public static function getUrlParamNames(array $userConfig): array
+    {
+        $paramNames = self::get($userConfig, 'api_bypass.url_param_names');
+        return is_array($paramNames) ? $paramNames : self::API_BYPASS_DEFAULTS['url_param_names'];
     }
 }

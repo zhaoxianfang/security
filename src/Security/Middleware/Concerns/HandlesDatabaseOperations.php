@@ -228,9 +228,9 @@ trait HandlesDatabaseOperations
     protected function isDatabaseOperationAllowedInEnvironment(): bool
     {
         $config = $this->config['database_operation'] ?? [];
-        $environments = $config['environments'] ?? ['all'];
+        $environments = $config['environments'] ?? [];
 
-        // 未配置则默认仅生产环境拦截
+        // 未配置则默认仅生产环境拦截（与 CLI 端保持一致）
         if (empty($environments)) {
             $environments = ['production'];
         }
@@ -501,7 +501,6 @@ trait HandlesDatabaseOperations
                             continue;
                         }
 
-                        $this->threats[] = $threatType;
                         $this->lastMatchedPattern = $item['pattern'];
                         $this->lastMatchedContent = $this->sanitizeMatchedContent(
                             $matches[0] ?? ''

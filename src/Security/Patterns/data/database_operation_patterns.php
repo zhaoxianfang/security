@@ -1,7 +1,7 @@
 <?php
 
 /**
- * 数据库危险操作检测模式（v6.4 增强版元数据格式）
+ * 数据库危险操作检测模式（v6.5 增强版元数据格式）
  *
  * ═══════════════════════════════════════════════════════════════
  * 功能概述：
@@ -10,11 +10,13 @@
  *   ORM/QueryBuilder/Artisan/种子填充/数据库连接配置篡改等操作。
  *
  * ═══════════════════════════════════════════════════════════════
- * 检测目标（三大类别，共 52+ 条规则）：
+ * 检测目标（三大类别，共 58+ 条规则）：
  *
- *   一、表结构破坏类（table_destruction）— 18 条
+ *   一、表结构破坏类（table_destruction）— 24 条
  *     - Laravel/ThinkPHP Artisan: migrate:fresh / migrate:refresh / migrate:reset /
  *       migrate:rollback / db:wipe / schema:dump
+ *     - nwidart/laravel-modules: module:migrate-refresh / module:migrate-fresh /
+ *       module:migrate-reset / module:migrate-rollback / module:delete / module:migrate
  *     - Schema Builder:  Schema::drop() / dropIfExists() / dropAllTables() / dropDatabase()
  *     - 原生 SQL DDL:   DROP TABLE / DATABASE / VIEW / PROCEDURE / FUNCTION
  *     - 危险前置操作:   ALTER TABLE DROP COLUMN/CONSTRAINT/INDEX/KEY
@@ -35,8 +37,9 @@
  *                      Db::execute() 执行危险 SQL、Model::destroy() 无参数调用
  *     - DB::raw() 注入: 通过 DB::raw() 传递危险 SQL 片段
  *
- *   三、代码级操作识别（code_level_operation）— 13+ 条
- *     - Artisan 调用:   Artisan::call('migrate:fresh') 等危险命令
+ *   三、代码级操作识别（code_level_operation）— 16+ 条
+ *     - Artisan 调用:   Artisan::call('migrate:fresh') 等 Laravel 命令
+ *     - 模块命令调用:   Artisan::call('module:delete') / module:migrate-* 系列
  *     - PHP 命令执行:   shell_exec / exec / passthru / system / popen / proc_open
  *     - Process 组件:   new Process() / Process::fromShellCommandline()
  *     - DB Facade:      DB::statement() / DB::unprepared() 执行 DROP/TRUNCATE
@@ -90,6 +93,27 @@ return [
         ['pattern' => '/\bmigrate:rollback\b/i',
             'desc' => 'Laravel/ThinkPHP migrate:rollback（回滚最后一次迁移，可能删除多张表）',
             'risk' => 'high'],
+
+        // --- nwidart/laravel-modules 模块命令类（6 条）---
+        // 这些是第三方模块包的命令，功能与 Laravel 内置迁移命令等价
+        ['pattern' => '/\bmodule:migrate-refresh\b/i',
+            'desc' => '模块迁移回滚+重建（重置并重新运行所有模块迁移，等价于 migrate:refresh）',
+            'risk' => 'high'],
+        ['pattern' => '/\bmodule:migrate-fresh\b/i',
+            'desc' => '模块迁移删除+重建（删除所有表后重新运行模块迁移，等价于 migrate:fresh）',
+            'risk' => 'high'],
+        ['pattern' => '/\bmodule:migrate-reset\b/i',
+            'desc' => '模块迁移回滚（回滚所有模块迁移，等价于 migrate:reset）',
+            'risk' => 'high'],
+        ['pattern' => '/\bmodule:migrate-rollback\b/i',
+            'desc' => '模块迁移增量回滚（回滚最近一批模块迁移，等价于 migrate:rollback）',
+            'risk' => 'high'],
+        ['pattern' => '/\bmodule:delete\b/i',
+            'desc' => '模块删除命令（删除整个模块所有文件+数据库表+配置，不可逆且不可恢复）',
+            'risk' => 'high'],
+        ['pattern' => '/\bmodule:migrate\b/i',
+            'desc' => '模块全量迁移（运行所有模块迁移，批量修改数据库结构）',
+            'risk' => 'medium'],
 
         // --- Schema Builder 类（4 条）---
         // 通过代码动态构造的 Schema 操作，可能在开发者调试 API 中暴露
@@ -260,7 +284,7 @@ return [
     ],
 
     // ══════════════════════════════════════════════════════════════════════
-    // 三、代码级操作识别 — 13 条规则
+    // 三、代码级操作识别 — 16 条规则
     //   检测代码中动态构造/执行数据库危险命令的调用模式。
     //   这类操作通常封装在后端逻辑中，出现在请求中说明存在代码注入
     //   或不当的 API 设计暴露了内部命令执行能力。
@@ -282,6 +306,17 @@ return [
         ['pattern' => '/Artisan\s*::\s*call\s*\(\s*[\'"]migrate:rollback/i',
             'desc' => 'PHP Artisan::call(\'migrate:rollback\')（代码中动态调用回滚迁移命令）',
             'risk' => 'high'],
+
+        // --- Artisan::call() 模块命令（3 条）---
+        ['pattern' => '/Artisan\s*::\s*call\s*\(\s*[\'"]module:delete/i',
+            'desc' => 'PHP Artisan::call(\'module:delete\')（代码中动态调用删除模块命令，不可逆）',
+            'risk' => 'high'],
+        ['pattern' => '/Artisan\s*::\s*call\s*\(\s*[\'"]module:migrate-(?:refresh|fresh|reset|rollback)/i',
+            'desc' => 'PHP Artisan::call(\'module:migrate-*\')（代码中动态调用模块迁移破坏命令）',
+            'risk' => 'high'],
+        ['pattern' => '/Artisan\s*::\s*call\s*\(\s*[\'"]module:migrate\b/i',
+            'desc' => 'PHP Artisan::call(\'module:migrate\')（代码中动态调用模块全量迁移）',
+            'risk' => 'medium'],
 
         // --- PHP 命令执行函数（3 条）---
         ['pattern' => '/shell_exec\s*\(\s*[\'"].*artisan\s+migrate:fresh/i',

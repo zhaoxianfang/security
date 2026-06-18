@@ -274,6 +274,8 @@ class ThreatData
         'dangerous_upload' => '检测到危险文件上传，请求已被拦截',
         'redirect' => '检测到开放重定向攻击，请求已被拦截',
         'file_include' => '检测到文件包含攻击，请求已被拦截',
+        'ssrf' => '检测到SSRF攻击，请求已被拦截',
+        'header_injection' => '检测到HTTP头注入攻击，请求已被拦截',
         'unknown' => '请求包含潜在的安全威胁，已被拦截',
         'custom_high' => '检测到高危安全威胁，请求已被拦截',
         'custom_medium' => '检测到中等安全威胁，请求已被拦截',

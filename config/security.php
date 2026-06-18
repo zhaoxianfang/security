@@ -2,7 +2,7 @@
 
 /**
  * ╔═══════════════════════════════════════════════════════════════════════════╗
- * ║        Laravel / ThinkPHP 安全中间件 - 配置文件 (v6.2)                       ║
+ * ║        Laravel / ThinkPHP 安全中间件 - 配置文件 (v6.4)                       ║
  * ║        🔐 15层纵深安全防护，覆盖 OWASP Top 10 核心攻击向量                     ║
  * ╚═══════════════════════════════════════════════════════════════════════════╝
  *
@@ -35,12 +35,16 @@ return [
     'enabled' => env('SECURITY_ENABLED', true),
 
     // 日志开关：是否记录安全威胁日志
+    // ⚠️ 日志仅在请求被拦截时写入，正常请求零日志开销
+    //    同一请求最多记录一次（通过 interception_logged 标志保障）
+    //    日志包含完整的运行环境、请求信息、所有威胁类型和触发详情
     'log_enabled' => env('SECURITY_LOG_ENABLED', true),
 
     // 日志级别：可选 'debug', 'info', 'warning', 'error', 'critical'
     'log_level' => env('SECURITY_LOG_LEVEL', 'warning'),
 
-    // 是否记录完整请求数据（含POST数据）
+    // 是否记录完整请求数据（含 POST 数据、请求头、查询参数）
+    // ⚠️ 包含请求体数据，可能含敏感信息，生产环境建议关闭
     'log_full_request' => env('SECURITY_LOG_FULL_REQUEST', false),
 
     /*
@@ -73,6 +77,85 @@ return [
         'webshell'    => env('SECURITY_DETECT_WEBSHELL', true),      // WebShell变种检测
         'database_operation' => env('SECURITY_DETECT_DB_OPERATION', false), // 数据库危险操作检测（默认关闭）
         'json_aware_bypass' => env('SECURITY_JSON_AWARE_BYPASS', true), // JSON API智能旁路（减少API误报）
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | 🎯 XSS 检测子类型开关
+    |--------------------------------------------------------------------------
+    |
+    | 精细控制每类 XSS 攻击检测的启用/禁用。
+    | 仅当 detection_layers.xss = true 时生效。
+    |
+    | script   — <script> 标签注入 + javascript: 伪协议
+    | dom      — DOM 型 XSS（innerHTML/outerHTML/document.write 操作）
+    | event    — HTML 事件处理器 XSS（onerror/onload/onclick 等）
+    | tag      — 危险 HTML 标签注入（<iframe>/<object>/<embed>/<svg>）
+    | encoding — XSS 编码绕过（Unicode转义、base64 data URI）
+    | framework — 框架特定 XSS（Vue v-html、jQuery 原型污染）
+    */
+    'xss_subtypes' => [
+        'script'    => true,
+        'dom'       => true,
+        'event'     => true,
+        'tag'       => true,
+        'encoding'  => true,
+        'framework' => true,
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | 🔄 JSON API 智能旁路配置
+    |--------------------------------------------------------------------------
+    |
+    | 减少 JSON API 请求中对 SQL 关键字/HTML 标签的误报。
+    | 主开关：detection_layers.json_aware_bypass
+    |
+    | api_prefixes：判定为 API 请求的路径前缀（str_starts_with 匹配）
+    | skip_high_risk_types：JSON 请求中跳过的高危检测类型
+    | url_param_names：SSRF/重定向检测时匹配的 URL 类参数名
+    */
+    'api_bypass' => [
+        // API 路径前缀列表（isJsonApiRequest 路径模式检测用）
+        'prefixes' => ['/api/', '/v1/', '/v2/', '/v3/', '/graphql'],
+
+        // JSON API 中跳过的高危检测类型（避免将 JSON 数据中的 SQL/模板字符串误判为攻击）
+        'skip_high_risk_types' => ['sql', 'ssti'],
+
+        // URL 类参数名（checkUrlParamsForSsrRedirect 检测用）
+        // 这些参数预期包含 URL，需要单独用 SSRF/redirect 模式检查
+        'url_param_names' => [
+            'redirect_uri', 'redirect_url', 'redirect', 'redirect_to',
+            'callback', 'callback_url', 'return_url', 'return_to',
+            'webhook', 'webhook_url', 'notify_url', 'notify',
+            'forward', 'dest', 'destination', 'goto', 'continue',
+        ],
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | 📂 自定义模式文件（扩展检测规则）
+    |--------------------------------------------------------------------------
+    |
+    | 开发者可指定额外的模式数据文件，追加到内置规则后面。
+    | 支持绝对路径或相对于项目根目录的路径。
+    |
+    | 文件格式要求：返回 `return [...]` 的 PHP 数组，
+    | 结构与内置模式文件一致（类型分组或扁平数组）。
+    |
+    | 示例：
+    |   'custom_patterns' => [
+    |       'high_risk' => [base_path('security/custom_sql_rules.php')],
+    |       'xss'       => [base_path('security/custom_xss_rules.php')],
+    |       'url_path'  => [],
+    |       'database_operation' => [],
+    |   ],
+    */
+    'custom_patterns' => [
+        'high_risk'          => [],
+        'xss'                => [],
+        'url_path'           => [],
+        'database_operation' => [],
     ],
 
     /*
@@ -176,7 +259,7 @@ return [
     |
     | intercept_rules 说明：
     |   不区分攻击类型，仅按 high / medium / low 三种风险等级分组。
-    |   追加的规则将作为独立类型 '_custom_high' / '_custom_medium' / '_custom_low' 参与检测。
+    |   追加的规则将作为独立类型 'custom_high' / 'custom_medium' / 'custom_low' 参与检测。
     |
     | intercept_rules_exclude 说明：
     |   不管是哪种类型（内置sql/command/path/xss等）的拦截，只要添加在此处的正则字符串，
@@ -350,6 +433,14 @@ return [
     |
     | messages 默认列表在 @see DefaultConfig::RESPONSE_MESSAGES 中定义，此处可覆盖单个条目。
     | view 支持：字符串视图名、闭包、类方法数组、可调用类。
+    |
+    | status_codes: 按威胁类型自定义 HTTP 状态码（不设置则使用 blocked_status）
+    |   可配置的类型：blacklist, rate_limit, body_too_large, url_too_long,
+    |   invalid_method, bad_user_agent, invalid_headers, url_path_attack,
+    |   encoding_bypass, sql, command, path, ldap, xml, nosql, ssti, encoding,
+    |   redirect, file_include, ssrf, header_injection, deserialization,
+    |   prototype_pollution, jndi, http_smuggling, graphql, webshell,
+    |   以及所有 xss_* / database_* / custom_* 变体
     */
     'response' => [
         'blocked_status' => 403,
@@ -361,6 +452,14 @@ return [
         'messages' => [],
 
         'view' => null,
+
+        // 按威胁类型自定义 HTTP 状态码（示例）
+        'status_codes' => [
+            // 'rate_limit' => 429,
+            // 'sql' => 403,
+            // 'xss_script' => 403,
+            // 'database_table_destruction' => 403,
+        ],
     ],
 
     /*
@@ -517,13 +616,48 @@ return [
     | 误拦截排除：
     |   - exclude_tables: 排除对特定系统表的操作（如 cache/sessions/jobs）
     |   - exclude_commands: 排除特定 artisan 命令名（如 migrate:rollback）
+    |
+    | ══════════════════════════════════════════════════════════════════════
+    | CLI 命令保护（v6.3+，同时支持 Laravel 11+ / 12+ / 13+ 和 ThinkPHP 8+）
+    |
+    | 当在 CLI 模式运行危险 artisan/think 命令时，自动拦截或交互确认。
+    |
+    | 受保护的危险命令清单（共 14+ 条，按危险等级分类）：
+    |
+    |   🔴 最高危 — 模块/数据库不可逆删除：
+    |     module:delete            删除整个模块及其所有文件和数据
+    |
+    |   🟠 高危 — 数据库表结构破坏：
+    |     migrate:fresh            migrate:refresh        migrate:reset
+    |     migrate:rollback         db:wipe                schema:dump
+    |     module:migrate-refresh   module:migrate-fresh
+    |     module:migrate-reset     module:migrate-rollback
+    |
+    |   🟡 中危 — 批量数据操作：
+    |     module:migrate           module:seed             module:migrate-status
+    |
+    | cli_mode 三种模式（由 database_operation.cli_mode 控制）：
+    |   - 'confirm' : 交互式确认（显示警告，输入 yes 后继续）【默认】
+    |   - 'block'   : 直接阻断（禁止执行，exit(1)）
+    |   - 'off'     : 跳过 CLI 拦截（仅保留 HTTP 端检测）
+    |
+    | ThinkPHP 8+ 注意事项：
+    |   请在 app/AppService.php 的 init() 中调用注册方法：
+    |   \zxf\Security\Providers\ThinkPHPSecurityServiceProvider::register($this->app);
     |*/
     'database_operation' => [
         // 拦截生效环境：指定在哪些环境下识别并拦截数据库危险操作
         // 注意：总开关由 detection_layers.database_operation 控制（见上方）
         // 环境选项：'all' | 'production' | 'staging' | 'testing' | 'local' | 'cli'
         // 例如：['production'] 仅生产环境拦截，['all'] 所有环境拦截
+        // ⚠️ 默认仅 production 生效，防止开发环境误拦截
         'environments' => ['production'],
+
+        // CLI 命令拦截模式（针对 artisan migrate:refresh 等危险命令）
+        //   - 'confirm' : 交互式确认（显示警告，输入 yes 后继续执行）【默认】
+        //   - 'block'   : 直接阻断（禁止执行，exit(1)）
+        //   - 'off'     : 完全不拦截 CLI 命令
+        'cli_mode' => env('SECURITY_DB_CLI_MODE', 'confirm'),
 
         // 是否拦截表结构破坏操作（DROP TABLE、migrate:fresh 等）
         'block_table_destruction' => env('SECURITY_DB_BLOCK_TABLE_DESTRUCTION', true),
@@ -541,5 +675,24 @@ return [
         // 自定义排除命令（不被拦截的 artisan 命令全名列表）
         // 例如：['migrate:rollback'] 允许 migrate:rollback 执行
         'exclude_commands' => [],
+
+        /*
+        |------------------------------------------------------------------
+        | CLI 危险命令清单（完全覆盖内置默认清单）
+        |------------------------------------------------------------------
+        |
+        | 设置此项后将完全替换内置默认危险命令列表。
+        | 支持精确匹配和通配符匹配：'module:*' 匹配所有 module: 开头的命令。
+        | 使用 ['*'] 匹配所有命令（不推荐）。
+        |
+        | 留空或不设置 = 使用内置清单（见 CliCommandProtector::getBuiltinDangerousCommands）。
+        |
+        | 示例：
+        |   'dangerous_commands' => [
+        |       'migrate:fresh', 'migrate:refresh', 'migrate:reset',
+        |       'db:wipe', 'module:*',
+        |   ],
+        */
+        'dangerous_commands' => null,
     ],
 ];

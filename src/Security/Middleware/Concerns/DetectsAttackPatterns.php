@@ -154,7 +154,7 @@ trait DetectsAttackPatterns
         }
 
         // 根据 detection_layers 配置过滤已关闭的检测类型
-        // 新类型默认开启，可通过配置关闭以减少特定场景误报
+        // 新类型默认开启（与 isDetectionEnabled 默认值一致），可通过配置关闭以减少特定场景误报
         $layerTypeMap = [
             'redirect' => 'redirect',
             'deserialization' => 'deserialization',
@@ -165,7 +165,7 @@ trait DetectsAttackPatterns
             'webshell' => 'webshell',
         ];
         foreach ($layerTypeMap as $layer => $type) {
-            if (!($this->config['detection_layers'][$layer] ?? false)) {
+            if (!($this->config['detection_layers'][$layer] ?? true)) {
                 unset($patterns[$type]);
             }
         }
@@ -255,7 +255,6 @@ trait DetectsAttackPatterns
                 $pattern = $item['pattern'];
                 $matches = [];
                 if ($this->safePregMatch($pattern, $input, $matches)) {
-                    $this->threats[] = $type;
                     $this->lastMatchedPattern = $pattern;
                     $this->lastMatchedContent = $this->sanitizeMatchedContent($matches[0] ?? '');
                     return $type;
@@ -291,10 +290,8 @@ trait DetectsAttackPatterns
             return null;
         }
 
-        // URL类参数的常见名称（不区分大小写）
-        // 注意：仅保留明确用于重定向/回调/Webhook 的参数名，避免过度匹配
-        // 如 url、return、next、link 等常见参数名已移除，如需检测请手动添加到配置
-        $urlParamNames = [
+        // URL类参数的常见名称（从配置读取，支持开发者自定义扩展）
+        $urlParamNames = $this->config['api_bypass']['url_param_names'] ?? [
             'redirect_uri', 'redirect_url', 'redirect', 'redirect_to',
             'callback', 'callback_url', 'return_url', 'return_to',
             'webhook', 'webhook_url', 'notify_url', 'notify',
@@ -419,7 +416,8 @@ trait DetectsAttackPatterns
         
         if ($isJsonApi && $jsonBypassEnabled) {
             // JSON 场景中排除高误报类型，保留真正高危的类型
-            $jsonSkipTypes = ['sql', 'ssti'];
+            // 跳过的类型从配置中读取，支持开发者按业务场景自定义
+            $jsonSkipTypes = $this->config['api_bypass']['skip_high_risk_types'] ?? ['sql', 'ssti'];
             $checkTypes = array_values(array_diff($checkTypes, $jsonSkipTypes));
         }
 
@@ -567,6 +565,18 @@ trait DetectsAttackPatterns
             return null;
         }
 
+        // XSS 子类型过滤：通过 DefaultConfig 统一合并默认值与用户配置
+        $xssSubtypes = \zxf\Security\Config\DefaultConfig::getXssSubtypes($this->config);
+        foreach ($patterns as $subtype => $_) {
+            if (isset($xssSubtypes[$subtype]) && $xssSubtypes[$subtype] === false) {
+                unset($patterns[$subtype]);
+            }
+        }
+
+        if (empty($patterns)) {
+            return null;
+        }
+
         // 1. 检查URL路径（反射型XSS常出现在URL中）
         $urlPath = $this->truncateInput($this->cachedUrldecode(FrameworkBridge::requestPath($request), 1));
         $urlPathResult = $this->checkXssPatterns($patterns, $urlPath, $urlPath);
@@ -651,7 +661,6 @@ trait DetectsAttackPatterns
                     }
 
                     $threatType = 'xss_' . $type;
-                    $this->threats[] = $threatType;
                     $this->lastMatchedPattern = $pattern;
                     $this->lastMatchedContent = $this->sanitizeMatchedContent($matches[0] ?? '');
                     return $threatType;
@@ -725,7 +734,6 @@ trait DetectsAttackPatterns
                             $matches = [];
                             if ($this->safePregMatch($pattern, $candidate, $matches)) {
                                 $threatType = 'xss_' . $type;
-                                $this->threats[] = $threatType;
                                 $this->lastMatchedPattern = $pattern;
                                 $this->lastMatchedContent = $this->sanitizeMatchedContent($matches[0] ?? '');
                                 return $threatType;
@@ -782,7 +790,7 @@ trait DetectsAttackPatterns
 
         // 3. 路径模式检查
         $path = strtolower(FrameworkBridge::requestPath($request));
-        $apiPrefixes = ['/api/', '/v1/', '/v2/', '/v3/', '/graphql'];
+        $apiPrefixes = $this->config['api_bypass']['prefixes'] ?? ['/api/', '/v1/', '/v2/', '/v3/', '/graphql'];
         foreach ($apiPrefixes as $prefix) {
             if (str_starts_with($path, $prefix)) {
                 return true;
